@@ -1,0 +1,1575 @@
+From 8f1c7dd90567e13c6668d33c46b259610253685b Mon Sep 17 00:00:00 2001
+From: xcytos <143465381+xcytos@users.noreply.github.com>
+Date: Thu, 5 Feb 2026 02:58:05 +0530
+Subject: [PATCH] Sandbox transfer patch: KNEZ
+
+---
+ data/events.log                 |    3 +
+ data/sessions.db                |  Bin 65536 -> 65536 bytes
+ docs/reports/report-2-2-2026.md | 1495 +++++++++++++++++++++++++++++++
+ knez/cognitive/api.py           |   20 +
+ 4 files changed, 1518 insertions(+)
+ create mode 100644 docs/reports/report-2-2-2026.md
+
+diff --git a/data/events.log b/data/events.log
+index 76c3aa9..a5ab743 100644
+--- a/data/events.log
++++ b/data/events.log
+@@ -24,3 +24,6 @@
+ {"event_id":"f3e87998-1e65-48f6-af09-fde408134849","timestamp":"2025-12-21T14:02:59.833902+00:00","session_id":"session-live-001","task_id":null,"event_type":"ANALYSIS","event_name":"taqwin_analysis_completed","source":"knez_core","severity":"INFO","payload":{"session_id":"session-live-001","observations_count":1},"tags":["taqwin"]}
+ {"event_id":"edeebc05-ca5d-4974-9fc5-1788fc51595c","timestamp":"2025-12-21T14:02:59.834231+00:00","session_id":"session-live-001","task_id":null,"event_type":"REFLECTION","event_name":"taqwin_proposal_observed","source":"knez_core","severity":"INFO","payload":{"session_id":"session-live-001","proposal_type":"analysis","risk_level":"low","scope":"session"},"tags":["taqwin"]}
+ {"event_id":"2727db21-6ed7-49ae-b5c6-979dc7fe032f","timestamp":"2025-12-21T14:03:31.719169+00:00","session_id":"session-live-001","task_id":null,"event_type":"REFLECTION","event_name":"reflection_summary","source":"knez_core","severity":"INFO","payload":{"summary_version":"v0.1","outcome":"UNKNOWN","stats":{"backend_usage_counts":{},"failover_count":0,"retry_count":0},"derived_from_events":["258881ad-1e7f-4e55-aca7-35cf9485505a","2bdc72f8-4133-4b23-8a86-f84ad2359be9","11e017b8-edce-4224-9966-da9703cc1f7f","c9a0fd24-8236-4741-9c7a-eab5fa388913","94cfe51d-5ec6-479a-ab71-b5b6c1908dc1","fcb32e05-0bc8-45e4-a950-adeffb256380","e13e21d3-de9e-46b9-b364-ec25536ebf93","29ca18cc-33ff-4027-aeb6-b67cbe090bad","d53681bb-e995-4ad8-82e3-657505f74a71","0ff43824-c387-420c-8511-b91f05404bb9"]},"tags":["reflection","derived"]}
++{"event_id":"54595e09-7440-4ac2-9ae3-9319a10328e0","timestamp":"2026-02-04T20:24:31.026528+00:00","session_id":"c83b63c326ef4116aa7882872517a83c","task_id":null,"event_type":"DECISION","event_name":"session_created","source":"knez_core","severity":"INFO","payload":{"session_id":"c83b63c326ef4116aa7882872517a83c","parent_session_id":null,"resume_snapshot_id":null,"resume_mode":"fresh","resume_reason":null,"created_at":1770236670.9794376},"tags":["session_lineage"]}
++{"event_id":"0d9024fd-a154-4f2f-933e-bb76725ca992","timestamp":"2026-02-04T20:24:31.027944+00:00","session_id":"c83b63c326ef4116aa7882872517a83c","task_id":null,"event_type":"INPUT","event_name":"session_start","source":"knez_core","severity":"INFO","payload":{"model":"local","stream":true,"message_count":1},"tags":["api"]}
++{"event_id":"2e05f5b2-773a-4d6f-b881-2fffc05f74c1","timestamp":"2026-02-04T20:24:31.042030+00:00","session_id":"c83b63c326ef4116aa7882872517a83c","task_id":null,"event_type":"ACTION","event_name":"token_stream_start","source":"knez_core","severity":"INFO","payload":{"backend_id":"qwen2.5:7b-instruct-q4_K_M"},"tags":["stream"]}
+diff --git a/data/sessions.db b/data/sessions.db
+index 9b308f5cfb3290229b9b2755644430da139dffd7..47ec1279bd352988e8c1d8ddd696255446533e82 100644
+GIT binary patch
+delta 170
+zcmZo@U}<PznIO#=I8nx#F>qtTl6WC@UKIxZettQ=wR|?br+K4zRW=I>@bQ|Nu(SIz
+zFo-j-CtDaNnHeV=8=0l1nHU<HB_^6%SQuHD8<`rKCt4UMrxm3ZXE@$Uc(s4udg;wk
+txvQ9j*!li3@ZaH|#IMZn!M~mFAAc^;%olvBD$Kr&gp6a~tXzM$0RS=8FS7su
+
+delta 73
+zcmZo@U}<PznIO#=Fj2;tF<@iDl6V0&-Y5qCettQ=wR|?br+K3`3ktaLZjQ=b#U#MS
+cugt)Ihkp{kGQS7^cK%$T6hHrF<@&n~0P5Wob^rhX
+
+diff --git a/docs/reports/report-2-2-2026.md b/docs/reports/report-2-2-2026.md
+new file mode 100644
+index 0000000..34bab6e
+--- /dev/null
++++ b/docs/reports/report-2-2-2026.md
+@@ -0,0 +1,1495 @@
++1. EXECUTIVE SNAPSHOT (FACTUAL)
++
++1.1. What KNEZ Is Today (Code-Verified)
++
++1.1.1. KNEZ as Implemented in knez/knez_core/app.py
++- KNEZ is a FastAPI application defined in [app.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/app.py).
++- The application is created by the function `create_app()` and exported as `app`.
++- The app assembles multiple subsystems via routers:
++  - Core chat completion API: `knez.knez_core.api.completions.router`
++  - Health API: `knez.knez_core.api.health.router`
++  - Session resume/fork API: `knez.knez_core.api.sessions.router`
++  - Event tailing API: `knez.knez_core.events.api.router`
++  - Replay API: `knez.knez_core.replay.api.router`
++  - Memory inspection API: `knez.knez_core.memory.api.router`
++  - TAQWIN integration API: `knez.integrations.taqwin.adapter.router`
++  - Cognitive layer API: `knez.cognitive.api.router`
++- The app also creates and stores a `Router` instance on `app.state.router`, constructed with:
++  - Three `CloudBackend` instances, configured via environment variables:
++    - `KNEZ_CLOUD_A_URL` (default `http://localhost:8001`)
++    - `KNEZ_CLOUD_B_URL` (default `http://localhost:8002`)
++    - `KNEZ_CLOUD_C_URL` (default `http://localhost:8003`)
++  - One `LocalBackend` instance (default model and endpoint defined in `knez.knez_core.models.local_backend.LocalBackend`).
++- On startup, the app starts an `EventStore` via `knez.knez_core.events.store.get_store().start()`.
++- On shutdown, it stops the `EventStore` via `get_store().stop()`.
++
++1.1.2. Server Entrypoint in run.py
++- The executable entrypoint for KNEZ is [run.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/run.py).
++- The `main()` function:
++  - Reads `KNEZ_HOST` (default `"0.0.0.0"`) and `KNEZ_PORT` (default `"8000"`).
++  - Runs `uvicorn.run(app, host=host, port=port, log_level="info")` using the KNEZ FastAPI `app`.
++- When `run.py` is invoked as `__main__`, `main()` is executed.
++
++1.1.3. External TAQWIN Server
++- A separate FastAPI application exists in [taqwin/server.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/taqwin/server.py).
++- This TAQWIN server:
++  - Instantiates a FastAPI `app`.
++  - Includes the TAQWIN router from [taqwin/handler.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/taqwin/handler.py).
++  - Runs via `uvicorn.run` using environment variables:
++    - `TAQWIN_HOST` (default `"0.0.0.0"`)
++    - `TAQWIN_PORT` (default `"9001"`).
++- TAQWIN is an external service that calls KNEZ through HTTP (see `taqwin.knez_client`).
++
++1.1.4. OpenAI-Compatible Compatibility Layer
++- A separate FastAPI app for IDE compatibility is defined in [knez/compat/app.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/compat/app.py).
++- It creates a FastAPI app named "KNEZ Compat" and includes the router from [knez/compat/api.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/compat/api.py).
++- The compatibility layer implements:
++  - `POST /v1/chat/completions` (OpenAI-style, streaming and non-streaming).
++  - `POST /v1/responses` (OpenAI Responses API).
++  - `GET /v1/models` (model listing with capability flags).
++- The compat endpoints proxy into the core KNEZ app (`knez.knez_core.app.app`) using `httpx.AsyncClient(app=core_app, base_url="http://core")`.
++
++1.1.5. Data Files
++- The `data/` directory (see [data](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/data)) contains:
++  - `events.log`: event store log file used by `knez.knez_core.events.store.EventStore`.
++  - `memory.db`: SQLite database used by `knez.knez_core.memory.store.MemoryStore`.
++  - `sessions.db`: SQLite database used by `knez.knez_core.sessions.store` for:
++    - `session_lineage` table.
++    - `failover_events` table.
++    - `snapshot_deltas` table.
++    - `resume_snapshots` table.
++    - `memory_candidates` table.
++
++1.1.6. Tests as Behavioral Specification
++- The `tests/` directory contains pytest-based tests that exercise:
++  - Cognitive layer behavior (see [tests/test_cognitive_layer.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/tests/test_cognitive_layer.py)).
++  - Memory governance and reflection (see [tests/test_memory_governance.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/tests/test_memory_governance.py)).
++  - Memory extraction and replay (see [tests/test_memory.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/tests/test_memory.py)).
++  - Replay engine and session outcome computation (see [tests/test_replay.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/tests/test_replay.py)).
++  - Failover, local failover, and gap policy (see [tests/test_failover_loop.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/tests/test_failover_loop.py), [tests/test_local_failover.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/tests/test_local_failover.py), [tests/test_gap_policy.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/tests/test_gap_policy.py)).
++  - Continuous and stress sessions (see [tests/test_continuous_sessions.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/tests/test_continuous_sessions.py), [tests/test_stress_sessions.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/tests/test_stress_sessions.py)).
++  - Influence execution and interface (see [tests/test_influence_execution.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/tests/test_influence_execution.py), [tests/test_influence_interface.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/tests/test_influence_interface.py)).
++  - Shadow influence (see [tests/test_shadow_influence.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/tests/test_shadow_influence.py)).
++  - TAQWIN adapter events (see [tests/test_taqwin_adapter.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/tests/test_taqwin_adapter.py)).
++  - Tokenizer consistency and TTFT safeguards (see [tests/test_tokenizer_consistency.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/tests/test_tokenizer_consistency.py), [tests/test_ttft_keepalive.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/tests/test_ttft_keepalive.py)).
++
++1.2. What KNEZ Is Not (Based on Code Only)
++
++1.2.1. No Autonomous Agent Execution Loop
++- There is no code that continuously generates tasks or prompts without external HTTP requests.
++- The core generation entrypoint is `chat_completions` in [knez_core/api/completions.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/api/completions.py), which only runs when invoked via HTTP.
++- There is no scheduler or background task that asks LLMs to act without a client-initiated request.
++
++1.2.2. No Tool Execution Engine
++- No module in the repository implements generic tool execution, shell command invocation, or external API orchestration based on LLM decisions.
++- The only “tools” present are integration adapters: TAQWIN integration in [knez/integrations/taqwin](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/integrations/taqwin) and the external TAQWIN server in [taqwin](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/taqwin).
++- The compatibility layer accepts OpenAI-style `tools` fields but does not execute them; it emits `tool_ignored` events and strips them before forwarding.
++
++1.2.3. No General-Purpose Autonomous Workflow Engine
++- There is no code that chains multiple sessions or tasks autonomously.
++- Session forking and resume logic in [knez_core/api/sessions.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/api/sessions.py) are driven by explicit API calls, not automatic background processes.
++- Cognitive layer components (dashboard, governance, runbook, shadow, approval) compute metrics and insights but do not directly modify router configuration or call back into generation endpoints in a loop.
++
++1.2.4. No Frontend or User Interface in This Repository
++- There is no Next.js or web dashboard implementation present in the repository.
++- The only user-facing surface implemented here is the FastAPI HTTP APIs and the TAQWIN server.
++- All mentions of dashboards or frontends in [prd.txt](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/prd.txt) are design-level descriptions, not implemented code.
++
++1.2.5. No Explicit Authentication or Authorization Layer
++- There is no authentication middleware or token validation implemented in the KNEZ FastAPI app.
++- The FastAPI `app` is created without dependencies that enforce API keys or OAuth.
++- Any security or auth behavior would have to be implemented externally; it is not present in this codebase.
++
++1.3. Problem KNEZ Solves Right Now (From Code)
++
++1.3.1. Multi-Backend Chat Completion Routing
++- KNEZ orchestrates chat completion requests across multiple backends:
++  - `CloudBackend` instances (see [knez_core/models/cloud_backend.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/models/cloud_backend.py)).
++  - A `LocalBackend` (see [knez_core/models/local_backend.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/models/local_backend.py)).
++- Routing decisions are made by `Router` in [knez_core/router/router.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/router/router.py) using:
++  - Classifier-based model selection (`knez_core/router/classifier.py`).
++  - Health-based scoring (`knez_core/router/scorer.py`).
++  - Influence from memory hints and cognitive influence contracts (`knez_core/memory/consumption/hint_generator.py` and `knez/cognitive/influence/contracts.py`).
++- Requests flow through `chat_completions` which:
++  - Creates a `GenerationRequest`.
++  - Either streams tokens or returns a full response depending on `stream` flag.
++
++1.3.2. Continuous Checkpointing and SQLite Persistence
++- During streaming, the core `/v1/chat/completions` endpoint:
++  - Uses a `CheckpointWorker` (inner class in `knez_core/api/completions.py`) for the streaming endpoint.
++  - Uses `RedisStream` ([knez_core/checkpoints/redis_stream.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/checkpoints/redis_stream.py)) to temporarily buffer token checkpoints.
++  - Uses `SQLiteWriter` ([knez_core/checkpoints/sqlite_writer.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/checkpoints/sqlite_writer.py)) to persist token checkpoints into SQLite.
++- For failover and continuation, `knez_core/checkpoints/reader.py` implements a `CheckpointWorker` that:
++  - Reads from Redis.
++  - Flushes token buffers into `sessions.db`.
++  - Associates metadata with checkpoints.
++
++1.3.3. Failover and Continuation
++- The `FailoverManager` in [knez_core/failover/manager.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/failover/manager.py):
++  - Reads checkpoints via `checkpoints.reader`.
++  - Builds continuation prompts via `failover.continuation.build_continuation_prompt`.
++  - Uses `LocalBackend` to simulate local failover.
++  - Logs failover events via `sessions.store.log_failover`.
++  - Emits telemetry metrics via `telemetry.metrics.Metrics`.
++- The failover logic is exercised in tests:
++  - [tests/test_failover_loop.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/tests/test_failover_loop.py).
++  - [tests/test_local_failover.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/tests/test_local_failover.py).
++
++1.3.4. Session Lineage and Resume Snapshots
++- `knez_core/sessions/store.py` implements:
++  - Session lineage recording: `record_session_lineage`.
++  - Resume snapshot compilation: `compile_resume_snapshot_for_session`.
++  - Snapshot delta recording: `record_snapshot_delta`.
++  - Storage of resume snapshots and deltas in `sessions.db`.
++- `knez_core/api/sessions.py` exposes:
++  - `POST /sessions/{session_id}/resume`: create a new session with a compiled snapshot from an existing session.
++  - `GET /sessions/{session_id}/resume_snapshot`: retrieve the compiled snapshot for inspection.
++  - `POST /sessions/{session_id}/fork`: create a forked session lineage record.
++
++1.3.5. Memory Extraction and Storage
++- `knez_core/memory/gate.py`:
++  - Replays session events via `replay_session`.
++  - Uses `summary_to_dict` and `Insight` from replay models.
++  - Constructs `MemoryCandidate` objects using `new_memory_candidate`.
++  - Writes durable memory entries via `MemoryStore`.
++- `knez_core/memory/store.py` persists memory into `data/memory.db` SQLite database.
++- `knez_core/memory/api.py` exposes:
++  - `GET /memory`: list memory items with filters.
++  - `GET /memory/{memory_id}`: fetch a single memory item.
++
++1.3.6. Replay and Reflection over Event Logs
++- `knez_core/replay/engine.py`:
++  - Loads events from the `EventStore`.
++  - Builds a `SessionReplay` with phases and stats.
++  - Generates insights via `replay.insights`.
++  - Builds a summary via `replay.summary`.
++  - Emits reflection events via `replay.reflection.emit_reflection_events`.
++- `knez_core/replay/api.py` exposes:
++  - `GET /sessions/{session_id}/replay`: returns replay details.
++  - `GET /sessions/{session_id}/summary`: returns summary as dict.
++  - `GET /sessions/{session_id}/insights`: returns high-level insights.
++
++1.3.7. Cognitive Layer Analysis and Governance
++- The cognitive layer in `knez/cognitive` provides:
++  - Runbook generation: `knez.cognitive.runbook.generate_runbook`.
++  - Dashboard state aggregation: `knez.cognitive.dashboard.get_state_overview` and related functions.
++  - Governance evaluation and influence readiness evaluation: `knez.cognitive.governance.GovernanceEvaluator` and `IRIEvaluator`.
++  - Shadow influence simulation: `knez.cognitive.shadow.simulator.ShadowSimulator`.
++  - Approval gate: `knez.cognitive.approval.api.ApprovalService`.
++- These components consume events and replayed data to derive metrics and governance records.
++
++1.3.8. TAQWIN Integration
++- KNEZ integrates with an external TAQWIN analysis and recommendation engine:
++  - `knez.integrations.taqwin.adapter` exposes `/taqwin/events` inside the KNEZ app.
++  - TAQWIN payloads are validated and converted into KNEZ events.
++  - The external TAQWIN server uses `taqwin.knez_client` to call KNEZ `/v1/chat/completions` and `/taqwin/events`.
++
++1.3.9. IDE Compatibility
++- KNEZ exposes an OpenAI-compatible surface via `knez/compat/api.py`:
++  - Normalizes SSE behavior to `data:` frames plus `[DONE]`.
++  - Normalizes error payloads into `{ "error": { "message": ..., "type": ... } }`.
++  - Provides `POST /v1/responses` for clients that expect the OpenAI Responses API.
++  - Exposes `GET /v1/models` with capability flags.
++
++1.4. Deployment and Runtime Assumptions (From Code)
++
++1.4.1. Environment Variables for KNEZ Core
++- `KNEZ_HOST` and `KNEZ_PORT` control the FastAPI server interface (see [run.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/run.py)).
++- `KNEZ_CLOUD_A_URL`, `KNEZ_CLOUD_B_URL`, `KNEZ_CLOUD_C_URL` define remote model endpoints.
++
++1.4.2. Environment and Paths for Storage
++- `knez_core.events.store.EventStore` defaults to `data/events.log` and ensures the `data` directory exists.
++- `knez_core.sessions.store._conn()` uses a fixed path `data/sessions.db` and ensures `data` exists.
++- `knez_core.memory.store.MemoryStore` uses `data/memory.db` and ensures the containing directory exists.
++
++1.4.3. TAQWIN Runtime Environment
++- `TAQWIN_HOST` and `TAQWIN_PORT` control the TAQWIN server (see [taqwin/server.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/taqwin/server.py)).
++- `KNEZ_BASE_URL` in `taqwin.knez_client` controls how TAQWIN reaches KNEZ (default `http://localhost:8000`).
++
++1.4.4. Metrics Export
++- `knez_core.telemetry.metrics` uses Prometheus `Counter` and `Gauge` from `prometheus_client`.
++- No explicit HTTP endpoint for Prometheus metrics is defined in this repository; exporting metrics requires Prometheus’ instrumentation defaults or an external server configuration, which is not present in this code.
++
++1.4.5. Not Determinable from Code
++- There is no code that configures reverse tunnels, Kubernetes, or cloud deployment environments.
++- High-level operational details (Kaggle, Colab, Paperspace) appear only in [prd.txt](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/prd.txt) and not in executable code.
++- Scaling characteristics (number of workers, process models) are not defined in code and would depend on how `uvicorn` is invoked externally.
++
++2. REPOSITORY MAP (FILE-LEVEL)
++
++2.1. Root Directory Overview
++
++2.1.1. Root Files
++- [run.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/run.py): Entrypoint for KNEZ FastAPI server.
++- [requirements.txt](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/requirements.txt): Python dependencies.
++- [prd.txt](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/prd.txt): Product requirements document and design notes; not executable code.
++- [.pytest_all_log.txt](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/.pytest_all_log.txt), [.pytest_iface_log.txt](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/.pytest_iface_log.txt), [.pytest_influence_log.txt](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/.pytest_influence_log.txt), [.pytest_stream1_log.txt](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/.pytest_stream1_log.txt), [.pytest_stream2_log.txt](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/.pytest_stream2_log.txt): pytest log outputs, not source.
++
++2.1.2. Root Directories
++- [.vscode/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/.vscode):
++  - Editor configuration, not runtime logic.
++- [data/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/data):
++  - `events.log`: core event store log.
++  - `memory.db`: memory SQLite database.
++  - `sessions.db`: session and lineage SQLite database.
++- [docs/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/docs):
++  - Documentation and reports.
++- [knez/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez):
++  - Main Python package for KNEZ core, cognitive layer, integrations, and compatibility.
++- [researches/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/researches):
++  - Markdown and PDF research documents; not directly executed.
++- [taqwin/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/taqwin):
++  - External TAQWIN server implementation and schemas.
++- [tests/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/tests):
++  - Test suite for KNEZ components and integrations.
++
++2.2. docs/ and Reports
++
++2.2.1. docs/reports Contents
++- [docs/reports/IDE_INTEGRATION_GUIDE.md](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/docs/reports/IDE_INTEGRATION_GUIDE.md):
++  - Documentation for IDE integration, including Zed, VS Code, and JetBrains snippets.
++- [docs/reports/ZED_INTEGRATION_FEASIBILITY.md](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/docs/reports/ZED_INTEGRATION_FEASIBILITY.md):
++  - Zed-specific feasibility report.
++- [docs/reports/report-2-2-2026.md](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/docs/reports/report-2-2-2026.md):
++  - This audit report.
++
++2.3. knez/ Package Structure
++
++2.3.1. knez/__init__.py
++- Exposes `knez_core.app.app` or related objects (exact export can be determined by inspecting the file).
++- This module is the package root; many modules are imported as `knez.knez_core.*`.
++
++2.3.2. knez/knez_core/
++- [knez/knez_core/__init__.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/__init__.py): Package initializer.
++- [knez/knez_core/app.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/app.py): FastAPI application factory and router wiring.
++- [knez/knez_core/agents.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/agents.py): Agent definitions and registry for session resume.
++- [knez/knez_core/api/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/api):
++  - `completions.py`: `/v1/chat/completions` endpoint, including streaming SSE, checkpointing, first-token timeout safeguard, and non-streaming path.
++  - `health.py`: `/health` endpoint; queries backend health.
++  - `sessions.py`: `/sessions/*` endpoints for resume, resume snapshot, and fork.
++- [knez/knez_core/checkpoints/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/checkpoints):
++  - `checkpoint_model.py`: data structures related to checkpoints.
++  - `reader.py`: CheckpointWorker for reading from Redis/SQLite and interacting with failover.
++  - `redis_stream.py`: Redis-based streaming buffer implementation.
++  - `sqlite_writer.py`: SQLite writer for checkpoint persistence.
++- [knez/knez_core/events/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/events):
++  - `__init__.py`: exposes `get_emitter`, `EventType`, `EventSource`, `EventSeverity`.
++  - `api.py`: `/events` API for tailing events.
++  - `emitter.py`: event emitter instance creation and retrieval.
++  - `reader.py`: helper `tail_events` function, delegating to `EventStore`.
++  - `schema.py`: `Event`, `EventType`, `EventSeverity`, `EventSource`, and `event_to_dict`.
++  - `store.py`: `EventStore` for append-only event logging to disk.
++- [knez/knez_core/failover/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/failover):
++  - `continuation.py`: `build_continuation_prompt` and related functions for constructing continuation prompts from checkpoints.
++  - `health.py`: health checks for failover configuration.
++  - `manager.py`: `FailoverManager`, orchestrating local failover simulations.
++- [knez/knez_core/memory/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/memory):
++  - `api.py`: `/memory` endpoints.
++  - `gate.py`: gateway that analyzes sessions and records memory candidates and memories.
++  - `models.py`: `MemoryCandidate` dataclass and helpers.
++  - `store.py`: `MemoryStore` and associated database logic.
++  - `consumption/`: `hint_generator.py` and related models for converting memory entries into routing hints.
++- [knez/knez_core/models/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/models):
++  - `base.py`: `BaseBackend`, `BackendHealth`, `GenerationRequest`, callback types, and `ChatMessage`.
++  - `cloud_backend.py`: HTTP-based backend for remote models.
++  - `local_backend.py`: HTTP-based backend for a local model runtime (e.g., Ollama).
++- [knez/knez_core/replay/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/replay):
++  - `api.py`: replay and summary endpoints.
++  - `engine.py`: main replay pipeline.
++  - `insights.py`: derives `Insight` objects from events and stats.
++  - `models.py`: `TimelinePhase`, `ReplayStats`, `Insight`, `SessionReplay`, `SessionSummary`.
++  - `phases.py`: grouping events into timeline phases.
++  - `reflection.py`: emits reflection events based on replay.
++  - `stats.py`: computes statistics over events.
++  - `summary.py`: builds `SessionSummary`.
++  - `summary.py` also provides `summary_to_dict` for JSON-friendly output.
++- [knez/knez_core/router/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/router):
++  - `router.py`: `Router` class implementing backend selection, health scoring, and influence application.
++  - `classifier.py`: classification of requests into routing categories.
++  - `scorer.py`: scoring and selection based on backend health and metrics.
++- [knez/knez_core/sessions/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/sessions):
++  - `store.py`: session lineage, snapshots, memory candidates, and related persistence logic (already detailed above).
++- [knez/knez_core/telemetry/metrics.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/telemetry/metrics.py):
++  - Metrics snapshot structure and Prometheus counters/gauges.
++- [knez/knez_core/utils/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/utils):
++  - `exceptions.py`: custom exceptions, including `BackendFailure`.
++  - `tokenizer.py`: tokenization utilities and chunking helpers used in failover and TTFT safeguards.
++
++2.3.3. knez/cognitive/
++- [knez/cognitive/__init__.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/cognitive/__init__.py): package initializer.
++- [knez/cognitive/api.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/cognitive/api.py):
++  - Exposes:
++    - `/state/overview`
++    - `/state/governance`
++    - `/state/influence`
++    - `/state/stability`
++    - `/state/taqwin`
++    - `/runbook/{session_id}`
++    - `/audit/consistency`
++- [knez/cognitive/dashboard.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/cognitive/dashboard.py):
++  - Implements functions to derive system-level dashboard metrics from the event store.
++- [knez/cognitive/audit.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/cognitive/audit.py):
++  - Implements audits over influence readiness, shadow vs live divergence, and drift monitor vs switches.
++- [knez/cognitive/runbook.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/cognitive/runbook.py):
++  - Generates a textual runbook view for a session using replay data and TAQWIN-related events.
++- [knez/cognitive/governance.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/cognitive/governance.py):
++  - Implements governance evaluation over memory hints and influence readiness evaluation.
++- [knez/cognitive/docs.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/cognitive/docs.py):
++  - Generates textual documentation about the architecture based on the runtime `Router`.
++- [knez/cognitive/influence/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/cognitive/influence):
++  - `contracts.py`: defines `RoutingInfluenceAdapter`, `RoutingInfluenceTrace`, and runtime switches that gate influence on routing.
++- [knez/cognitive/approval/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/cognitive/approval):
++  - `api.py`: approval service logic.
++  - `approval_models.py`: approval-related dataclasses (e.g., `ApprovalRecord`, `ShadowInfluenceSummary`).
++  - `audit_log.py`: audit logging for approvals.
++  - `policy_engine.py`: policy rules for approving or blocking influence.
++- [knez/cognitive/shadow/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/cognitive/shadow):
++  - `models.py`: types for shadow influence deltas.
++  - `simulator.py`: simulation of shadow routing decisions.
++  - `delta_analyzer.py`: risk estimation for shadow vs live deltas.
++  - `store.py`: persistence for shadow decisions.
++- [knez/cognitive/analysis/](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/cognitive/analysis):
++  - `correlation_engine.py`: correlation analysis over hints and outcomes.
++  - `hint_impact_analyzer.py`: analysis of hint impact on routing.
++  - `report_models.py`: data models for hint impact reports.
++
++2.3.4. knez/integrations/taqwin/
++- [knez/integrations/taqwin/__init__.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/integrations/taqwin/__init__.py): package initialization.
++- [knez/integrations/taqwin/adapter.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/integrations/taqwin/adapter.py):
++  - FastAPI router exposing `POST /taqwin/events`.
++- [knez/integrations/taqwin/events.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/integrations/taqwin/events.py):
++  - Functions that emit KNEZ events for TAQWIN inputs and proposals.
++- [knez/integrations/taqwin/schemas.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/integrations/taqwin/schemas.py):
++  - Pydantic models representing TAQWIN payloads.
++- [knez/integrations/taqwin/validator.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/integrations/taqwin/validator.py):
++  - Validates TAQWIN payloads and checks session existence via events.
++- [knez/integrations/taqwin/README.md](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/integrations/taqwin/README.md):
++  - Integration documentation.
++
++2.3.5. knez/compat/
++- [knez/compat/app.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/compat/app.py):
++  - Creates `FastAPI` app and includes compat router.
++- [knez/compat/api.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/compat/api.py):
++  - Implements `/v1/chat/completions`, `/v1/responses`, `/v1/models`.
++- [knez/compat/feature_flags.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/compat/feature_flags.py):
++  - Defines compatibility feature flags using a Pydantic BaseModel.
++- [knez/compat/__init__.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/compat/__init__.py):
++  - Exposes `app` from `knez.compat.app`.
++
++2.4. External taqwin/ Package
++
++2.4.1. taqwin/__init__.py
++- Root package initializer for TAQWIN external service.
++
++2.4.2. taqwin/server.py
++- Defines TAQWIN FastAPI server and uvicorn `main()` as described earlier.
++
++2.4.3. taqwin/handler.py
++- Contains the TAQWIN API router.
++- Uses:
++  - `call_chat_completions` to ask KNEZ for model output.
++  - `send_taqwin_response` to send proposals back to KNEZ as events.
++
++2.4.4. taqwin/knez_client.py
++- Implements:
++  - `call_chat_completions(session_id, messages, model=None)` → calls KNEZ `/v1/chat/completions` with `stream=False`.
++  - `send_taqwin_response(payload)` → sends raw JSON payload to KNEZ `/taqwin/events`.
++
++2.4.5. taqwin/logging.py, taqwin/schemas.py
++- Provide logging helpers and TAQWIN-specific schemas.
++
++2.5. tests/ Directory
++
++2.5.1. Test Modules
++- [tests/conftest.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/tests/conftest.py): shared fixtures, including `no_sleep` and router/app setup.
++- The remaining tests cover:
++  - Approval gate.
++  - Cognitive layer and dashboard.
++  - Continuous sessions, stress tests.
++  - Events and event store behavior.
++  - Failover loop, gap policy, local failover.
++  - Memory behavior and governance.
++  - Hint impact analysis.
++  - Influence interface and execution.
++  - Redis backlog behavior for checkpoints.
++  - Replay engine behavior.
++  - Resume deduplication.
++  - Shadow influence.
++  - TAQWIN adapter.
++  - Tokenizer consistency.
++  - Time-to-first-token keepalive behavior.
++
++3. SYSTEM PHASE CLASSIFICATION
++
++3.1. Phase Definitions (For This Audit)
++- Conversational System: ability to accept conversational inputs and produce responses, with streaming and session IDs.
++- Memory System: ability to derive, store, and retrieve durable memories from past interactions.
++- Reflection / Judgment System: ability to analyze past events, compute insights, and classify them with governance rules.
++- Assisted Automation System: ability to automate side processes (e.g., failover, continuation) triggered by system events.
++- Autonomous System: ability to initiate new tasks or behaviors without direct external requests.
++
++3.2. Conversational System
++
++3.2.1. Status
++- Marked as: IMPLEMENTED.
++
++3.2.2. Evidence and Modules
++- `knez_core/api/completions.py` implements:
++  - `ChatCompletionRequest` Pydantic model with `messages`, `temperature`, `max_tokens`, `top_p`, `session_id`.
++  - `@router.post("/v1/chat/completions") async def chat_completions(...)`.
++- The endpoint:
++  - Ensures a `session_id` exists (generated if not provided) and records session lineage for fresh sessions via `record_session_lineage`.
++  - Creates a `GenerationRequest` from `ChatCompletionRequest`.
++  - Emits an `EventType.INPUT` event `session_start`.
++  - For streaming:
++    - Uses `_sse_stream(request, gen_request, session_id)` to stream tokens in SSE frames.
++  - For non-streaming:
++    - Selects a backend using `Router`.
++    - Accumulates tokens and returns a JSON response with `object: "chat.completion"` and `choices`.
++- `knez_core/models/base.py` defines:
++  - `ChatMessage` with `role` and `content`.
++  - `GenerationRequest` with fields including `messages`, `temperature`, `top_p`, `max_tokens`, `stream`, and `metadata`.
++- Tests:
++  - `tests/test_local_streaming.py` exercises streaming behavior.
++  - `tests/test_ttft_keepalive.py` verifies keep-alive behavior in streaming.
++
++3.3. Memory System
++
++3.3.1. Status
++- Marked as: IMPLEMENTED.
++
++3.3.2. Evidence and Modules
++- Memory gate and extraction:
++  - `knez_core/memory/gate.py`:
++    - Uses `replay_session` to analyze events for a session.
++    - Uses `summary_to_dict` and `Insight` to interpret replay results.
++    - Builds `MemoryCandidate` entries via `new_memory_candidate`.
++    - Interacts with `get_memory_store()` to store memory entries.
++- Memory storage:
++  - `knez_core/memory/store.py`:
++    - Implements `MemoryStore` backed by `data/memory.db`.
++    - Creates `memories` table with columns: `memory_id`, `created_at`, `session_id`, `memory_type`, `summary`, `evidence_event_ids`, `confidence`, `retention_policy`.
++    - Provides async methods to query and retrieve memory.
++- Memory models:
++  - `knez_core/memory/models.py`:
++    - Defines `MemoryCandidate` and helper conversions between DB rows and dataclasses.
++- Memory API:
++  - `knez_core/memory/api.py`:
++    - `GET /memory` to list memory entries.
++    - `GET /memory/{memory_id}` to retrieve a single memory entry by ID.
++- Tests:
++  - `tests/test_memory.py` validates:
++    - Memory extraction based on replayed events and insights.
++    - Behavior of memory recall logic as implemented in `memory.gate`.
++  - `tests/test_memory_hints.py` validates consumption of memory hints.
++
++3.3.3. Durability and Properties
++- Memory entries are:
++  - Durable: stored in SQLite (`data/memory.db`).
++  - Structured: each entry has typed fields, including evidence event IDs.
++  - Inspectable: `GET /memory` and `GET /memory/{memory_id}`.
++  - Editable: no dedicated update/delete API is present; updates would require direct DB modification or additional endpoints (not present in code).
++
++3.4. Reflection / Judgment System
++
++3.4.1. Status
++- Marked as: IMPLEMENTED.
++
++3.4.2. Evidence and Modules
++- Replay reflection:
++  - `knez_core/replay/reflection.py`:
++    - Emits `EventType.REFLECTION` events:
++      - `reflection_summary` with aggregated stats.
++      - `reflection_insight` for each `Insight`.
++- Governance and memory reflection:
++  - `knez.cognitive.governance.GovernanceEvaluator`:
++    - Reads reflection events related to memory hints.
++    - Computes `GovernanceRecord` instances including `evaluation_result`, `risk_assessment`, and `contradictions_detected`.
++    - Emits reflection events:
++      - `reflection_memory_insight_promotable`.
++      - `reflection_memory_insight_rejected`.
++      - `reflection_memory_insight_needs_review`.
++  - `knez.cognitive.governance.IRIEvaluator`:
++    - Computes `InfluenceReadinessRecord` objects.
++    - Emits reflection events:
++      - `reflection_influence_readiness_blocked`.
++      - `reflection_influence_readiness_eligible`.
++      - `reflection_influence_readiness_monitoring`.
++- Dashboard and audits:
++  - `knez.cognitive.dashboard` reads events and reflection outcomes to:
++    - Compute counts of active insights, blocked vs eligible contracts, drift indicators.
++  - `knez.cognitive.audit` implements audits to check consistency across reflection-derived signals.
++- Tests:
++  - `tests/test_memory_governance.py` validates governance evaluation, IRIEvaluator behavior, and emitted reflection events.
++  - `tests/test_cognitive_layer.py` validates how dashboard state and runbook representations rely on reflection events.
++
++3.5. Assisted Automation System
++
++3.5.1. Status
++- Marked as: IMPLEMENTED (Assisted).
++
++3.5.2. Evidence and Modules
++- Failover automation:
++  - `knez_core/failover/manager.py`:
++    - Implements `FailoverManager.simulate_local_failover`.
++    - Automatically reads checkpoints and constructs continuation prompts based on tokens seen so far.
++    - Uses `Metrics` to track failure counts, throughput, and TTFT safeguards.
++    - Emits events about failover and continuation behavior.
++  - `knez_core/failover/continuation.py`:
++    - Constructs prompts that instruct models to continue from partial outputs.
++- Session resume automation:
++  - `knez_core/sessions/store.py`:
++    - Compiles snapshots by aggregating snapshot deltas.
++    - Automatically emits events when snapshots are compiled or used.
++- Influence gating and shadow simulation:
++  - `knez.cognitive.influence.contracts.RoutingInfluenceAdapter`:
++    - Consumes `InfluenceReadinessRecord` and runtime switches.
++    - Produces `RoutingInfluenceTrace` indicating how influence would adjust routing scores.
++  - `knez.cognitive.shadow.simulator.ShadowSimulator`:
++    - Simulates alternative routing decisions.
++    - Computes `ShadowDecisionDelta`, including `estimated_risk`.
++    - Does not change live routing decisions.
++- Approval gating:
++  - `knez.cognitive.approval`:
++    - `ApprovalService` applies `PolicyEngine` rules to decide whether to allow influence promotion.
++    - Records audit logs via `ApprovalAuditLog`.
++- All these are “assisted” in the sense that they are triggered by either:
++  - External requests (e.g., replay endpoints, cognitive API calls).
++  - Internally created events reacting to a user-initiated generation.
++- There is no loop where the system initiates new user-visible tasks without prompts.
++
++3.6. Autonomous System
++
++3.6.1. Status
++- Marked as: NOT PRESENT.
++
++3.6.2. Evidence
++- No cron-like or scheduler modules exist.
++- No function in the repository creates sessions or chat completion requests without an incoming HTTP request.
++- Cognitive and governance components only read existing events and write reflection events; they do not feed directly back into `Router` configuration in a persistent way without human approval or configuration changes.
++
++4. CORE REQUEST FLOW (END-TO-END)
++
++4.1. /v1/chat/completions (Core KNEZ)
++
++4.1.1. Entry and Request Model
++- Implemented in [knez_core/api/completions.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/api/completions.py).
++- Request type: `ChatCompletionRequest`:
++  - `model: Optional[str]`
++  - `messages: list[ChatMessage]`
++  - `stream: bool = True`
++  - `temperature: Optional[float]`
++  - `max_tokens: Optional[int]`
++  - `top_p: Optional[float]`
++  - `session_id: Optional[str]`
++
++4.1.2. Session ID and Lineage
++- If `session_id` is not provided:
++  - A new `session_id` is generated using `uuid.uuid4().hex`.
++- `get_session_lineage(session_id)` is called:
++  - If it returns `None`, `record_session_lineage` is invoked with:
++    - `parent_session_id=None`.
++    - `resume_snapshot_id=None`.
++    - `resume_mode="fresh"`.
++    - `resume_reason=None`.
++- This writes a row in `session_lineage` table and emits a `session_created` event.
++
++4.1.3. Event Emission: Session Start
++- An event is emitted using `get_emitter().emit(...)`:
++  - `event_type=EventType.INPUT`.
++  - `event_name="session_start"`.
++  - `source=EventSource.KNEZ_CORE`.
++  - `severity=EventSeverity.INFO`.
++  - Payload includes:
++    - `model`.
++    - `stream` flag.
++    - `message_count`.
++- The `EventStore` eventually flushes this event to `data/events.log`.
++
++4.1.4. GenerationRequest Construction
++- A `GenerationRequest` is instantiated with:
++  - `messages=req.messages`.
++  - `temperature=req.temperature or 0.7`.
++  - `max_tokens=req.max_tokens`.
++  - `top_p=req.top_p or 1.0`.
++  - `stream=req.stream`.
++  - `metadata={"model": req.model or "", "session_id": session_id}`.
++
++4.1.5. Streaming Path
++- If `req.stream` is `True`:
++  - `_sse_stream(request, gen_request, session_id)` is used as the generator for `StreamingResponse` with `media_type="text/event-stream"`.
++- Within `_sse_stream`:
++  - A `CheckpointWorker` is instantiated with `session_id`.
++  - A router object is retrieved: `router_obj: Router = request.app.state.router`.
++  - A backend is chosen:
++    - It first tries to select a `LocalBackend` instance from `router_obj.backends`.
++    - If no `LocalBackend` is found, `router_obj.select(gen_request)` is awaited.
++  - As tokens are generated:
++    - The function implements a time-to-first-token safeguard:
++      - If no token is produced within a timeout (5 seconds), it emits a keep-alive SSE message `{"id": session_id, "object": "keep-alive"}` and increments a metrics counter via `Metrics().inc_ttft_safeguard(backend.model_id)`.
++    - For each token:
++      - If the HTTP request is disconnected, the loop breaks.
++      - Tokens equal to `"__DONE__"` trigger token stream end events.
++      - Other tokens:
++        - Are submitted to the `CheckpointWorker` with token index and string.
++        - Are yielded as SSE data frames (e.g., `data: {"id": session_id, "object": "chat.completion.chunk", ...}\n\n`).
++  - `CheckpointWorker`:
++    - Submits tokens to an in-memory queue.
++    - Periodically flushes to Redis and SQLite based on interval and token count.
++    - Emits checkpoint events when flushes happen.
++
++4.1.6. Non-Streaming Path
++- If `req.stream` is `False`:
++  - `router_obj: Router = request.app.state.router` is obtained.
++  - A `LocalBackend` is searched in `router_obj.backends`.
++    - If found, it is used; otherwise, `router_obj.select(gen_request)` is called.
++  - A list `collected: list[str]` accumulates tokens from `backend.generate`.
++  - `BackendFailure` exceptions:
++    - If raised, a JSON error body `{"error": "backend_stream_interrupted", "reason": <str(e)>}` is returned as a `StreamingResponse` with `application/json`.
++  - On success:
++    - The tokens in `collected` are concatenated into a single string.
++    - The final response is:
++      - `{"id": session_id, "object": "chat.completion", "choices": [{"message": {"role": "assistant", "content": "<text>"}, "finish_reason": "stop"}]}`.
++    - This is returned as a `StreamingResponse` with `media_type="application/json"` (non-streaming HTTP response).
++
++4.1.7. Emitted Events During Generation
++- `router_obj.select` uses:
++  - `score_health` and `classify` to determine candidate backends and scores.
++  - `MemoryHintGenerator` to generate hints from memory store.
++  - `RoutingInfluenceAdapter` to apply or monitor influence based on governance.
++- `Router` emits:
++  - `EventType.DECISION` event `router_route_decision` with payload containing candidates and selected backend.
++  - `EventType.ANALYSIS` events:
++    - `memory_hint_supported_decision` or `memory_hint_ignored`.
++- Checkpointing:
++  - `RedisStream` and `SQLiteWriter` emit `EventType.PERSISTENCE` events (e.g., `CHECKPOINT_WRITE`, `CHECKPOINT_FLUSH`).
++- Failures:
++  - `BackendFailure` and failover logic emit `EventType.ERROR` and `EventType.ACTION` events, depending on module.
++
++4.2. /v1/chat/completions (Compat Layer)
++
++4.2.1. Entry and Request Model
++- Implemented in [knez/compat/api.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/compat/api.py).
++- Request type: `ChatCompletionsRequest`:
++  - Mirrors OpenAI fields:
++    - `model`, `messages`, `stream`, `temperature`, `max_tokens`, `top_p`, `session_id`.
++    - Additional `tools` and `tool_choice` for passive tool compatibility.
++
++4.2.2. Tool Handling and Events
++- If `tools` or `tool_choice` is present:
++  - `_emit_tool_ignored(session_id, "chat.completions", tools, tool_choice)` is called.
++  - This uses `get_emitter()` and emits:
++    - `event_type=EventType.ACTION`.
++    - `event_name="tool_ignored"`.
++    - `source=EventSource.TOOL`.
++    - `severity=EventSeverity.INFO`.
++    - Payload includes:
++      - `request_type`.
++      - `tools_present`.
++      - `tool_choice_present`.
++- The actual request forwarded to core excludes `tools` and `tool_choice`.
++
++4.2.3. SSE Normalization and Keep-Alive Control
++- A helper `_normalize_sse_stream(upstream, keepalive_enabled)`:
++  - Consumes SSE frames from the upstream core app.
++  - Splits by `\n\n` into frames.
++  - Processes lines starting with `data: `.
++  - For `[DONE]`:
++    - Emits `data: [DONE]\n\n` and returns.
++  - For JSON payloads:
++    - If `object == "keep-alive"`:
++      - If `keepalive_enabled` is `True`, forwards the frame unchanged; otherwise, suppresses it.
++    - If an `error` field exists without `choices`:
++      - Normalizes to `{"error": {"message": <message>, "type": <type>}}`.
++    - Otherwise:
++      - Forwards the JSON object.
++  - For non-JSON payloads:
++    - Forwards as `data: <payload>\n\n`.
++- `keepalive_enabled` is determined by:
++  - `KNEZ_SSE_KEEPALIVE` environment variable (lowercased).
++  - If equal to `"false"`, keep-alive frames are suppressed.
++
++4.2.4. Streaming and Non-Streaming Proxy
++- For streaming requests:
++  - A `StreamingResponse` is returned with `media_type="text/event-stream"`.
++  - Uses `httpx.AsyncClient(app=core_app, base_url="http://core")` to call core `/v1/chat/completions` in streaming mode.
++- For non-streaming requests:
++  - Forwarded via `client.post` to core.
++  - Response:
++    - On JSON parse failure:
++      - Returns `{"error": {"message": "invalid_upstream_response", "type": "backend_error"}}` with upstream status code.
++    - On JSON with `error` but no `choices`:
++      - Normalizes the error as above and returns with upstream status code.
++    - Otherwise:
++      - Forwards the JSON and status code unchanged.
++
++4.3. /v1/responses (Compat Layer)
++
++4.3.1. Entry and Request Model
++- Implemented in [knez/compat/api.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/compat/api.py).
++- Request type: `ResponsesRequest`:
++  - `model: str`.
++  - `input: Optional[str]`.
++  - `messages: Optional[List[ChatMessage]]`.
++  - `temperature`, `max_tokens`, `top_p`.
++  - `tools`, `tool_choice`.
++
++4.3.2. Input Handling
++- If `tools` or `tool_choice` is present:
++  - `_emit_tool_ignored(None, "responses", tools, tool_choice)` is invoked.
++- If `messages` is provided:
++  - They are converted via `.model_dump()` to list-of-dicts.
++- Else if `input` is provided:
++  - A single user message is constructed: `{"role": "user", "content": input}`.
++- Else:
++  - Returns 400 with `{"error": {"message": "missing_input", "type": "invalid_request_error"}}`.
++
++4.3.3. Internal Mapping to Core
++- Constructs payload:
++  - `model`, `messages`, `stream=False`, plus sampling parameters if present.
++- Sends POST to core `/v1/chat/completions` using `httpx.AsyncClient(app=core_app, base_url="http://core")`.
++- Handles response:
++  - On JSON parse failure:
++    - Returns normalized backend error as in chat completions.
++  - On `error` without `choices`:
++    - Returns normalized error.
++  - Otherwise:
++    - Extracts the first choice’s `message.content` as text.
++    - Builds an OpenAI-style `response` object (non-streaming) with:
++      - `id`, `created_at`, `model`, `object`, `output`, `usage`.
++
++4.4. /v1/models (Compat Layer)
++
++4.4.1. Implementation
++- Implemented in [knez/compat/api.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/compat/api.py).
++- Calls `get_feature_flags()` from [knez/compat/feature_flags.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/compat/feature_flags.py).
++- Returns:
++  - `{"object": "list", "data": [{"id": "knez-router", "object": "model", "owned_by": "knez", "metadata": { ...flags... }}]}`.
++
++4.5. /sessions/* (Core KNEZ)
++
++4.5.1. /sessions/{session_id}/resume
++- Handled by `resume_session` in [knez_core/api/sessions.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/api/sessions.py).
++- Flow:
++  - Uses `EventStore` to check if there is at least one event for the given session; if none, returns 404.
++  - Emits `session_resume_requested` event with `EventType.INPUT`.
++  - Optionally, fetches an agent definition via `get_agent(agent_id)` and builds an `agent_context` dict.
++  - Calls `compile_resume_snapshot_for_session(session_id, agent_context=None)` (note: agent context is currently always `None` here).
++  - Creates a new session ID and records lineage via `record_session_lineage` with:
++    - `parent_session_id` equal to the original session ID.
++    - `resume_snapshot_id` from the compiled snapshot.
++    - `resume_mode="resumed"`.
++  - Emits `resume_snapshot_loaded` event with `EventType.PERSISTENCE`.
++  - Returns JSON including:
++    - `parent_session_id`, `new_session_id`, `resume_snapshot_id`, `resume_mode`, `resume_reason`.
++    - `snapshot` details including high-level task state, accepted facts, constraints, open questions, agent context, and created timestamp.
++
++4.5.2. /sessions/{session_id}/resume_snapshot
++- Handled by `get_session_resume_snapshot`.
++- Flow:
++  - Validates session existence by checking tail events.
++  - Compiles a resume snapshot via `compile_resume_snapshot_for_session(session_id, agent_context=None)`.
++  - Emits `resume_snapshot_loaded` event.
++  - Returns JSON describing the snapshot as above but without creating a new session.
++
++4.5.3. /sessions/{session_id}/fork
++- Handled by `fork_session`.
++- Flow:
++  - Validates session existence.
++  - Creates a new `session_id`.
++  - Calls `record_session_lineage` with:
++    - `parent_session_id` set to the original session.
++    - `resume_snapshot_id=None`.
++    - `resume_mode="forked"`.
++  - Emits `session_forked` event.
++  - Returns JSON describing lineage: `parent_session_id`, `new_session_id`, `resume_mode`, `resume_reason`.
++
++4.6. /replay/* (Core KNEZ)
++
++4.6.1. /sessions/{session_id}/replay
++- Implemented in `knez_core/replay/api.py`.
++- Flow:
++  - Calls `replay_session(session_id)` from `replay.engine`.
++  - Returns `result["replay"]`, which includes:
++    - `session_id`.
++    - `timeline`: phases with names, start/end times, and events.
++    - `stats`: `ReplayStats` converted to dict.
++
++4.6.2. /sessions/{session_id}/summary
++- Also in `replay/api.py`.
++- Flow:
++  - Calls `replay_session`.
++  - Uses `summary_to_dict(result["summary"])` to convert `SessionSummary` to dict.
++  - Returns summary including:
++    - `session_id`.
++    - `duration_s`.
++    - `phases`.
++    - `stats`.
++    - `insights`.
++    - `outcome` string.
++
++4.6.3. /sessions/{session_id}/insights
++- In `replay/api.py`.
++- Flow:
++  - Calls `replay_session`.
++  - Returns list of dicts constructed from `Insight` instances:
++    - `insight_id`, `severity`, `message`, `evidence`.
++
++4.7. /taqwin/events
++
++4.7.1. Integration Endpoint
++- Implemented in [knez/integrations/taqwin/adapter.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/integrations/taqwin/adapter.py).
++- Flow:
++  - Reads request body as JSON.
++  - Uses `TaqwinValidator` to validate the payload and returns a parsed result.
++  - If validation fails or parsed is `None`:
++    - Returns JSON `{"status": "rejected"}`.
++    - Internal events:
++      - `emit_taqwin_payload_rejected` (in validator/events) emits `taqwin_payload_rejected` reflection events.
++  - If validation succeeds:
++    - Emits:
++      - `taqwin_input_received` event (with session ID and intent).
++      - `taqwin_analysis_completed` event (with count of observations).
++      - `taqwin_proposal_observed` event for each proposal.
++    - Returns JSON `{"status": "accepted"}`.
++- Tests:
++  - `tests/test_taqwin_adapter.py` verifies:
++    - Events emitted for valid payloads.
++    - Rejection and `taqwin_payload_rejected` emission for unknown sessions.
++
++5. ROUTING & MODEL EXECUTION
++
++5.1. Router Selection Logic
++
++5.1.1. Router Construction
++- `Router` is instantiated in `knez_core/app.py`:
++  - Backends: three `CloudBackend`s and one `LocalBackend`.
++  - `Router` receives this list and sets up its internal structures.
++
++5.1.2. Router.select Flow
++- Defined in [knez_core/router/router.py](file:///c:/Users/syedm/Downloads/ASSETS/KNEZ/knez/knez_core/router/router.py).
++- High-level steps:
++  - Classify the request using `classifier.classify(gen_request)`.
++  - Score backends using `scorer.score_health(backends, metrics)`.
++  - Generate memory hints via `MemoryHintGenerator`.
++  - Apply `RoutingInfluenceAdapter` to adjust scores based on stable influence signals and runtime switches.
++  - Select a backend based on scores and influence.
++  - Emit routing decision event and memory hint usage events.
++
++5.2. Backend Scoring and Health
++
++5.2.1. CloudBackend
++- Implemented in `knez_core/models/cloud_backend.py`.
++- Uses HTTP requests to remote model APIs using `httpx.AsyncClient`.
++- Provides `health()` method returning `BackendHealth` with status, latency, and other metrics.
++- Uses `Metrics` to record latency, failures, and tokens/sec.
++
++5.2.2. LocalBackend
++- Implemented in `knez_core/models/local_backend.py`.
++- Sends HTTP POST requests to `/api/generate` endpoint of a local model runtime.
++- Streams newline-delimited JSON lines.
++- For each JSON object:
++  - Checks `done` flag to mark completion.
++  - Yields tokens and calls `stream_callback` accordingly.
++- Emits events:
++  - `EventType.ANALYSIS` and `EventType.ACTION` events for token streaming and backend failures.
++- Uses `Metrics` for tokens/sec and latency metrics.
++
++5.3. Influence Hooks
++
++5.3.1. RoutingInfluenceAdapter
++- Implemented in `knez.cognitive.influence.contracts`.
++- Provides:
++  - `apply(session_id, scored_backends)` → returns:
++    - Possibly adjusted score/backends.
++    - `RoutingInfluenceTrace` describing adjustments.
++- Influence data is derived from:
++  - Governance decisions (InfluenceReadinessRecord).
++  - Runtime switches (e.g., enabling/disabling influence for routing).
++
++5.3.2. What Influence Hooks Do NOT Do
++- They do not directly persist changes to router configuration to disk.
++- They do not create new sessions or tasks.
++- They operate strictly within the context of a single routing decision.
++
++5.4. Treatment of Model Strings
++
++5.4.1. Model Field Handling
++- `ChatCompletionRequest.model` is optional and used in `GenerationRequest.metadata["model"]`.
++- The router’s backend selection does not directly inspect this string for selection logic in the provided code; classification and scoring rely more on request features and health metrics.
++- Exact matching or mapping of model IDs to backends is not determinable from code beyond:
++  - `CloudBackend` uses `model_id` fields set at construction.
++  - `LocalBackend` has a `model_id` default parameter.
++
++6. MEMORY SYSTEM (AS-IS)
++
++6.1. Memory Existence
++
++6.1.1. Memory Candidates
++- `knez_core/sessions/store.py` defines `MemoryCandidateRecord` and functions:
++  - `record_memory_candidate`.
++  - `list_memory_candidates`.
++- These represent intermediate candidates for promotion to durable memory.
++
++6.1.2. Durable Memories
++- `knez_core/memory/models.py` defines `MemoryCandidate` for durable memory.
++- `knez_core/memory/store.py` defines `MemoryStore`:
++  - Uses SQLite.
++  - Stores durable memory with summary strings and evidence event IDs.
++
++6.1.3. Memory Gate
++- `knez_core/memory/gate.py`:
++  - Replays session events.
++  - Evaluates conditions based on insights and stats (e.g., failover or checkpoint issues).
++  - Creates new memory candidates and writes to memory store.
++
++6.2. Memory Storage and Access
++
++6.2.1. Storage Location
++- `data/memory.db` (absolute path derived from working directory) is used for memory.
++
++6.2.2. Write Path
++- Memory candidates can be recorded via `record_memory_candidate` in `sessions.store`.
++- Durable memories are written via `MemoryStore` in `memory/store.py` called from `memory/gate.py`.
++
++6.2.3. Read Path
++- Memory is read via:
++  - `memory/api.py` for HTTP GET requests.
++  - `memory/consumption/hint_generator.py` for generating routing hints (internal).
++
++6.3. What is Not Remembered
++
++6.3.1. Raw Conversation Content
++- Raw token streams and full conversation text are not stored as durable memory; they are only present in:
++  - `events.log` (events with partial data).
++  - `sessions.db` checkpoint tables (token-level snapshots).
++- The memory system stores only summarized insight-like entries with evidence event IDs.
++
++6.3.2. Per-User Global Preferences
++- There is no explicit per-user preference storage in memory; sessions are keyed by session IDs, not user IDs.
++
++6.4. Memory Properties
++
++6.4.1. Durability
++- Durable across process restarts as long as `data/memory.db` is preserved.
++
++6.4.2. Structure
++- Memory entries are structured with typed fields, not arbitrary blobs.
++
++6.4.3. Inspectability
++- Accessible via HTTP API and direct database queries.
++
++6.4.4. Editability
++- No explicit update or delete endpoints implemented for memory entries.
++- Editing requires out-of-band manipulation of the SQLite database; there is no code for in-band editing.
++
++7. SESSION & LINEAGE MODEL
++
++7.1. Session Creation
++
++7.1.1. Fresh Sessions
++- Occur when `/v1/chat/completions` is called without a `session_id`.
++- `record_session_lineage` is called with:
++  - `resume_mode="fresh"`.
++  - `parent_session_id=None`.
++  - `resume_snapshot_id=None`.
++- A `session_created` event is emitted.
++
++7.2. Resume Logic
++
++7.2.1. Resume Snapshot Compilation
++- `compile_resume_snapshot_for_session`:
++  - Checks for an existing resume snapshot (without agent context) using `get_resume_snapshot_for_session`.
++  - If found, returns that snapshot.
++  - Otherwise:
++    - Loads snapshot deltas via `load_snapshot_deltas`.
++    - Aggregates:
++      - `accepted_facts`.
++      - `constraints`.
++      - `open_questions`.
++      - `high_level_task_state`.
++    - Constructs a new `ResumeSnapshot`.
++    - Saves it via `save_resume_snapshot`.
++    - Emits `resume_snapshot_compiled` event.
++
++7.2.2. Resume Session Creation
++- `resume_session`:
++  - Validates the session’s existence in events.
++  - Calls `compile_resume_snapshot_for_session`.
++  - Creates a new session lineage with `resume_mode="resumed"`.
++
++7.3. Forking
++
++7.3.1. Fork Behavior
++- `fork_session`:
++  - Does not use snapshots; it simply creates a new session lineage row with `resume_mode="forked"`.
++  - Emits `session_forked` event.
++
++7.4. Snapshot Compilation and Deltas
++
++7.4.1. Snapshot Deltas
++- Stored in `snapshot_deltas` table with:
++  - `delta_type` field (e.g., `"fact"`, `"constraint"`, `"progress"`, `"decision"`, `"rejection"`).
++  - JSON-encoded `content`.
++  - `source_event_id`.
++
++7.4.2. Snapshot Assembly
++- `compile_resume_snapshot_for_session`:
++  - Aggregates deltas by type.
++  - Constructs `high_level_task_state` from progress/decision deltas.
++  - Collects `open_questions` when content indicates `kind=="open_question"`.
++
++7.5. Lineage Tables
++
++7.5.1. session_lineage Table
++- `record_session_lineage` writes:
++  - `session_id`, `parent_session_id`, `resume_snapshot_id`, `resume_mode`, `resume_reason`, `created_at`.
++
++7.5.2. resume_snapshots Table
++- Stores:
++  - Snapshot metadata.
++  - `accepted_facts`, `constraints`, `open_questions` as JSON.
++  - `agent_context` as JSON.
++
++7.5.3. failover_events Table
++- Used by failover features to record when failover occurs, from which backend to which backend, and why.
++
++7.6. Gaps and Failure Handling
++
++7.6.1. Missing Sessions
++- Resume and fork endpoints:
++  - Check event store for any events with the given session ID.
++  - Return 404 if none exist.
++
++7.6.2. Incomplete Snapshots
++- If no snapshot deltas exist for a session, `compile_resume_snapshot_for_session` creates a snapshot with:
++  - Empty arrays for facts, constraints, open questions.
++  - `high_level_task_state=None`.
++
++8. CHECKPOINTING & FAILOVER
++
++8.1. Redis vs SQLite Roles
++
++8.1.1. RedisStream
++- Implemented in `knez_core/checkpoints/redis_stream.py`.
++- Purpose:
++  - Acts as a high-throughput buffer for streaming token checkpoints.
++  - Stores tokens in Redis with partitioning by session ID and token index.
++
++8.1.2. SQLiteWriter
++- Implemented in `knez_core/checkpoints/sqlite_writer.py`.
++- Purpose:
++  - Persists checkpoints to `data/sessions.db`.
++  - Ensures tokens and metadata are durable.
++
++8.2. Token Persistence
++
++8.2.1. Streaming CheckpointWorker
++- For core `/v1/chat/completions`, checkpointing is done via an inner `CheckpointWorker`.
++- Tokens are:
++  - Pushed into an asyncio queue.
++  - Periodically flushed to Redis and SQLite based on time and token count thresholds.
++
++8.2.2. Replay/Failover CheckpointWorker
++- `knez_core/checkpoints/reader.CheckpointWorker`:
++  - Similar structure but oriented toward reading from Redis and writing to SQLite or vice versa based on read mode.
++
++8.3. Gap Detection
++
++8.3.1. Tests
++- `tests/test_gap_policy.py` and `tests/test_redis_backlog.py` reveal:
++  - Behavior when Redis backlog grows.
++  - Rules for reading and flushing tokens under high load.
++
++8.4. Continuation Logic
++
++8.4.1. Continuation Prompt
++- Implemented in `knez_core/failover/continuation.py`.
++- Builds a prompt that combines:
++  - Partial outputs from checkpoints.
++  - Instructions to avoid repeating or contradicting previous outputs.
++
++8.4.2. FailoverManager
++- `simulate_local_failover`:
++  - Loads checkpoints for session.
++  - Constructs continuation prompt.
++  - Invokes `LocalBackend.generate` with the continuation prompt.
++  - Yields tokens representing continued output.
++
++8.5. Failure Modes
++
++8.5.1. BackendFailure
++- Defined in `knez_core/utils/exceptions.py`.
++- Raised by local/cloud backends when HTTP responses are invalid or streaming errors occur.
++- In chat completions non-streaming path:
++  - Caught and converted into `backend_stream_interrupted` response.
++
++8.5.2. Redis Pressure
++- `Metrics.inc_redis_pressure` increments a Prometheus counter keyed by session ID.
++- Used when backlog or delays occur; details are in tests (e.g., `test_redis_backlog.py`).
++
++9. EVENT SYSTEM (TRUTH SOURCE)
++
++9.1. Event Schema
++
++9.1.1. Event Types
++- Defined in `knez_core/events/schema.py`:
++  - `EventType.INPUT`.
++  - `EventType.ANALYSIS`.
++  - `EventType.DECISION`.
++  - `EventType.ACTION`.
++  - `EventType.REFLECTION`.
++  - `EventType.PERSISTENCE`.
++  - `EventType.ERROR`.
++
++9.1.2. EventSeverity
++- `DEBUG`, `INFO`, `WARN`, `ERROR`.
++
++9.1.3. EventSource
++- `knez_core`, `llfs`, `model`, `taqwin`, `tool`, `system`.
++
++9.1.4. Event Dataclass
++- Each event includes:
++  - `event_id`.
++  - `timestamp` (ISO string).
++  - `session_id`.
++  - `task_id`.
++  - `event_type`.
++  - `event_name`.
++  - `source`.
++  - `severity`.
++  - `payload` (dict).
++  - `tags` (list of strings).
++
++9.2. Emission Points
++
++9.2.1. Core API
++- `chat_completions` emits:
++  - `session_start`, `token_stream`, `token_stream_end`, and failure events.
++- `sessions.store` emits:
++  - `session_created`, `session_resumed`, `session_forked`, `resume_snapshot_compiled`, `resume_snapshot_loaded`, `snapshot_delta_recorded`.
++- `events` modules and memory gate emit various events for checkpointing and memory.
++
++9.2.2. Cognitive Layer
++- `governance` emits reflection events about memory and influence readiness.
++- `dashboard` reads but does not emit.
++- `shadow` emits delta-related events via its store (where implemented).
++
++9.2.3. TAQWIN Integration
++- `knez/integrations/taqwin/events.py`:
++  - Emits `taqwin_input_received`, `taqwin_analysis_completed`, `taqwin_proposal_observed`, `taqwin_payload_rejected`.
++
++9.3. Storage Guarantees
++
++9.3.1. EventStore
++- `knez_core/events/store.py`:
++  - Maintains an in-memory queue.
++  - Writes events line-by-line as JSON to `data/events.log`.
++  - `start()` begins a background task to flush events.
++  - `stop()` stops the background task.
++
++9.3.2. Tail Operations
++- `EventStore.tail(limit, event_type, session_id, task_id)`:
++  - Returns the last `limit` events matching provided filters by scanning the log file.
++
++9.4. Replay Semantics
++
++9.4.1. Replay Pipeline
++- `replay/engine.replay_session`:
++  - Loads events for a session via `get_store().tail` or other store methods.
++  - Computes:
++    - Phases via `build_timeline_phases`.
++    - Stats via `compute_stats`.
++    - Insights via `generate_insights`.
++    - Summary via `build_session_summary`.
++  - Emits reflection events via `emit_reflection_events`.
++
++9.5. Coupling to Cognitive Layer
++
++9.5.1. Event-Driven Cognitive Computations
++- Cognitive modules consume events via:
++  - `EventStore` from `knez_core.events.store`.
++  - Replay results from `knez_core.replay.engine`.
++  - Reflection events produced by replay and governance.
++
++9.5.2. No Direct Hard Coupling into Router
++- Influence decisions are computed by `governance` and `IRIEvaluator`.
++- They are only applied to routing via the influence adapter and runtime switches, which must be enabled.
++- There is no code that permanently rewrites router configuration based on cognitive results.
++
++10. COGNITIVE LAYER REALITY CHECK
++
++10.1. Dashboard
++
++10.1.1. What It Computes
++- `knez/cognitive/dashboard.py`:
++  - Aggregates event-based metrics including:
++    - Governance insights counts.
++    - Influence readiness distributions.
++    - Stability and drift metrics.
++    - TAQWIN session observations.
++
++10.1.2. Inputs
++- Event logs via `EventStore`.
++- Reflection events from governance and replay.
++
++10.1.3. Effect on Execution
++- Does not affect routing, failover, or generation.
++- Observational only.
++
++10.2. Audit
++
++10.2.1. What It Computes
++- `knez/cognitive/audit.py` defines functions such as:
++  - `audit_influence_readiness_consistency`.
++  - `audit_shadow_vs_live_divergence`.
++  - `audit_drift_monitor_vs_switches`.
++- These compute high-level checks and statuses based on reflection and influence state.
++
++10.2.2. Inputs
++- Reflection events.
++- Influence readiness records.
++- Shadow simulation summaries.
++
++10.2.3. Effect on Execution
++- Produces structured reports for inspection.
++- No direct effect on Router or backend selection.
++
++10.3. Runbook
++
++10.3.1. What It Computes
++- `knez/cognitive/runbook.generate_runbook(session_id)`:
++  - Produces a structured textual runbook for a session, including:
++    - Timeline of key events.
++    - TAQWIN interactions.
++    - Routing decisions, checkpoint events, and stability observations.
++
++10.3.2. Inputs
++- `replay_session(session_id)` results.
++- `summary_to_dict` results.
++- TAQWIN-related events mapped via `_TAQWIN_EVENT_PREFIXES`.
++
++10.3.3. Effect on Execution
++- Observational; does not change any runtime behavior.
++
++10.4. Shadow Influence
++
++10.4.1. What It Computes
++- `knez/cognitive/shadow/simulator.ShadowSimulator.simulate_session`:
++  - Derives a shadow backend based on influence readiness and routing candidates.
++  - Compares shadow vs actual routing outcomes.
++  - Computes an estimated risk.
++
++10.4.2. Inputs
++- Event log for a session (routing and failure events).
++- `InfluenceReadinessRecord`.
++- Hint impact reports (optional).
++
++10.4.3. Effect on Execution
++- Observational-only; results are used to compute risk levels.
++- No code writes these results into Router configuration directly.
++
++10.5. Approval
++
++10.5.1. What It Computes
++- `knez/cognitive/approval/api.ApprovalService`:
++  - Evaluates shadow influence summaries against policy rules.
++  - Produces an `ApprovalRecord` indicating approved/rejected state.
++
++10.5.2. Inputs
++- `InfluenceReadinessRecord`.
++- `ShadowInfluenceSummary`.
++- Policy rules in `PolicyEngine`.
++
++10.5.3. Effect on Execution
++- Records approval decisions in `ApprovalAuditLog`.
++- Influence application still requires runtime switches and adapter logic; no automated mutation of Router state is performed.
++
++11. TAQWIN INTEGRATION (REAL BEHAVIOR)
++
++11.1. TAQWIN → KNEZ Requests
++
++11.1.1. call_chat_completions
++- `taqwin/knez_client.py` `call_chat_completions`:
++  - Builds payload with:
++    - `model`, `messages`, `stream=False`, `session_id`.
++  - Sends POST to `KNEZ_BASE_URL/v1/chat/completions`.
++  - Raises on non-2xx HTTP status.
++
++11.1.2. send_taqwin_response
++- Sends POST to `KNEZ_BASE_URL/taqwin/events` with TAQWIN-produced payload.
++
++11.2. KNEZ TAQWIN Endpoint Validation
++
++11.2.1. TaqwinValidator
++- `knez/integrations/taqwin/validator.py`:
++  - Parses and validates payloads using `schemas.py`.
++  - Verifies that the session exists by consulting `EventStore`.
++  - If session is unknown:
++    - Marks payload as invalid.
++    - Emits `taqwin_payload_rejected` event with `EventType.REFLECTION`.
++
++11.2.2. Adapter Behavior
++- `knez/integrations/taqwin/adapter.taqwin_events`:
++  - Returns `{"status": "rejected"}` for invalid or unknown sessions.
++  - Emits:
++    - `taqwin_input_received`.
++    - `taqwin_analysis_completed`.
++    - `taqwin_proposal_observed` for each proposal.
++  - Returns `{"status": "accepted"}` for valid payloads.
++
++11.3. Limitations
++
++11.3.1. No Direct Influence on Router from TAQWIN
++- TAQWIN events are ingested as part of the event stream and can be used by cognitive components.
++- There is no direct path that uses TAQWIN proposals to modify routing decisions in real time.
++
++12. IDE / COMPATIBILITY LAYER STATUS
++
++12.1. What knez/compat Adds
++
++12.1.1. Endpoints
++- `POST /v1/chat/completions`: OpenAI-style completions.
++- `POST /v1/responses`: OpenAI Responses API.
++- `GET /v1/models`: model listing with capability metadata.
++
++12.1.2. Behavior vs Core
++- All business logic (routing, memory, failover, sessions) stays in core KNEZ (`knez_core`).
++- Compat layer is a pure translation/proxy layer over HTTP+in-process FastAPI.
++
++12.2. How It Proxies
++
++12.2.1. HTTP Proxy
++- Uses `httpx.AsyncClient(app=core_app, base_url="http://core")` to simulate HTTP calls to KNEZ core.
++- Forwards headers and JSON body.
++
++12.3. SSE Normalization
++
++12.3.1. Standardization
++- `_normalize_sse_stream` ensures SSE output complies with:
++  - `data: <json>\n\n` frames for chunks.
++  - `data: [DONE]\n\n` end-of-stream marker.
++  - Optional suppression of keep-alive frames based on `KNEZ_SSE_KEEPALIVE`.
++
++12.4. Responses API Mapping
++
++12.4.1. Mapping Logic
++- `compat_responses` maps:
++  - `input` or `messages` to core `messages`.
++  - Always uses non-streaming core path.
++  - Extracts final text and wraps it in a Responses-style `response` object.
++
++12.5. Capability Flags
++
++12.5.1. feature_flags
++- `CompatFeatureFlags` with fields:
++  - `supports_tools: bool = False`.
++  - `supports_streaming: bool = True`.
++  - `supports_inline_completion: bool = False`.
++  - `supports_responses: bool = True`.
++
++12.5.2. /v1/models Exposure
++- `GET /v1/models` attaches these flags under `metadata`.
++
++13. TEST SUITE ANALYSIS
++
++13.1. What Is Tested
++- Routing and influence:
++  - `tests/test_influence_execution.py`.
++  - `tests/test_influence_interface.py`.
++- Cognitive layer:
++  - `tests/test_cognitive_layer.py` for dashboard, runbook, and audits.
++- Memory:
++  - `tests/test_memory.py`.
++  - `tests/test_memory_governance.py`.
++  - `tests/test_memory_hints.py`.
++- Failover:
++  - `tests/test_failover_loop.py`.
++  - `tests/test_local_failover.py`.
++  - `tests/test_gap_policy.py`.
++  - `tests/test_redis_backlog.py`.
++- Replay:
++  - `tests/test_replay.py`.
++- Sessions:
++  - `tests/test_continuous_sessions.py`.
++  - `tests/test_resume_dedupe.py`.
++  - `tests/test_stress_sessions.py`.
++- TAQWIN:
++  - `tests/test_taqwin_adapter.py`.
++- Tokenizer and TTFT:
++  - `tests/test_tokenizer_consistency.py`.
++  - `tests/test_ttft_keepalive.py`.
++
++13.2. What Is Not Tested (Based on Code)
++- There are no explicit tests for:
++  - Authentication or authorization (none implemented).
++  - Long-running autonomous loops (none exist).
++  - External deployment or metrics scraping endpoints.
++
++13.3. Implicit Contracts from Tests
++- Events:
++  - Tests assert exact event names and types, forming a contract between core and cognitive/replay systems.
++- Memory governance:
++  - Tests define expected behavior for how many sessions or correlations are required before a hint is promoted.
++- Influence readiness:
++  - Tests assert which reflection events should be emitted for specific governance outcomes.
++
++14. CAPABILITY MATRIX (FACTUAL)
++
++14.1. Table
++
++| Capability            | Present/Partial/Absent | Evidence (Modules / Files) |
++|-----------------------|------------------------|-----------------------------|
++| Conversational        | IMPLEMENTED            | `knez_core/api/completions.py`, `knez_core/models/*` |
++| Memory recall         | IMPLEMENTED            | `knez_core/memory/*`, `knez_core/sessions/store.py`, `memory/api.py` |
++| Reflection            | IMPLEMENTED            | `knez_core/replay/*`, `knez.cognitive.governance`, `knez.cognitive.dashboard`, `knez.cognitive.audit` |
++| Automation (failover) | IMPLEMENTED            | `knez_core/failover/*`, checkpoints, sessions, tests |
++| Tool execution        | ABSENT                 | No tool execution engine; compat only emits `tool_ignored` |
++| Autonomy              | ABSENT                 | No background task loops, no self-initiated sessions |
++| IDE usage             | IMPLEMENTED            | `knez/compat/*`, `docs/reports/IDE_INTEGRATION_GUIDE.md` |
++| Replay                | IMPLEMENTED            | `knez_core/replay/*`, `replay/api.py`, tests |
++| Governance            | IMPLEMENTED            | `knez/cognitive/governance.py`, tests |
++
++15. LIMITATIONS & FAILURE MODES
++
++15.1. Identified Limitations (Code-Provable)
++- No authentication or authorization: all HTTP endpoints are open.
++- No built-in rate limiting.
++- No direct configuration exposure for toggling cognitive features via HTTP.
++- No persistence of final router/influence configuration beyond process memory.
++
++15.2. Failure Modes
++- EventStore overflow:
++  - Uses a bounded queue; when full, events may be dropped (`_dropped` counter).
++- Redis outages:
++  - Checkpointing reads and writes may fail; tests and code indicate metrics and pressure counters, but no external alerting is implemented in this codebase.
++- SQLite errors:
++  - If SQLite files cannot be written (permissions, disk full), sessions, snapshots, or memory cannot be persisted; error handling is limited to exceptions being raised, not always converted into user-visible responses.
++
++16. CURRENT POSITION SUMMARY
++
++16.1. Where KNEZ Stands Today
++- From code:
++  - KNEZ is a multi-backend, event-driven conversational system with memory, reflection, cognitive governance, TAQWIN integration, and IDE-compatible APIs.
++
++16.2. Class of System
++- Conversational: true (implemented).
++- Memory: true (implemented).
++- Reflection: true (implemented).
++- Assisted automation: true (failover, checkpointing, snapshot compilation).
++- Autonomy: false (no self-initiated behavior).
++
++17. SERIALIZED SYSTEM CHECKPOINT
++
++checkpoint_id: report-2-2-2026
++date: 2026-02-02
++system_state:
++  conversational: true
++  memory: true
++  reflection: true
++  automation: true
++  autonomy: false
++ide_ready: true
++taqwin_integrated: true
++risk_level: controlled
++
+diff --git a/knez/cognitive/api.py b/knez/cognitive/api.py
+index 0cdde45..b3cc314 100644
+--- a/knez/cognitive/api.py
++++ b/knez/cognitive/api.py
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+ 
+ from typing import Any, Dict, List
++import uuid
+ 
+ from fastapi import APIRouter
+ 
+@@ -133,3 +134,22 @@ async def operator_set_contract_influence(influence_id: str, enabled: bool, reas
+         "disabled": influence_id in switches.influences_disabled,
+     }
+ 
++
++@router.post("/influence/vote")
++async def submit_vote(vote: Dict[str, Any]) -> Dict[str, Any]:
++    # Placeholder for Influence System integration
++    # vote: { sessionId, messageId, vote, reason }
++    return {"status": "recorded", "id": str(uuid.uuid4())}
++
++
++@router.get("/approvals/pending")
++async def get_pending_approvals() -> List[Dict[str, Any]]:
++    # Placeholder for Approval System integration
++    return []
++
++
++@router.post("/approvals/{approval_id}/decision")
++async def submit_approval_decision(approval_id: str, decision: Dict[str, str]) -> Dict[str, Any]:
++    # Placeholder for Approval System integration
++    # decision: { decision: "approved" | "rejected" }
++    return {"status": "processed"}
+-- 
+2.51.2.windows.1
+

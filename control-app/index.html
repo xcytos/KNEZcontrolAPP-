@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>KNEZ Control App – Phase 1 Shell</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <h1>KNEZ Control App</h1>
+        <div id="presence-indicator">Presence: SILENT</div>
+      </header>
+      <main>
+        <section id="chat">
+          <h2>Chat</h2>
+          <div id="chat-thread"></div>
+          <div id="chat-input">
+            <input id="chat-text" type="text" autocomplete="off" />
+            <button id="chat-send" type="button">Send</button>
+          </div>
+        </section>
+        <section id="memory-explorer">
+          <h2>Memory Explorer</h2>
+          <div id="memory-content"></div>
+        </section>
+        <section id="session-timeline">
+          <h2>Session Timeline</h2>
+          <div id="timeline-content"></div>
+        </section>
+      </main>
+      <footer>
+        <div id="app-status">Phase 1 · Read-only when KNEZ is unreachable</div>
+      </footer>
+    </div>
+  </body>
+</html>
+
