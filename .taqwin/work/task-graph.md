@@ -56,3 +56,9 @@ Current graph seeds:
   - Dependencies: CHECKPOINT 1 (delegation wired), KNEZ /health and /events availability for read-only inspection
   - Why: Provide visibility into runtime truth (connectivity, backends, degradation) without granting control.
   - Unblocked by: Verified runtime panels showing accurate /health output, honest handling of missing MCP registry endpoints, and no UI paths that select/start/stop backends.
+
+- Task: CHECKPOINT 1.76 — REPOSITORY SANITIZATION & EXECUTION VERIFICATION
+  - Status: done
+  - Dependencies: CHECKPOINT 1.5
+  - Why: Ensure reproducible baseline and repo hygiene.
+  - Unblocked by: Repository sanitation, git init, build/script verification.

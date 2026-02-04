@@ -9,10 +9,10 @@ Include:
 - success signal
 
 Current focus:
-- Active objective: Execute CHECKPOINT 1 (Protocol Alignment)
-- Why it matters: Control App must stop simulating cognition and delegate cognition to real KNEZ.
-- Immediate next step: Ensure KNEZ generation backend is reachable so completions return assistant text.
-- Success signal: Chat completions produce assistant text; memory/events/summary remain consistent and traceable.
+- Active objective: Maintain Repository Hygiene & Baseline (Checkpoint 1.76 Completed)
+- Why it matters: Checkpoint 1.76 established a clean baseline; future work must preserve it.
+- Immediate next step: Proceed to next feature/checkpoint while maintaining build/dev verification.
+- Success signal: Continuous build success and clean git history.
 
 Update — CHECKPOINT 1.5 (Runtime Discovery & Observability)
 - Active objective: Make runtime reality visible without granting control (read-only discovery).

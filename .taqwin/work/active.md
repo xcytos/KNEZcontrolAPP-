@@ -18,6 +18,11 @@ Current active tasks:
   - current state: ACTIVE — Control App surfaces KNEZ runtime snapshot via /health, recent /events signals for local backend activity, and honest MCP registry inspection (disabled unless KNEZ exposes it).
   - next concrete action: Verify runtime UI under both reachable and unreachable KNEZ conditions and keep governance invariants intact.
 
+- CHECKPOINT 1.76 — REPOSITORY SANITIZATION & EXECUTION VERIFICATION
+  - goal: Create clean, auditable Git repo and verify end-to-end execution.
+  - current state: COMPLETE — Git initialized, builds verified, scripts verified.
+  - next concrete action: N/A (Complete)
+
 - PROMPT-006 — KNEZ Handshake, Session & Memory Protocol
   - goal: Implement real KNEZ integration (Handshake, Session, Memory).
   - current state: COMPLETE — Superseded by CHECKPOINT 1 protocol alignment with real KNEZ core.
