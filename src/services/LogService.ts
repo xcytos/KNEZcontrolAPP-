@@ -1,4 +1,3 @@
-import { knezClient } from "./KnezClient";
 
 export enum LogLevel {
   DEBUG = "DEBUG",

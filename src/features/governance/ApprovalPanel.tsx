@@ -4,7 +4,6 @@ import { knezClient } from "../../services/KnezClient";
 
 export const ApprovalPanel: React.FC = () => {
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
-  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     fetchApprovals();
