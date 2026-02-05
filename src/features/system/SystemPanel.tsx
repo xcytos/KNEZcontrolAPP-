@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Command } from "@tauri-apps/plugin-shell";
 
-export const SystemPanel: React.FC = () => {
+export const SystemPanel: React.FC<{ onStackReady?: () => void }> = ({ onStackReady }) => {
   const [output, setOutput] = useState<string>("");
   const [status, setStatus] = useState<"idle" | "starting" | "running" | "failed">("idle");
 
@@ -42,6 +42,9 @@ export const SystemPanel: React.FC = () => {
         setOutput((prev) => prev + line + "\n");
         if (line.includes("=== STACK READY ===")) {
           setStatus("running");
+          if (onStackReady) {
+            onStackReady();
+          }
         }
       });
 
@@ -78,7 +81,7 @@ export const SystemPanel: React.FC = () => {
           disabled={status === "starting" || status === "running"}
           className="w-full py-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed text-zinc-300 rounded border border-zinc-700 transition-colors"
         >
-          {status === "running" ? "Stack Running" : "Start Local Stack"}
+          {status === "running" ? "Stack Running (Connected)" : "Launch & Connect KNEZ"}
         </button>
       </div>
 
