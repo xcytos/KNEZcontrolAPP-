@@ -55,9 +55,11 @@ export const ConnectionSettings: React.FC<{ onClose: () => void }> = ({ onClose 
       }
       const reg = await knezClient.tryGetMcpRegistry();
       setMcp(reg);
+      return true;
     } catch (err: any) {
       setStatus("failed");
       setMessage(`Health check failed: ${err.message || "Unknown error"}. Ensure KNEZ is running.`);
+      return false;
     }
   };
 
@@ -65,6 +67,13 @@ export const ConnectionSettings: React.FC<{ onClose: () => void }> = ({ onClose 
     knezClient.setTrusted(true);
     setMessage("Trusted KNEZ instance saved.");
     window.location.reload();
+  };
+
+  const handleAutoConnect = async () => {
+    const success = await handleCheck();
+    if (success) {
+      handleTrust();
+    }
   };
 
   const localBackendDetected = useMemo(() => {
@@ -133,7 +142,7 @@ export const ConnectionSettings: React.FC<{ onClose: () => void }> = ({ onClose 
           </div>
 
           {/* System Panel (Stack Orchestration) */}
-          <SystemPanel />
+          <SystemPanel onStackReady={handleAutoConnect} />
 
           {/* Backend Discovery */}
           {health && (
