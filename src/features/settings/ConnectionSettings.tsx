@@ -40,6 +40,9 @@ export const ConnectionSettings: React.FC<{ onClose: () => void }> = ({ onClose 
     knezClient.setTrusted(false);
 
     try {
+      // Small delay to allow stack to fully bind ports if this was triggered immediately after "STACK READY"
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
       const h = await knezClient.health();
       setHealth(h);
       setStatus("healthy");
@@ -52,9 +55,9 @@ export const ConnectionSettings: React.FC<{ onClose: () => void }> = ({ onClose 
       }
       const reg = await knezClient.tryGetMcpRegistry();
       setMcp(reg);
-    } catch {
+    } catch (err: any) {
       setStatus("failed");
-      setMessage("KNEZ health check failed. Ensure the KNEZ server is running.");
+      setMessage(`Health check failed: ${err.message || "Unknown error"}. Ensure KNEZ is running.`);
     }
   };
 
@@ -74,10 +77,17 @@ export const ConnectionSettings: React.FC<{ onClose: () => void }> = ({ onClose 
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-zinc-900 border border-zinc-700 rounded-lg p-6 w-[540px] shadow-xl">
-        <h2 className="text-lg font-light text-zinc-200 mb-4">KNEZ Connection (Observability)</h2>
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg w-[600px] shadow-xl max-h-[90vh] flex flex-col">
         
-        <div className="space-y-4">
+        {/* Header */}
+        <div className="p-6 pb-4 flex-none border-b border-zinc-800/50">
+          <h2 className="text-lg font-light text-zinc-200">KNEZ Connection (Observability)</h2>
+        </div>
+        
+        {/* Scrollable Body */}
+        <div className="p-6 overflow-y-auto flex-1 space-y-4">
+          
+          {/* Endpoint Input */}
           <div>
             <label className="block text-xs font-mono text-zinc-500 mb-1">ENDPOINT URL</label>
             <input 
@@ -89,6 +99,7 @@ export const ConnectionSettings: React.FC<{ onClose: () => void }> = ({ onClose 
             />
           </div>
 
+          {/* Status Message */}
           {message && (
              <div className={`text-xs p-2 rounded ${
                status === "healthy" ? "bg-green-900/20 text-green-400" :
@@ -98,6 +109,7 @@ export const ConnectionSettings: React.FC<{ onClose: () => void }> = ({ onClose 
              </div>
           )}
 
+          {/* Runtime Info */}
           <div className="text-xs text-zinc-400 border border-zinc-800 rounded p-3 bg-zinc-950/40">
             <div className="font-mono text-zinc-500 mb-2">Runtime</div>
             <div className="space-y-1">
@@ -120,8 +132,10 @@ export const ConnectionSettings: React.FC<{ onClose: () => void }> = ({ onClose 
             </div>
           </div>
 
+          {/* System Panel (Stack Orchestration) */}
           <SystemPanel />
 
+          {/* Backend Discovery */}
           {health && (
             <div className="text-xs text-zinc-400 border border-zinc-800 rounded p-3 bg-zinc-950/40">
               <div className="font-mono text-zinc-500 mb-2">Backend Discovery (read-only via /health)</div>
@@ -163,6 +177,7 @@ export const ConnectionSettings: React.FC<{ onClose: () => void }> = ({ onClose 
             </div>
           )}
 
+          {/* Ollama Awareness */}
           <div className="text-xs text-zinc-400 border border-zinc-800 rounded p-3 bg-zinc-950/40">
             <div className="font-mono text-zinc-500 mb-2">Ollama Awareness (indirect)</div>
             {status !== "healthy" ? (
@@ -178,6 +193,7 @@ export const ConnectionSettings: React.FC<{ onClose: () => void }> = ({ onClose 
             )}
           </div>
 
+          {/* MCP Registry */}
           <div className="text-xs text-zinc-400 border border-zinc-800 rounded p-3 bg-zinc-950/40">
             <div className="font-mono text-zinc-500 mb-2">MCP Registry (inspection only)</div>
             {status !== "healthy" ? (
@@ -201,30 +217,34 @@ export const ConnectionSettings: React.FC<{ onClose: () => void }> = ({ onClose 
               <div className="text-zinc-500">{mcp.reason}</div>
             )}
           </div>
+        </div>
 
-          <div className="flex justify-end space-x-2 pt-4">
+        {/* Footer */}
+        <div className="p-6 pt-4 flex-none border-t border-zinc-800/50 bg-zinc-900 rounded-b-lg">
+          <div className="flex justify-end space-x-2">
              <button 
                onClick={onClose}
-               className="px-4 py-2 text-sm text-zinc-400 hover:text-white"
+               className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors"
              >
                Close
              </button>
              <button 
                onClick={handleCheck}
                disabled={status === "checking"}
-               className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded disabled:opacity-50"
+               className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded disabled:opacity-50 transition-colors"
              >
                {status === "checking" ? "Checking..." : "Check Health"}
              </button>
              <button
                onClick={handleTrust}
                disabled={status !== "healthy"}
-               className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white text-sm rounded disabled:opacity-50"
+               className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white text-sm rounded disabled:opacity-50 transition-colors"
              >
                Trust
              </button>
           </div>
         </div>
+
       </div>
     </div>
   );

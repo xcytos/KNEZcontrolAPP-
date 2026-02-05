@@ -9,31 +9,50 @@ export const SystemPanel: React.FC = () => {
     setStatus("starting");
     setOutput("");
     
+    // Phase A: Frontend-First Truth Audit
+    const isTauri = !!(window as any).__TAURI__;
+    console.log("[SystemPanel] Check:", {
+      isTauri,
+      hasShell: !!Command
+    });
+
+    if (!isTauri) {
+      setOutput("[Error] Shell unavailable in web mode. Please run in Tauri.");
+      setStatus("failed");
+      return;
+    }
+
     try {
+      console.log("[SystemPanel] Creating command 'start-local-stack'...");
       // Execute the PowerShell script using the configured shell capability
-      const command = Command.create("powershell", ["-File", "scripts/start-stack.ps1"]);
+      const command = Command.create("start-local-stack");
+      console.log("[SystemPanel] Command created:", command);
       
-      command.on("close", (data: { code: number | null; signal: number | null }) => {
+      await command.on("close", (data: { code: number | null; signal: number | null }) => {
         setOutput((prev) => prev + `\n[Process exited with code ${data.code}]`);
         setStatus(data.code === 0 ? "running" : "failed");
       });
 
-      command.on("error", (error: any) => {
+      await command.on("error", (error: any) => {
         setOutput((prev) => prev + `\n[Error] ${error}`);
         setStatus("failed");
       });
 
-      command.stdout.on("data", (line: string) => {
+      await command.stdout.on("data", (line: string) => {
         setOutput((prev) => prev + line + "\n");
+        if (line.includes("=== STACK READY ===")) {
+          setStatus("running");
+        }
       });
 
-      command.stderr.on("data", (line: string) => {
+      await command.stderr.on("data", (line: string) => {
         setOutput((prev) => prev + `[STDERR] ${line}\n`);
       });
 
       await command.spawn();
       
     } catch (e) {
+      console.error("[SystemPanel] Spawn error:", e);
       setOutput((prev) => prev + `\n[Failed to spawn command] ${e}`);
       setStatus("failed");
     }
