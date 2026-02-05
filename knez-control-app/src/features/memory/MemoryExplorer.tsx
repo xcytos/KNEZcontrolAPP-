@@ -1,106 +1,118 @@
 import React, { useEffect, useState } from "react";
-import { knezClient, KnezMemoryRecord } from "../../services/KnezClient";
+import { knezClient } from "../../services/KnezClient";
+import { KnowledgeBaseView } from "./KnowledgeBaseView";
 
-type Props = {
-  sessionId: string | null;
-  readOnly: boolean;
-};
-
-export const MemoryExplorer: React.FC<Props> = ({ sessionId, readOnly }) => {
-  const [records, setRecords] = useState<KnezMemoryRecord[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchMemories = async () => {
-    if (!sessionId) return;
-    if (readOnly) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await knezClient.listMemory(sessionId, 200);
-      setRecords(data);
-    } catch (e) {
-      setError("Failed to fetch memory from KNEZ.");
-      setRecords([]);
-    } finally {
-      setLoading(false);
-    }
-  };
+const MemoryDetailModal: React.FC<{ 
+  memoryId: string | null;
+  onClose: () => void;
+}> = ({ memoryId, onClose }) => {
+  const [detail, setDetail] = useState<any>(null);
 
   useEffect(() => {
-    fetchMemories();
-  }, [sessionId, readOnly]);
+    if (memoryId) {
+      knezClient.getMemoryDetail(memoryId).then(setDetail).catch(() => setDetail(null));
+    } else {
+      setDetail(null);
+    }
+  }, [memoryId]);
+
+  if (!memoryId) return null;
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="mb-4 bg-orange-900/20 border border-orange-900/50 p-3 rounded-lg flex items-center gap-3">
-        <div className="text-xl">⚠️</div>
-        <div>
-          <h4 className="text-sm font-semibold text-orange-200">Validation Mode Active</h4>
-          <p className="text-xs text-orange-300/80">Memory captured during this phase is untrusted and should be considered temporary.</p>
-        </div>
-      </div>
-
-      <div className="mb-6 flex items-center justify-between">
-        <h2 className="text-xl font-light text-zinc-200">Memory Index</h2>
-        <div className="flex space-x-2">
-           <button 
-             onClick={fetchMemories}
-             disabled={readOnly || !sessionId}
-             className="text-xs px-2 py-1 bg-zinc-800 rounded border border-zinc-700 text-zinc-400 hover:text-white disabled:opacity-50"
-           >
-             Refresh
-           </button>
-           <span className="text-xs px-2 py-1 bg-zinc-800 rounded border border-zinc-700 text-zinc-400">
-             {records.length} Items
-           </span>
-        </div>
-      </div>
-
-      <div className="space-y-4">
-        {readOnly ? (
-          <div className="p-8 text-center border border-dashed border-zinc-800 rounded-lg text-zinc-500">
-            <p className="text-sm">Read-only mode.</p>
-            <p className="text-xs mt-2 opacity-50">Trust and connect to KNEZ to load memory.</p>
-          </div>
-        ) : loading ? (
-          <div className="text-center py-8 text-zinc-500">Loading memory...</div>
-        ) : error ? (
-          <div className="p-8 text-center border border-dashed border-red-900/40 rounded-lg text-red-400">
-            <p className="text-sm">{error}</p>
-          </div>
-        ) : records.length === 0 ? (
-          <div className="p-8 text-center border border-dashed border-zinc-800 rounded-lg text-zinc-500">
-             <p className="text-sm">No memory entries found.</p>
-             <p className="text-xs mt-2 opacity-50">KNEZ returned zero memory records for this session.</p>
-          </div>
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+      <div className="bg-zinc-900 border border-zinc-700 p-6 rounded-lg max-w-lg w-full max-h-[80vh] overflow-y-auto">
+        <h3 className="text-lg font-bold text-white mb-4">Memory Detail</h3>
+        {detail ? (
+           <div className="space-y-4">
+             <div>
+               <label className="text-xs text-zinc-500 uppercase">Summary</label>
+               <p className="text-zinc-300">{detail.summary}</p>
+             </div>
+             <div>
+               <label className="text-xs text-zinc-500 uppercase">Confidence</label>
+               <p className="text-zinc-300">{(detail.confidence * 100).toFixed(1)}%</p>
+             </div>
+             <div>
+               <label className="text-xs text-zinc-500 uppercase">Evidence</label>
+               <div className="bg-zinc-950 p-2 rounded text-xs font-mono text-zinc-400">
+                 {detail.evidence_event_ids?.join(", ") || "None"}
+               </div>
+             </div>
+             <div>
+               <label className="text-xs text-zinc-500 uppercase">JSON</label>
+               <pre className="text-[10px] bg-zinc-950 p-2 rounded overflow-x-auto text-green-400">
+                 {JSON.stringify(detail, null, 2)}
+               </pre>
+             </div>
+           </div>
         ) : (
-        records.map((mem) => (
-          <div key={mem.memory_id} className="group p-4 bg-zinc-900/50 border border-zinc-800 hover:border-zinc-600 rounded-lg transition-all duration-200">
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-950 text-orange-400 border border-orange-900/50 uppercase tracking-wide font-bold">UNTRUSTED</span>
-                <h3 className="text-sm font-medium text-zinc-200 group-hover:text-blue-400 transition-colors">
-                  {mem.summary}
-                </h3>
-              </div>
-              {mem.confidence > 0.8 && (
-                <span className="w-2 h-2 rounded-full bg-orange-500" />
-              )}
-            </div>
-            <div className="mt-3 flex items-center space-x-4 text-xs text-zinc-600 font-mono">
-              <span>ID: {mem.memory_id}</span>
-              <span>{new Date(mem.created_at).toLocaleDateString()}</span>
-              <span>type={mem.memory_type}</span>
-              <span>conf={mem.confidence.toFixed(2)}</span>
-            </div>
-            <div className="mt-2 text-xs text-zinc-500">
-              <div>retention: {mem.retention_policy}</div>
-              <div>evidence events: {mem.evidence_event_ids.join(", ") || "none"}</div>
-            </div>
-          </div>
-        )))}
+          <div className="text-zinc-500">Loading...</div>
+        )}
+        <div className="mt-6 flex justify-end">
+          <button onClick={onClose} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded">Close</button>
+        </div>
       </div>
+    </div>
+  );
+};
+
+export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: boolean }> = ({ sessionId }) => {
+  const [memories, setMemories] = useState<any[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"memories" | "knowledge">("memories");
+
+  useEffect(() => {
+    knezClient.listMemory(sessionId || undefined).then(recs => {
+       setMemories(knezClient.mapMemoryToUi(recs));
+    });
+  }, [sessionId]);
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="p-4 border-b border-zinc-800 flex justify-between items-center">
+        <h2 className="font-bold text-zinc-100">Memory Graph</h2>
+        <div className="flex gap-2">
+           <button 
+             onClick={() => setActiveTab("memories")}
+             className={`text-xs px-2 py-1 rounded ${activeTab === 'memories' ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+           >
+             Memories
+           </button>
+           <button 
+             onClick={() => setActiveTab("knowledge")}
+             className={`text-xs px-2 py-1 rounded ${activeTab === 'knowledge' ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+           >
+             Knowledge Base
+           </button>
+        </div>
+      </div>
+      
+      {activeTab === 'memories' ? (
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {memories.map((m) => (
+            <div 
+              key={m.id} 
+              onClick={() => setSelectedId(m.id)}
+              className="p-3 bg-zinc-900 border border-zinc-800 rounded hover:bg-zinc-800 cursor-pointer transition-colors group"
+            >
+              <div className="text-sm text-zinc-300 group-hover:text-white">{m.summary}</div>
+              <div className="mt-2 flex items-center justify-between">
+                <span className="text-[10px] text-zinc-500">{new Date(m.createdAt).toLocaleTimeString()}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-zinc-600 font-mono">{(m.importance * 100).toFixed(0)}% Conf</span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <KnowledgeBaseView />
+      )}
+      
+      <MemoryDetailModal 
+        memoryId={selectedId}
+        onClose={() => setSelectedId(null)}
+      />
     </div>
   );
 };

@@ -19,6 +19,7 @@
   "devDependencies": {
     "@babel/code-frame": "^7.29.0",
     "@babel/core": "^7.25.0",
+    "@playwright/test": "^1.58.1",
     "@tailwindcss/postcss": "^4.1.18",
     "@tauri-apps/cli": "^2",
     "@testing-library/jest-dom": "^6.9.1",

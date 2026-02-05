@@ -9,11 +9,7 @@ Include:
 - success signal
 
 Current focus:
-- Active objective: PROMPT-1.82 — Shell Permission Governance & Verification
-- Why it matters: UI orchestration is blocked by Tauri v2 security model.
-- Immediate next step: Verify "Start Local Stack" button in dev server after rebuild.
-- Success signal: "Start Local Stack" launches Ollama/KNEZ and /health turns green.
-
-Update — CHECKPOINT 1.81 (Frontend Truth)
-- Active objective: Verify stack via UI, not just CLI.
-- Status: Unblocking via PROMPT-1.82 fix (named command registration).
+- Active objective: CHECKPOINT 6 — NEW SUBSYSTEMS (COMPLETED)
+- Why it matters: KNEZ is no longer just a chatbot. It can see (Perception), listen (Voice), and act autonomously (Agent Loop).
+- Immediate next step: Generate NEXTPLAN for CP7 (Deployment & Cloud Sync).
+- Success signal: "Agent Loop" is visible in Sidebar. "Perception" button works. Voice mic toggles.

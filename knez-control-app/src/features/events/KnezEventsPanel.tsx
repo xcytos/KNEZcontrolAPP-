@@ -2,119 +2,77 @@ import React, { useEffect, useState } from "react";
 import { knezClient } from "../../services/KnezClient";
 import { KnezEvent } from "../../domain/DataContracts";
 
-type Props = {
-  sessionId: string | null;
-  readOnly: boolean;
-};
+type Severity = "DEBUG" | "INFO" | "WARN" | "ERROR";
 
-function safeStringify(value: unknown, limit = 800): string {
-  let raw = "";
-  try {
-    raw = JSON.stringify(value);
-  } catch {
-    raw = String(value);
-  }
-  if (raw.length <= limit) return raw;
-  return `${raw.slice(0, limit)}…`;
-}
-
-export const KnezEventsPanel: React.FC<Props> = ({ sessionId, readOnly }) => {
+export const KnezEventsPanel: React.FC<{ sessionId: string | null; readOnly: boolean }> = ({ sessionId, readOnly }) => {
   const [events, setEvents] = useState<KnezEvent[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [filterSeverity, setFilterSeverity] = useState<Severity | "ALL">("ALL");
+  const [autoRefresh, setAutoRefresh] = useState(true);
 
-  const refresh = async () => {
+  const fetchEvents = async () => {
     if (!sessionId) return;
-    if (readOnly) return;
-    setLoading(true);
-    setError(null);
     try {
       const data = await knezClient.listEvents(sessionId, 50);
       setEvents(data);
     } catch {
-      setError("Failed to load KNEZ events.");
-      setEvents([]);
-    } finally {
-      setLoading(false);
+      // ignore
     }
   };
 
   useEffect(() => {
-    refresh();
-  }, [sessionId, readOnly]);
+    if (readOnly) return;
+    fetchEvents();
+    if (autoRefresh) {
+      const interval = setInterval(fetchEvents, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [sessionId, readOnly, autoRefresh]);
+
+  const filteredEvents = events.filter(e => {
+    if (filterSeverity === "ALL") return true;
+    return e.severity === filterSeverity;
+  });
 
   return (
-    <div className="bg-zinc-900/30 border border-zinc-800 rounded-lg p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">
-          KNEZ Events
-        </h3>
-        <button
-          onClick={refresh}
-          disabled={readOnly || !sessionId || loading}
-          className="text-[10px] px-2 py-1 bg-zinc-800 rounded border border-zinc-700 text-zinc-400 hover:text-white disabled:opacity-50"
-        >
-          Refresh
-        </button>
-      </div>
-
-      {readOnly ? (
-        <div className="text-xs text-zinc-600">Read-only mode.</div>
-      ) : loading ? (
-        <div className="text-xs text-zinc-600">Loading…</div>
-      ) : error ? (
-        <div className="text-xs text-red-400">{error}</div>
-      ) : events.length === 0 ? (
-        <div className="text-xs text-zinc-600">No events found for this session.</div>
-      ) : (
-        <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-          {events.map((e: any, idx) => {
-            const name = String(e.event_name ?? e.name ?? "event");
-            const type = String(e.event_type ?? "");
-            const severity = String(e.severity ?? "");
-            const at = String(e.created_at ?? e.timestamp ?? "");
-            const tags = Array.isArray(e.tags) ? (e.tags as string[]) : [];
-            const payload = e.payload ?? {};
-            const highlight =
-              tags.includes("influence_execution") ||
-              tags.includes("agent_governance") ||
-              tags.includes("influence_kill_switch") ||
-              tags.includes("reflection");
-            return (
-              <div
-                key={`${name}-${idx}`}
-                className={`p-2 rounded border ${
-                  highlight ? "border-orange-900/40 bg-orange-950/10" : "border-zinc-800 bg-zinc-950/20"
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="text-xs text-zinc-300 font-medium">{name}</div>
-                  <div className="text-[10px] text-zinc-600 font-mono">
-                    {type} {severity}
-                  </div>
-                </div>
-                <div className="mt-1 text-[10px] text-zinc-600 font-mono">{at}</div>
-                {tags.length > 0 && (
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {tags.slice(0, 6).map((t) => (
-                      <span
-                        key={t}
-                        className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 border border-zinc-700"
-                      >
-                        {t}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <div className="mt-2 text-[10px] text-zinc-500 font-mono break-words">
-                  {safeStringify(payload)}
-                </div>
-              </div>
-            );
-          })}
+    <div className="flex flex-col h-full bg-zinc-900/50 border border-zinc-800 rounded-lg overflow-hidden">
+      <div className="flex items-center justify-between p-3 border-b border-zinc-800 bg-zinc-900">
+        <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">System Events</h3>
+        <div className="flex items-center gap-2">
+          <select 
+            value={filterSeverity}
+            onChange={(e) => setFilterSeverity(e.target.value as any)}
+            className="bg-zinc-800 text-xs text-zinc-300 border border-zinc-700 rounded px-2 py-1 outline-none"
+          >
+            <option value="ALL">All Levels</option>
+            <option value="INFO">Info</option>
+            <option value="WARN">Warn</option>
+            <option value="ERROR">Error</option>
+          </select>
+          <button 
+            onClick={() => setAutoRefresh(!autoRefresh)}
+            className={`w-2 h-2 rounded-full ${autoRefresh ? 'bg-green-500 animate-pulse' : 'bg-zinc-600'}`}
+            title="Auto-refresh"
+          />
         </div>
-      )}
+      </div>
+      
+      <div className="flex-1 overflow-y-auto p-2 space-y-1 font-mono text-[10px]">
+        {filteredEvents.length === 0 && (
+          <div className="text-center py-4 text-zinc-600 italic">No events found</div>
+        )}
+        {filteredEvents.map((e, i) => (
+          <div key={i} className={`p-2 rounded border flex gap-2 ${
+            e.severity === 'ERROR' ? 'bg-red-900/20 border-red-900/50 text-red-300' :
+            e.severity === 'WARN' ? 'bg-yellow-900/20 border-yellow-900/50 text-yellow-300' :
+            'bg-zinc-950 border-zinc-800 text-zinc-400'
+          }`}>
+            <div className="w-16 shrink-0 text-zinc-600">{new Date(e.timestamp).toLocaleTimeString()}</div>
+            <div className="w-12 shrink-0 font-bold opacity-70">{e.severity}</div>
+            <div className="w-20 shrink-0 text-zinc-500 truncate">{e.source}</div>
+            <div className="flex-1 break-all">{e.message}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 };
-

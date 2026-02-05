@@ -59,4 +59,8 @@ If TAQWIN (parent) later provides execution tools:
 - never suggest actions that violate rules, phase, or constraints
 - require explicit human approval for destructive or irreversible operations
 
+12. Server Capability Verification
+Always check KNEZ server capabilities (endpoints, schemas) before implementing new UI features.
+Do not assume endpoints exist; verify via code scan or /health.
+
 Violation of these rules invalidates the response.

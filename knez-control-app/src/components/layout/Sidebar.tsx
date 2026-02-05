@@ -1,6 +1,6 @@
 import { FC } from 'react';
 
-export type View = 'chat' | 'memory' | 'timeline' | 'reflection' | 'infrastructure' | 'mcp' | 'governance';
+export type View = 'chat' | 'memory' | 'timeline' | 'reflection' | 'infrastructure' | 'mcp' | 'governance' | 'agent' | 'logs' | 'replay';
 
 interface SidebarProps {
   activeView: View;
@@ -10,12 +10,14 @@ interface SidebarProps {
 export const Sidebar: FC<SidebarProps> = ({ activeView, onViewChange }) => {
   const items: { id: View; label: string; icon: string; locked?: boolean }[] = [
     { id: 'chat', label: 'Chat', icon: '💬' },
+    { id: 'agent', label: 'Agent Loop', icon: '🤖' },
     { id: 'memory', label: 'Memory', icon: '🧠' },
     { id: 'timeline', label: 'Timeline', icon: '⏳' },
     { id: 'reflection', label: 'Reflection', icon: '🔮', locked: false },
     { id: 'governance', label: 'Governance', icon: '⚖️' },
     { id: 'infrastructure', label: 'Observatory', icon: '🔭' },
     { id: 'mcp', label: 'MCP Registry', icon: '🧩' },
+    { id: 'logs', label: 'System Logs', icon: '📟' },
   ];
 
   return (

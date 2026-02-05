@@ -8,50 +8,10 @@ For each capture:
 - next concrete action
 
 Current active tasks:
-- PROMPT-1.82 — Shell Permission Governance
-  - goal: Enable secure, scoped shell spawning for scripts/start_local_stack.ps1 via Tauri capabilities.
-  - current state: VERIFICATION — Capability registered, frontend aligned, rebuild complete.
-  - next concrete action: User verification of "Start Local Stack" button.
+- CHECKPOINT 6.1 — OBSERVATION & AUTOMATION VERIFICATION
+  - goal: Verify CP6 features using Playwright truth layer.
+  - current state: Phase 1 (Setup)
+  - next concrete action: Install Playwright and instrument app.
 
-- CHECKPOINT 1.81 — FRONTEND-TRUTHED LOCAL STACK ORCHESTRATION
-  - goal: Fix and verify the Local Stack from the ACTUAL Frontend UI.
-  - current state: VERIFICATION — Frontend spawn logic aligned with PROMPT-1.82 capabilities.
-  - next concrete action: Verify stack launch via UI.
-
-- CHECKPOINT 1 — KNEZ ↔ CONTROL APP PROTOCOL ALIGNMENT
-  - goal: Replace simulated cognition with real KNEZ delegation without breaking governance.
-  - current state: ACTIVE — Control App aligned to KNEZ HTTP API (health, completions, memory, replay, events). Verified build and API connectivity; KNEZ local backend generation currently returns structured errors (local backend not reachable).
-  - next concrete action: Restore a functioning local backend for KNEZ generation (in KNEZ runtime environment) to validate end-to-end completions text.
-
-- CHECKPOINT 1.5 — RUNTIME DISCOVERY & OBSERVABILITY
-  - goal: Make runtime reality visible (backend health, connection, MCP inspection) without granting execution authority.
-  - current state: ACTIVE — Control App surfaces KNEZ runtime snapshot via /health, recent /events signals for local backend activity, and honest MCP registry inspection (disabled unless KNEZ exposes it).
-  - next concrete action: Verify runtime UI under both reachable and unreachable KNEZ conditions and keep governance invariants intact.
-
-- CHECKPOINT 1.76 — REPOSITORY SANITIZATION & EXECUTION VERIFICATION
-  - goal: Create clean, auditable Git repo and verify end-to-end execution.
-  - current state: COMPLETE — Git initialized, builds verified, scripts verified.
-  - next concrete action: N/A (Complete)
-
-- PROMPT-006 — KNEZ Handshake, Session & Memory Protocol
-  - goal: Implement real KNEZ integration (Handshake, Session, Memory).
-  - current state: COMPLETE — Superseded by CHECKPOINT 1 protocol alignment with real KNEZ core.
-  - next concrete action: N/A (Superseded)
-
-- PROMPT-005 — Phase-2 Execution
-  - goal: Implement Reflection, Mistake Ledger, Drift Analysis, and Challenge System.
-  - current state: COMPLETE — Features implemented and integrated.
-  - next concrete action: N/A (Complete)
-
-- PROMPT-004 — Phase-2 Planning & Contract Definition
-  - goal: Define Phase-2 scope, contracts, and risks without executing code.
-  - current state: COMPLETE — All contracts defined and approved.
-  - next concrete action: N/A (Complete)
-
-- PROMPT-003 — Phase-1 Control App Hardening & Governance Completion
-  - goal: Phase-1 Control App stable, governed, and failure-resistant.
-  - current state: COMPLETE — All invariants verified; governance active.
-  - next concrete action: N/A (Complete)
-
-When you start a new thread of work for TrendyToys,
-add it here and keep it aligned with the task graph.
+- CP6 (PREVIOUS)
+  - Status: HALTED (Pending Verification)
