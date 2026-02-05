@@ -266,3 +266,88 @@ export type McpRegistrySnapshot =
 
 export type KnezEvent = Record<string, any>;
 
+// CP5: Full Feature Surface Realization Schemas
+
+export interface ResumeSnapshot {
+  snapshot_id: string;
+  session_id: string;
+  created_at: string;
+  high_level_task_state: string;
+  accepted_facts: string[];
+  constraints: string[];
+}
+
+export interface SessionLineage {
+  session_id: string;
+  parent_session_id?: string;
+  resume_snapshot_id?: string;
+  resume_mode: "fresh" | "resumed" | "forked";
+  children?: string[]; // Augmented by client or recursion
+}
+
+export interface InfluenceContract {
+  influence_id: string;
+  domain: string;
+  scope: "per_decision" | "per_session";
+  max_weight: number;
+  no_override: boolean;
+  reversible: boolean;
+  approved_by: "human" | "policy";
+}
+
+export interface ReplayPhase {
+  phase_name: string;
+  start_time: string;
+  end_time: string;
+  event_count: number;
+}
+
+export interface ReplayTimeline {
+  session_id: string;
+  phases: ReplayPhase[];
+  total_events: number;
+  duration_seconds: number;
+}
+
+export interface CognitiveState {
+  focus_level: string;
+  stability_score: number;
+  active_contexts: number;
+  governance_state?: any;
+  influence_state?: any;
+  taqwin_state?: any;
+}
+
+export interface AuditResult {
+  check_name: string;
+  status: "pass" | "fail" | "warn";
+  message: string;
+  timestamp: string;
+}
+
+// CP6: Perception
+export interface PerceptionSnapshot {
+  timestamp: number;
+  image_base64: string;
+  width: number;
+  height: number;
+  source: string;
+}
+
+export interface ActiveWindowInfo {
+  title: string;
+  process_name?: string;
+  bounds: { left: number; top: number; right: number; bottom: number };
+}
+
+// CP6: Knowledge Base
+export interface KnowledgeDoc {
+  id: string;
+  title: string;
+  content: string;
+  tags: string[];
+  status: "indexing" | "indexed" | "failed";
+}
+
+
+

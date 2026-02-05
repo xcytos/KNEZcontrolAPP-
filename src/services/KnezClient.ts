@@ -4,6 +4,15 @@ import {
   KnezHealthResponse,
   McpRegistrySnapshot,
   KnezEvent,
+  ResumeSnapshot,
+  // SessionLineage,
+  InfluenceContract,
+  ReplayTimeline,
+  CognitiveState,
+  AuditResult,
+  PerceptionSnapshot,
+  ActiveWindowInfo,
+  KnowledgeDoc
 } from "../domain/DataContracts";
 
 export type KnezMemoryRecord = {
@@ -217,7 +226,133 @@ export class KnezClient {
     return (await resp.json()) as Record<string, any>;
   }
 
-  // --- Checkpoint 2: Approval & Influence ---
+  // --- Checkpoint 4 & 5: Full KNEZ Integration ---
+
+  async getCognitiveState(): Promise<CognitiveState> {
+    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/state/overview`);
+    if (!resp.ok) throw new Error(`state_failed_${resp.status}`);
+    return await resp.json();
+  }
+  
+  async getDetailedSubsystemState(subsystem: "governance" | "influence" | "taqwin"): Promise<any> {
+     const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/state/${subsystem}`);
+     if (!resp.ok) return {};
+     return await resp.json();
+  }
+
+  async forkSession(sessionId: string, messageId?: string): Promise<string> {
+    const url = `${this.profile.endpoint.replace(/\/$/, "")}/sessions/${sessionId}/fork`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message_id: messageId }),
+    });
+    if (!resp.ok) throw new Error(`fork_failed_${resp.status}`);
+    const data = await resp.json();
+    return data.session_id;
+  }
+  
+  async resumeSession(sessionId: string, snapshotId?: string): Promise<void> {
+    const url = `${this.profile.endpoint.replace(/\/$/, "")}/sessions/${sessionId}/resume`;
+    await fetch(url, {
+       method: "POST",
+       headers: { "Content-Type": "application/json" },
+       body: JSON.stringify({ snapshot_id: snapshotId })
+    });
+  }
+  
+  async getResumeSnapshot(sessionId: string): Promise<ResumeSnapshot | null> {
+    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/sessions/${sessionId}/resume_snapshot`);
+    if (!resp.ok) return null;
+    return await resp.json();
+  }
+
+  async getOperatorControls(): Promise<{ enabled: boolean, policies: any[] }> {
+    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/operator/influence/global`);
+    if (!resp.ok) return { enabled: false, policies: [] };
+    return await resp.json();
+  }
+  
+  async getActiveContracts(): Promise<InfluenceContract[]> {
+     const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/operator/influence/contracts`);
+     if (!resp.ok) return [];
+     return await resp.json();
+  }
+
+  async getRunbook(sessionId: string): Promise<any[]> {
+    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/runbooks/${sessionId}`);
+    if (!resp.ok) return [];
+    return await resp.json();
+  }
+
+  async getReplayTimeline(sessionId: string): Promise<ReplayTimeline | null> {
+    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/sessions/${sessionId}/replay`);
+    if (!resp.ok) return null;
+    return await resp.json();
+  }
+
+  async getMemoryDetail(memoryId: string): Promise<KnezMemoryRecord> {
+    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/memory/${memoryId}`);
+    if (!resp.ok) throw new Error(`memory_detail_failed_${resp.status}`);
+    return await resp.json();
+  }
+  
+  async getAuditConsistency(): Promise<AuditResult[]> {
+    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/audit/consistency`);
+    if (!resp.ok) return [];
+    return await resp.json();
+  }
+
+  // --- CP6: Perception ---
+
+  async takeSnapshot(): Promise<PerceptionSnapshot> {
+    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/perception/snapshot`, {
+      method: "POST"
+    });
+    if (!resp.ok) throw new Error(`snapshot_failed_${resp.status}`);
+    return await resp.json();
+  }
+
+  async getActiveWindow(): Promise<ActiveWindowInfo> {
+    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/perception/active_window`);
+    if (!resp.ok) return { title: "Unknown", bounds: { left:0, top:0, right:0, bottom:0 } };
+    return await resp.json();
+  }
+
+  // --- CP6: Knowledge ---
+
+  async listKnowledge(): Promise<KnowledgeDoc[]> {
+    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/memory/knowledge`);
+    if (!resp.ok) return [];
+    return await resp.json();
+  }
+
+  async addKnowledge(doc: Partial<KnowledgeDoc>): Promise<void> {
+    await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/memory/knowledge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(doc),
+    });
+  }
+
+  async toggleMcpItem(itemId: string, enabled: boolean): Promise<void> {
+    const url = `${this.profile.endpoint.replace(/\/$/, "")}/mcp/registry/${itemId}/toggle`;
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }), // Adjust based on API expectation, query param vs body
+    });
+    // Note: Python API defined as query param? Let's check. 
+    // Python code: async def toggle_mcp_item(item_id: str, enabled: bool)
+    // FastAPI defaults to query params for scalar types unless Body() is used.
+    // So actually: /mcp/registry/{id}/toggle?enabled=true
+    const urlWithQuery = new URL(url);
+    urlWithQuery.searchParams.set("enabled", String(enabled));
+    const resp = await fetch(urlWithQuery.toString(), { method: "POST" });
+    if (!resp.ok) throw new Error("Failed to toggle MCP item");
+  }
+
+  // --- End CP4 ---
 
   async submitVote(sessionId: string, messageId: string, vote: "upvote" | "downvote"): Promise<void> {
     const url = `${this.profile.endpoint.replace(/\/$/, "")}/influence/vote`;
@@ -288,6 +423,38 @@ export class KnezClient {
     return data.choices?.[0]?.message?.content ?? "";
   }
 
+  async validateCognition(): Promise<boolean> {
+    const messages: CompletionMessage[] = [{ role: "user", content: "1+1=" }];
+    try {
+      // Short timeout for validation
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      const url = `${this.profile.endpoint.replace(/\/$/, "")}/v1/chat/completions`;
+      const payload: ChatCompletionsRequest = {
+        messages,
+        stream: false,
+        session_id: "validation-harness",
+        max_tokens: 5,
+      };
+      
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!resp.ok) return false;
+      const data = await resp.json() as ChatCompletionsFinal;
+      return !!data.choices?.[0]?.message?.content;
+    } catch {
+      return false;
+    }
+  }
+
   async *chatCompletionsStream(messages: CompletionMessage[], sessionId: string): AsyncGenerator<string, void, void> {
     const url = `${this.profile.endpoint.replace(/\/$/, "")}/v1/chat/completions`;
     const payload: ChatCompletionsRequest = {
@@ -295,46 +462,78 @@ export class KnezClient {
       stream: true,
       session_id: sessionId,
     };
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-      },
-      body: JSON.stringify(payload),
-    });
-    if (!resp.ok || !resp.body) {
-      throw new Error(`completions_stream_failed_${resp.status}`);
-    }
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder("utf-8");
-    let buffer = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let idx: number;
-      while ((idx = buffer.indexOf("\n\n")) >= 0) {
-        const frame = buffer.slice(0, idx);
-        buffer = buffer.slice(idx + 2);
-        const lines = frame.split("\n");
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("data:")) continue;
-          const data = trimmed.slice(5).trim();
-          if (data === "[DONE]") return;
-          if (!data) continue;
-          const parsedAny = safeJsonParse<any>(data);
-          if (parsedAny && typeof parsedAny.error === "string") {
-            const err = parsedAny as KnezErrorResponse;
-            throw new Error(`${err.error}${err.reason ? `:${err.reason}` : ""}`);
+
+    // CP3-C: Retry Logic
+    let attempts = 0;
+    const maxAttempts = 2;
+    let lastError: any;
+
+    while (attempts < maxAttempts) {
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "text/event-stream",
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (!resp.ok) {
+           // If 5xx error, maybe retry. If 4xx, likely client error, don't retry.
+           if (resp.status >= 500) {
+             throw new Error(`Server error ${resp.status}`);
+           }
+           throw new Error(`completions_stream_failed_${resp.status}`);
+        }
+        
+        if (!resp.body) throw new Error("No response body");
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        
+        // Successful connection established, break retry loop and yield
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let idx: number;
+          while ((idx = buffer.indexOf("\n\n")) >= 0) {
+            const frame = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            const lines = frame.split("\n");
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed.startsWith("data:")) continue;
+              const data = trimmed.slice(5).trim();
+              if (data === "[DONE]") return;
+              if (!data) continue;
+              const parsedAny = safeJsonParse<any>(data);
+              if (parsedAny && typeof parsedAny.error === "string") {
+                const err = parsedAny as KnezErrorResponse;
+                throw new Error(`${err.error}${err.reason ? `:${err.reason}` : ""}`);
+              }
+              const parsed = parsedAny as ChatCompletionsFinal | null;
+              const delta = parsed?.choices?.[0]?.delta?.content;
+              if (delta) yield delta;
+            }
           }
-          const parsed = parsedAny as ChatCompletionsFinal | null;
-          const delta = parsed?.choices?.[0]?.delta?.content;
-          if (delta) yield delta;
+        }
+        return; // Success, exit generator
+
+      } catch (err) {
+        lastError = err;
+        attempts++;
+        if (attempts < maxAttempts) {
+          logger.warn("knez_client", `Stream attempt ${attempts} failed, retrying...`, { error: err });
+          await new Promise(r => setTimeout(r, 1000 * attempts)); // Exponential backoff
         }
       }
     }
+    
+    // If we exhausted retries
+    throw lastError;
   }
 
   mapMemoryToUi(records: KnezMemoryRecord[]): MemoryEntry[] {

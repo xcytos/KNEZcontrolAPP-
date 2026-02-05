@@ -3,8 +3,14 @@ import { knezClient } from "../../services/KnezClient";
 import { KnezConnectionProfile, KnezEvent, KnezHealthResponse, McpRegistrySnapshot } from "../../domain/DataContracts";
 
 import { SystemPanel } from "../system/SystemPanel";
+import { SystemStatus } from "../system/useSystemOrchestrator";
 
-export const ConnectionSettings: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+export const ConnectionSettings: React.FC<{ 
+  onClose: () => void;
+  systemStatus: SystemStatus;
+  systemOutput: string;
+  onLaunch: () => void;
+}> = ({ onClose, systemStatus, systemOutput, onLaunch }) => {
   const [endpoint, setEndpoint] = useState("http://localhost:8000");
   const [status, setStatus] = useState<"idle" | "checking" | "healthy" | "failed">("idle");
   const [health, setHealth] = useState<KnezHealthResponse | null>(null);
@@ -17,6 +23,7 @@ export const ConnectionSettings: React.FC<{ onClose: () => void }> = ({ onClose 
     setEndpoint(profile.endpoint);
     if (profile.trustLevel === "verified") setMessage("Trusted KNEZ instance configured.");
   }, []);
+
 
   const profile = useMemo(() => {
     return knezClient.getProfile();
@@ -46,7 +53,11 @@ export const ConnectionSettings: React.FC<{ onClose: () => void }> = ({ onClose 
       const h = await knezClient.health();
       setHealth(h);
       setStatus("healthy");
-      setMessage("KNEZ responded to /health. Review runtime and trust if correct.");
+      
+      // CP2-C: Remove Manual Trust Ceremony - Auto-trust on success
+      knezClient.setTrusted(true);
+      setMessage("KNEZ is healthy and trusted.");
+      
       try {
         const recent = await knezClient.listEvents("", 50);
         setEvents(recent);
@@ -63,18 +74,12 @@ export const ConnectionSettings: React.FC<{ onClose: () => void }> = ({ onClose 
     }
   };
 
-  const handleTrust = () => {
-    knezClient.setTrusted(true);
-    setMessage("Trusted KNEZ instance saved.");
-    window.location.reload();
-  };
-
+  /*
   const handleAutoConnect = async () => {
-    const success = await handleCheck();
-    if (success) {
-      handleTrust();
-    }
+    // Just re-run check, trust is automatic now
+    await handleCheck();
   };
+  */
 
   const localBackendDetected = useMemo(() => {
     if (!events) return false;
@@ -142,7 +147,11 @@ export const ConnectionSettings: React.FC<{ onClose: () => void }> = ({ onClose 
           </div>
 
           {/* System Panel (Stack Orchestration) */}
-          <SystemPanel onStackReady={handleAutoConnect} />
+          <SystemPanel 
+            status={systemStatus}
+            output={systemOutput}
+            onLaunch={onLaunch}
+          />
 
           {/* Backend Discovery */}
           {health && (
@@ -243,13 +252,6 @@ export const ConnectionSettings: React.FC<{ onClose: () => void }> = ({ onClose 
                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded disabled:opacity-50 transition-colors"
              >
                {status === "checking" ? "Checking..." : "Check Health"}
-             </button>
-             <button
-               onClick={handleTrust}
-               disabled={status !== "healthy"}
-               className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white text-sm rounded disabled:opacity-50 transition-colors"
-             >
-               Trust
              </button>
           </div>
         </div>

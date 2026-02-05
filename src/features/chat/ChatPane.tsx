@@ -1,42 +1,151 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ChatMessage } from "../../domain/DataContracts";
 import { knezClient } from "../../services/KnezClient";
+import { MessageItem } from "./MessageItem";
+import { exportChat } from "./ChatUtils";
+import { useToast } from "../../components/ui/Toast";
+import { PerceptionPanel } from "../perception/PerceptionPanel";
+import { VoiceInput } from "../voice/VoiceInput";
+import { observe } from "../../utils/observer";
+
+// CP4-B: Forking Support
+const ForkModal: React.FC<{ 
+  isOpen: boolean; 
+  onClose: () => void; 
+  onConfirm: () => void; 
+}> = ({ isOpen, onClose, onConfirm }) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+      <div className="bg-zinc-900 border border-zinc-700 p-6 rounded-lg max-w-sm w-full">
+        <h3 className="text-lg font-bold text-white mb-2">Fork Session</h3>
+        <p className="text-sm text-zinc-400 mb-6">
+          Create a new session branching from this point? The current session history will be preserved.
+        </p>
+        <div className="flex justify-end gap-3">
+          <button onClick={onClose} className="px-4 py-2 text-zinc-400 hover:text-white">Cancel</button>
+          <button onClick={onConfirm} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded">
+            Fork Session
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 type Props = {
   sessionId: string | null;
   readOnly: boolean;
+  onLaunch?: () => void;
+  systemStatus?: "idle" | "starting" | "running" | "failed" | "degraded";
 };
 
-export const ChatPane: React.FC<Props> = ({ sessionId, readOnly }) => {
-  const [messages, setMessages] = useState<ChatMessage[]>(() => [
-    {
-      id: "seed",
-      sessionId: sessionId ?? "unknown",
-      from: "knez",
-      text: "KNEZ client ready.",
-      createdAt: new Date().toISOString(),
-    },
-  ]);
+export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, onLaunch, systemStatus }) => {
+  console.log("ChatPane Render: systemStatus=", systemStatus, "readOnly=", readOnly);
+  const [showPerception, setShowPerception] = useState(false);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [sending, setSending] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [forkingMsgId, setForkingMsgId] = useState<string | null>(null);
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { showToast } = useToast();
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  const handleFork = async () => {
+    if (!sessionId || !forkingMsgId) return;
+    try {
+      const newSessionId = await knezClient.forkSession(sessionId, forkingMsgId);
+      showToast(`Session forked: ${newSessionId.substring(0,8)}`, "success");
+      window.location.reload(); 
+    } catch (e) {
+      showToast("Failed to fork session", "error");
+    } finally {
+      setForkingMsgId(null);
+    }
+  };
 
+
+  // CP3-D: Persistence
   useEffect(() => {
     if (!sessionId) return;
-    setMessages((prev) =>
-      prev.map((m) => (m.id === "seed" ? { ...m, sessionId } : m))
-    );
+    const key = `knez_chat_${sessionId}`;
+    const saved = localStorage.getItem(key);
+    if (saved) {
+      try {
+        setMessages(JSON.parse(saved));
+      } catch {
+        // invalid data
+      }
+    } else {
+       setMessages([{
+          id: "seed",
+          sessionId: sessionId,
+          from: "knez",
+          text: "KNEZ client ready.",
+          createdAt: new Date().toISOString(),
+       }]);
+    }
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || messages.length === 0) return;
+    localStorage.setItem(`knez_chat_${sessionId}`, JSON.stringify(messages));
+  }, [messages, sessionId]);
+
+  // CP3-A: Validation Harness
+  useEffect(() => {
+    if (systemStatus === 'running' && !readOnly) {
+      const runValidation = async () => {
+        setValidating(true);
+        const isValid = await knezClient.validateCognition();
+        setValidating(false);
+        if (isValid) {
+          showToast("Cognition verified: Model is rational", "success");
+        } else {
+          showToast("Cognition check failed: Model may be unresponsive", "warning");
+        }
+      };
+      const timer = setTimeout(runValidation, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [systemStatus, readOnly, showToast]);
+
+  // CP3-H: Smart Scroll
+  const handleScroll = () => {
+    if (containerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
+      const isBottom = scrollHeight - scrollTop - clientHeight < 50;
+      setIsAtBottom(isBottom);
+    }
+  };
+
+  useEffect(() => {
+    if (isAtBottom) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, isAtBottom]);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    setIsAtBottom(true);
+  };
 
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (readOnly) return;
+    
+    // CP2-B: Chat-First Entry logic
+    if (systemStatus === "idle" || systemStatus === "failed") {
+      if (onLaunch) onLaunch();
+    }
+    
+    if (readOnly && systemStatus !== "running" && systemStatus !== "degraded") return;
     if (!sessionId) return;
     if (!inputValue.trim() || sending) return;
+
+    observe("chat_send_attempt", { sessionId, message: inputValue });
 
     const now = new Date().toISOString();
     const startTime = Date.now();
@@ -65,6 +174,9 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly }) => {
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInputValue("");
     setSending(true);
+    setIsAtBottom(true);
+
+    observe("chat_optimistic_update", { msgId: userMsg.id });
 
     const completionMessages = [...messages, userMsg]
       .filter((m) => m.id !== "seed")
@@ -104,7 +216,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly }) => {
           sessionId
         );
         collected = text;
-        // Estimate token count for non-stream fallback (rough approx)
         tokenCount = text.split(/\s+/).length; 
         
         setMessages((prev) =>
@@ -119,7 +230,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly }) => {
         );
       }
 
-      // Mark as complete
       setMessages((prev) =>
         prev.map((m) => (m.id === assistantId ? { 
           ...m, 
@@ -131,14 +241,19 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly }) => {
         } : m))
       );
 
+      observe("chat_complete", { sessionId });
+
     } catch (err: any) {
       const errorMsg = err instanceof Error ? err.message : String(err);
+      showToast("Generation failed: " + errorMsg, "error");
+      observe("chat_error", { error: errorMsg });
+      
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantId
             ? {
                 ...m,
-                text: m.text ? m.text : `Delivery Failure: ${errorMsg}`, // Keep partial text if any
+                text: m.text ? m.text : `Delivery Failure: ${errorMsg}`, 
                 refusal: true,
                 isPartial: false,
                 metrics: {
@@ -163,108 +278,115 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly }) => {
           : m
       )
     );
-    
     if (sessionId) {
       knezClient.submitVote(sessionId, messageId, vote);
     }
-    console.log(`[Influence] Voted ${vote} on message ${messageId}`);
+  };
+
+  const handleVoiceTranscript = (text: string) => {
+    setInputValue(prev => prev + (prev ? " " : "") + text);
+  };
+
+  const renderOfflineOverlay = () => {
+    if (readOnly && (systemStatus === "idle" || systemStatus === "failed")) {
+      return (
+        <div className="flex flex-col items-center justify-center py-12 space-y-4">
+          <div className="text-zinc-500 text-sm">System is offline.</div>
+          <button 
+            onClick={onLaunch}
+            className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg shadow-lg shadow-blue-900/20 transition-all hover:scale-105"
+          >
+            Launch KNEZ & Start AI
+          </button>
+          {systemStatus === "failed" && (
+            <div className="text-red-400 text-xs">Previous launch failed. Check settings for logs.</div>
+          )}
+       </div>
+      );
+    }
+    return null;
   };
 
   return (
-    <div className="flex flex-col h-full max-w-3xl mx-auto relative">
-      <div className="absolute top-0 left-0 right-0 bg-orange-900/20 border-b border-orange-900/50 p-2 text-center">
-        <span className="text-xs font-mono text-orange-200 uppercase tracking-widest">
-          ⚠️ Delivery Validation Mode: Responses Untrusted
-        </span>
+    <div className="flex flex-col h-full relative">
+      {/* Header / Status Bar */}
+      <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between p-2 bg-zinc-900/80 backdrop-blur border-b border-zinc-800">
+        <div className="flex items-center gap-2">
+           <span className="text-xs font-mono text-zinc-500">
+             {sessionId ? `SESSION: ${sessionId.substring(0,8)}` : 'NO SESSION'}
+           </span>
+           {validating && <span className="text-[10px] text-blue-400 animate-pulse">VALIDATING COGNITION...</span>}
+        </div>
+        <div className="flex items-center gap-2">
+           <button 
+             onClick={() => setShowPerception(!showPerception)}
+             className={`text-xs px-2 py-1 rounded transition-colors ${showPerception ? 'bg-purple-900/50 text-purple-300' : 'text-zinc-400 hover:text-white hover:bg-zinc-800'}`}
+             title="Toggle Perception"
+           >
+             👁 View
+           </button>
+           <button 
+             onClick={() => setForkingMsgId(messages[messages.length-1]?.id)} 
+             className="text-xs text-zinc-400 hover:text-white px-2 py-1 hover:bg-zinc-800 rounded transition-colors"
+             title="Fork latest"
+             disabled={messages.length === 0}
+           >
+             Fork ⑂
+           </button>
+           <button 
+             onClick={() => exportChat(messages, sessionId || 'unknown')}
+             className="text-xs text-zinc-400 hover:text-white px-2 py-1 hover:bg-zinc-800 rounded transition-colors"
+             title="Export Session"
+             disabled={messages.length === 0}
+           >
+             Export ⭳
+           </button>
+        </div>
       </div>
       
-      <div className="flex-1 overflow-y-auto p-6 space-y-6 mt-8">
-        {messages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`flex ${msg.from === "user" ? "justify-end" : "justify-start"}`}
-          >
-            <div
-              className={`max-w-[80%] rounded-lg p-4 ${
-                msg.from === "user"
-                  ? "bg-blue-600/20 border border-blue-500/30 text-blue-100"
-                  : msg.refusal
-                    ? "bg-red-900/20 border border-red-800 text-red-200"
-                    : "bg-zinc-800 border border-zinc-700 text-zinc-300"
-              }`}
-            >
-              <p className="whitespace-pre-wrap leading-relaxed">
-                {msg.text}
-                {msg.isPartial && <span className="inline-block w-2 h-4 ml-1 bg-zinc-500 animate-pulse align-middle" />}
-              </p>
-              
-              <div className="mt-2 flex items-center justify-between gap-4 border-t border-white/5 pt-2">
-                <span className="text-xs text-zinc-500 opacity-70">
-                  {new Date(msg.createdAt).toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </span>
-                
-                {msg.from === "knez" && (
-                  <div className="flex items-center gap-2 text-[10px] font-mono text-zinc-600">
-                    {msg.isPartial ? (
-                      <span className="text-blue-400">STREAMING...</span>
-                    ) : (
-                      <span className="text-zinc-500">COMPLETE</span>
-                    )}
-                    {msg.metrics?.timeToFirstTokenMs && (
-                      <span title="Time to First Token">
-                        TTFT: {msg.metrics.timeToFirstTokenMs}ms
-                      </span>
-                    )}
-                    {msg.metrics?.totalTokens !== undefined && (
-                      <span title="Total Tokens">
-                        TOK: {msg.metrics.totalTokens}
-                      </span>
-                    )}
-                  </div>
-                )}
-
-                {msg.from === "knez" && !msg.isPartial && (
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => handleVote(msg.id, "upvote")}
-                      disabled={readOnly}
-                      className={`p-1 rounded hover:bg-zinc-700 transition-colors ${
-                        msg.influence?.vote === "upvote" ? "text-green-400" : "text-zinc-600"
-                      }`}
-                      title="Positive Influence"
-                    >
-                      👍
-                    </button>
-                    <button
-                      onClick={() => handleVote(msg.id, "downvote")}
-                      disabled={readOnly}
-                      className={`p-1 rounded hover:bg-zinc-700 transition-colors ${
-                        msg.influence?.vote === "downvote" ? "text-red-400" : "text-zinc-600"
-                      }`}
-                      title="Negative Influence"
-                    >
-                      👎
-                    </button>
-                  </div>
-                )}
-                
-                {msg.refusal && (
-                  <span className="font-bold text-red-500 uppercase tracking-wider text-[10px]">
-                    DELIVERY FAILURE
-                  </span>
-                )}
-              </div>
-            </div>
+      <ForkModal 
+        isOpen={!!forkingMsgId}
+        onClose={() => setForkingMsgId(null)}
+        onConfirm={handleFork}
+      />
+      
+      <div 
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto p-6 space-y-6 mt-10"
+      >
+        {showPerception && (
+          <div className="mb-4 h-64 border border-purple-900/50 rounded-lg overflow-hidden shrink-0">
+             <PerceptionPanel />
           </div>
+        )}
+
+        {renderOfflineOverlay()}
+
+        {messages.map((msg) => (
+          <MessageItem 
+            key={msg.id} 
+            msg={msg} 
+            readOnly={readOnly} 
+            onVote={handleVote} 
+          />
         ))}
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Smart Scroll Button */}
+      {!isAtBottom && (
+        <button
+          onClick={scrollToBottom}
+          className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-xs px-3 py-1 rounded-full shadow-lg hover:bg-blue-500 transition-all z-20"
+        >
+          ↓ New messages
+        </button>
+      )}
+
       <div className="p-4 border-t border-zinc-800 bg-zinc-900/30">
-        <form onSubmit={handleSend} className="relative">
+        <form onSubmit={handleSend} className="relative flex gap-2">
+          <VoiceInput onTranscript={handleVoiceTranscript} />
           <input
             type="text"
             value={inputValue}
