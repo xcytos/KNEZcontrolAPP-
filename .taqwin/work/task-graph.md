@@ -62,3 +62,21 @@ Current graph seeds:
   - Dependencies: CHECKPOINT 1.5
   - Why: Ensure reproducible baseline and repo hygiene.
   - Unblocked by: Repository sanitation, git init, build/script verification.
+
+- Task: CHECKPOINT 1.8 — LOCAL STACK ORCHESTRATION & DELIVERY VERIFICATION
+  - Status: failed (false positive)
+  - Dependencies: CHECKPOINT 1.76
+  - Why: Enable real cognition execution and verify end-to-end flow.
+  - Unblocked by: CHECKPOINT 1.81
+
+- Task: CHECKPOINT 1.81 — FRONTEND-TRUTHED LOCAL STACK ORCHESTRATION
+  - Status: active / blocked
+  - Dependencies: CHECKPOINT 1.8 failure
+  - Why: Fix transformCallback error and ensure UI actually drives orchestration.
+  - Unblocked by: PROMPT-1.82
+
+- Task: PROMPT-1.82 — SHELL PERMISSION GOVERNANCE
+  - Status: active
+  - Dependencies: CHECKPOINT 1.81
+  - Why: Resolve "shell.spawn not allowed" error with scoped Tauri capabilities.
+  - Unblocked by: Capability declaration, frontend alignment, clean rebuild.

@@ -8,6 +8,16 @@ For each capture:
 - next concrete action
 
 Current active tasks:
+- PROMPT-1.82 — Shell Permission Governance
+  - goal: Enable secure, scoped shell spawning for scripts/start_local_stack.ps1 via Tauri capabilities.
+  - current state: VERIFICATION — Capability registered, frontend aligned, rebuild complete.
+  - next concrete action: User verification of "Start Local Stack" button.
+
+- CHECKPOINT 1.81 — FRONTEND-TRUTHED LOCAL STACK ORCHESTRATION
+  - goal: Fix and verify the Local Stack from the ACTUAL Frontend UI.
+  - current state: VERIFICATION — Frontend spawn logic aligned with PROMPT-1.82 capabilities.
+  - next concrete action: Verify stack launch via UI.
+
 - CHECKPOINT 1 — KNEZ ↔ CONTROL APP PROTOCOL ALIGNMENT
   - goal: Replace simulated cognition with real KNEZ delegation without breaking governance.
   - current state: ACTIVE — Control App aligned to KNEZ HTTP API (health, completions, memory, replay, events). Verified build and API connectivity; KNEZ local backend generation currently returns structured errors (local backend not reachable).

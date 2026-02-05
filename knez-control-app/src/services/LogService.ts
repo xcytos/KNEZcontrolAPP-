@@ -40,8 +40,15 @@ class LogService {
   }
 
   private add(level: LogLevel, category: string, message: string, details?: any) {
+    let id: string;
+    try {
+      id = crypto.randomUUID();
+    } catch {
+      id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    }
+
     const entry: LogEntry = {
-      id: crypto.randomUUID(),
+      id,
       timestamp: new Date().toISOString(),
       level,
       category,

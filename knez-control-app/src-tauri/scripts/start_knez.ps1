@@ -5,7 +5,7 @@ param (
     [string]$KnezRoot = "$PSScriptRoot\..\..\..\KNEZ" # Relative to script location
 )
 
-$LogFile = "$PSScriptRoot\knez-startup.log"
+$LogFile = "$env:TEMP\knez-startup.log"
 function Log {
     param([string]$Message)
     $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -48,7 +48,7 @@ try {
     Log "Final PYTHONPATH: $env:PYTHONPATH"
     Log "Starting uvicorn process..."
     
-    $proc = Start-Process "uvicorn" -ArgumentList "knez.knez_core.app:app --app-dir . --host 127.0.0.1 --port 8000 --reload" -PassThru -NoNewWindow
+    $proc = Start-Process "uvicorn" -ArgumentList "knez.knez_core.app:app --app-dir . --host 0.0.0.0 --port 8000 --reload" -PassThru -NoNewWindow
     Log "Uvicorn process started with ID: $($proc.Id)"
 } finally {
     Pop-Location
