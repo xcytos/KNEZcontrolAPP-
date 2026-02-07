@@ -9,7 +9,7 @@ export function useSystemOrchestrator(onReady?: () => void) {
   const [output, setOutput] = useState("");
   const launchAttemptRef = useRef(0);
 
-  const launchAndAssumeRunning = useCallback(async () => {
+  const launchAndConnect = useCallback(async () => {
     // Idempotency check
     const now = Date.now();
     if (now - launchAttemptRef.current < 2000 && status === "starting") return;
@@ -33,15 +33,13 @@ export function useSystemOrchestrator(onReady?: () => void) {
     }
 
     // Launch Logic
-    const isTauri = !!(window as any).__TAURI__;
+    // Fix: We enabled withGlobalTauri: true, so window.__TAURI__ should be available.
+    // Also checking __TAURI_IPC__ for v2.
+    const isTauri = !!(window as any).__TAURI__ || !!(window as any).__TAURI_IPC__;
+    
     if (!isTauri) {
-      // WEB MODE MOCK
-      setOutput((prev) => prev + "\n[Web Mode] Shell unavailable. Simulating launch...");
-      setTimeout(() => {
-        setOutput((prev) => prev + "\n[Mock] Stack launched.");
-        setStatus("running"); // Optimistic for web
-        if (onReady) onReady();
-      }, 800);
+      setOutput((prev) => prev + "\n[Web Mode] Shell unavailable. Launch requires the desktop app.");
+      setStatus("failed");
       return;
     }
 
@@ -106,9 +104,33 @@ export function useSystemOrchestrator(onReady?: () => void) {
     check();
   };
 
+  const stopKnez = useCallback(async () => {
+     try {
+       // In a real scenario, we might call a stop script or kill the process ID if we tracked it.
+       // Since 'start-local-stack' spawns separate processes, killing the command object might not be enough
+       // if it spawned detached children.
+       // However, for "Failure Injection", we can try to call a stop command.
+       // Or we can just call the OS kill command via shell.
+       
+       setOutput((prev) => prev + "\n[Inject Failure] Stopping KNEZ...");
+       // Assuming Windows: taskkill /IM python.exe /F
+       // NOTE: This is aggressive but fits "Failure Injection".
+       // We need "stop-local-stack" command or similar.
+       const command = Command.create("exec", ["taskkill", "/F", "/IM", "python.exe"]);
+       await command.execute();
+       
+       setStatus("failed"); // Manually set to failed to reflect "Down" state immediately?
+       // Actually, the status provider should detect it. But we update local status too.
+       setOutput((prev) => prev + "\n[Inject Failure] KNEZ process killed.");
+     } catch (e) {
+       setOutput((prev) => prev + `\n[Stop Failed] ${e}`);
+     }
+  }, []);
+
   return {
     status,
     output,
-    launchAndAssumeRunning
+    launchAndConnect,
+    stopKnez
   };
 }

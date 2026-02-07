@@ -22,13 +22,14 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const isConnected = !!health && health.status === "ok";
   const isDegraded = !!health && health.status !== "ok";
 
-  const checkRef = useRef<number>(0);
+  const timeoutRef = useRef<number | null>(null);
+  const inFlightRef = useRef(false);
+  const healthRef = useRef<KnezHealthResponse | null>(null);
 
   const performCheck = async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     const now = Date.now();
-    // Debounce checks (max 1 per second)
-    if (now - checkRef.current < 1000) return;
-    checkRef.current = now;
 
     try {
       const [h, c] = await Promise.allSettled([
@@ -52,16 +53,32 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } catch (e) {
       setHealth(null);
       setCognitiveState(null);
+      setLastCheck(now);
+    } finally {
+      inFlightRef.current = false;
     }
   };
 
   useEffect(() => {
-    // Initial check
-    performCheck();
-    
-    // Poll every 3 seconds
-    const interval = setInterval(performCheck, 3000);
-    return () => clearInterval(interval);
+    healthRef.current = health;
+  }, [health]);
+
+  useEffect(() => {
+    const scheduleNext = async () => {
+      await performCheck();
+      const current = healthRef.current;
+      const delay = current && current.status === "ok" ? 3000 : 250;
+      timeoutRef.current = window.setTimeout(scheduleNext, delay);
+    };
+
+    scheduleNext();
+
+    return () => {
+      if (timeoutRef.current !== null) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+    };
   }, []);
 
   return (

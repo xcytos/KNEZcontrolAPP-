@@ -1,4 +1,6 @@
 
+import { writeTextFile, BaseDirectory, readTextFile } from '@tauri-apps/plugin-fs';
+
 export enum LogLevel {
   DEBUG = "DEBUG",
   INFO = "INFO",
@@ -19,6 +21,7 @@ class LogService {
   private logs: LogEntry[] = [];
   private listeners: ((log: LogEntry) => void)[] = [];
   private maxLogs = 1000;
+  private logFile = "app-runtime.log";
 
   constructor() {
     // Capture unhandled errors
@@ -37,6 +40,68 @@ class LogService {
         reason: event.reason,
       });
     });
+
+    this.hydrate();
+  }
+
+  private async hydrate() {
+    try {
+       // Read last N lines? 
+       // For now, let's just ensure the file exists.
+       // Reading the whole file might be large.
+       // We skip full hydration for performance in this MVP, but we ensure the file is created.
+       // To truly satisfy "persist across restarts" VISIBLY, we should read it.
+       // Let's try to read it.
+       const content = await import('@tauri-apps/plugin-fs').then(fs => 
+         fs.readTextFile(this.logFile, { baseDir: BaseDirectory.AppLocalData })
+       );
+       
+       if (content && typeof content === 'string') {
+         const lines = content.split('\n').filter(Boolean).slice(-100); // Last 100
+         lines.forEach(line => {
+            try {
+              const entry = JSON.parse(line);
+              this.logs.push(entry); // Push to end (oldest first? No, logs are unshifted... wait)
+              // this.logs is displayed oldest to newest?
+              // this.add unshifts (newest first).
+              // So we should push these to the end?
+              // If we read from file (oldest to newest lines), we should probably put them at the end if we display newest first?
+              // Wait, `this.logs.unshift(entry)` puts NEWEST at index 0.
+              // So we want file lines (oldest) to be at the end of the array.
+              // So `this.logs.push(entry)` is correct if we iterate lines oldest to newest.
+            } catch {}
+         });
+         // Notify?
+       }
+    } catch (e) {
+       // File might not exist
+    }
+  }
+
+  private async persistLog(entry: LogEntry) {
+     try {
+       const line = JSON.stringify(entry) + "\n";
+       // Emulate append: Read -> Concat -> Write
+    // Note: This is not atomic and race-prone, but sufficient for single-user desktop log.
+    let current = "";
+    try {
+      const content = await readTextFile(this.logFile, { baseDir: BaseDirectory.AppLocalData });
+      if (typeof content === 'string') {
+        current = content;
+      }
+    } catch {
+      // File missing, empty
+    }
+    
+    // Limit file size (approx 1MB)
+    if (typeof current === 'string' && current.length > 1024 * 1024) {
+      current = current.substring(current.length - 512 * 1024); // Keep last half
+    }
+
+    await writeTextFile(this.logFile, current + line, { baseDir: BaseDirectory.AppLocalData });
+     } catch (e) {
+       // Silent fail
+     }
   }
 
   private add(level: LogLevel, category: string, message: string, details?: any) {
@@ -44,7 +109,7 @@ class LogService {
     try {
       id = crypto.randomUUID();
     } catch {
-      id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      id = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     }
 
     const entry: LogEntry = {
@@ -71,6 +136,7 @@ class LogService {
     console.log(`%c[${category}] ${message}`, style, details || "");
 
     this.notify(entry);
+    this.persistLog(entry);
   }
 
   debug(category: string, message: string, details?: any) {

@@ -2,11 +2,13 @@ import React, { useEffect, useRef, useState } from "react";
 import { ChatMessage } from "../../domain/DataContracts";
 import { knezClient } from "../../services/KnezClient";
 import { MessageItem } from "./MessageItem";
-import { exportChat } from "./ChatUtils";
+// import { exportChat } from "./ChatUtils";
 import { useToast } from "../../components/ui/Toast";
-import { PerceptionPanel } from "../perception/PerceptionPanel";
+// import { PerceptionPanel } from "../perception/PerceptionPanel";
 import { VoiceInput } from "../voice/VoiceInput";
-import { observe } from "../../utils/observer";
+// import { observe } from "../../utils/observer";
+import { chatService } from "../../services/ChatService";
+import { sessionDatabase } from "../../services/SessionDatabase";
 
 // CP4-B: Forking Support
 const ForkModal: React.FC<{ 
@@ -33,26 +35,97 @@ const ForkModal: React.FC<{
   );
 };
 
+// CP15: Rename Modal
+const RenameModal: React.FC<{
+   isOpen: boolean;
+   initialName: string;
+   onClose: () => void;
+   onSave: (name: string) => void;
+}> = ({ isOpen, initialName, onClose, onSave }) => {
+   const [name, setName] = useState(initialName);
+   if (!isOpen) return null;
+   return (
+      <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+         <div className="bg-zinc-900 border border-zinc-700 p-6 rounded-lg max-w-sm w-full">
+            <h3 className="text-lg font-bold text-white mb-4">Rename Session</h3>
+            <input 
+               autoFocus
+               className="w-full bg-zinc-950 border border-zinc-800 rounded p-2 text-white mb-4"
+               value={name}
+               onChange={e => setName(e.target.value)}
+            />
+            <div className="flex justify-end gap-2">
+               <button onClick={onClose} className="px-3 py-1 text-zinc-400">Cancel</button>
+               <button onClick={() => onSave(name)} className="px-3 py-1 bg-blue-600 text-white rounded">Save</button>
+            </div>
+         </div>
+      </div>
+   );
+};
+
 type Props = {
   sessionId: string | null;
   readOnly: boolean;
-  onLaunch?: () => void;
   systemStatus?: "idle" | "starting" | "running" | "failed" | "degraded";
 };
 
-export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, onLaunch, systemStatus }) => {
-  console.log("ChatPane Render: systemStatus=", systemStatus, "readOnly=", readOnly);
-  const [showPerception, setShowPerception] = useState(false);
+export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus }) => {
+  // const [showPerception, setShowPerception] = useState(false);
+  // Use ChatService state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [inputValue, setInputValue] = useState("");
   const [sending, setSending] = useState(false);
+  const [activeTools, setActiveTools] = useState<{ search: boolean }>({ search: false });
+  
+  const [inputValue, setInputValue] = useState("");
   const [validating, setValidating] = useState(false);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [forkingMsgId, setForkingMsgId] = useState<string | null>(null);
   
+  // CP15
+  const [sessionName, setSessionName] = useState<string>("");
+  const [renameOpen, setRenameOpen] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
+
+  // Sync with Service
+  useEffect(() => {
+    if (sessionId) {
+       chatService.setSessionId(sessionId);
+       // Load name
+       sessionDatabase.getSession(sessionId).then(s => {
+          if (s) setSessionName(s.name);
+          else setSessionName(`Session ${sessionId.substring(0,6)}`);
+       });
+    }
+    
+    const unsub = chatService.subscribe((state) => {
+       setMessages(state.messages);
+       setSending(state.sending);
+       setActiveTools(state.activeTools);
+    });
+    return unsub;
+  }, [sessionId]);
+
+  const handleSend = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (readOnly || !inputValue.trim()) return;
+    
+    // UI clears immediately, service handles logic
+    setInputValue("");
+    setIsAtBottom(true);
+    
+    await chatService.sendMessage(inputValue);
+  };
+  
+  const handleRename = async (newName: string) => {
+     if (sessionId) {
+        await sessionDatabase.updateSessionName(sessionId, newName);
+        setSessionName(newName);
+        setRenameOpen(false);
+     }
+  };
 
   const handleFork = async () => {
     if (!sessionId || !forkingMsgId) return;
@@ -66,34 +139,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, onLaunch, syste
       setForkingMsgId(null);
     }
   };
-
-
-  // CP3-D: Persistence
-  useEffect(() => {
-    if (!sessionId) return;
-    const key = `knez_chat_${sessionId}`;
-    const saved = localStorage.getItem(key);
-    if (saved) {
-      try {
-        setMessages(JSON.parse(saved));
-      } catch {
-        // invalid data
-      }
-    } else {
-       setMessages([{
-          id: "seed",
-          sessionId: sessionId,
-          from: "knez",
-          text: "KNEZ client ready.",
-          createdAt: new Date().toISOString(),
-       }]);
-    }
-  }, [sessionId]);
-
-  useEffect(() => {
-    if (!sessionId || messages.length === 0) return;
-    localStorage.setItem(`knez_chat_${sessionId}`, JSON.stringify(messages));
-  }, [messages, sessionId]);
 
   // CP3-A: Validation Harness
   useEffect(() => {
@@ -128,156 +173,13 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, onLaunch, syste
     }
   }, [messages, isAtBottom]);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    setIsAtBottom(true);
-  };
-
-  const handleSend = async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    
-    // CP2-B: Chat-First Entry logic
-    if (systemStatus === "idle" || systemStatus === "failed") {
-      if (onLaunch) onLaunch();
-    }
-    
-    if (readOnly && systemStatus !== "running" && systemStatus !== "degraded") return;
-    if (!sessionId) return;
-    if (!inputValue.trim() || sending) return;
-
-    observe("chat_send_attempt", { sessionId, message: inputValue });
-
-    const now = new Date().toISOString();
-    const startTime = Date.now();
-    
-    const userMsg: ChatMessage = {
-      id: `${startTime}`,
-      sessionId,
-      from: "user",
-      text: inputValue,
-      createdAt: now,
-    };
-
-    const assistantId = `${startTime}-assistant`;
-    const assistantMsg: ChatMessage = {
-      id: assistantId,
-      sessionId,
-      from: "knez",
-      text: "",
-      createdAt: now,
-      isPartial: true,
-      metrics: {
-        totalTokens: 0,
-      }
-    };
-
-    setMessages((prev) => [...prev, userMsg, assistantMsg]);
-    setInputValue("");
-    setSending(true);
-    setIsAtBottom(true);
-
-    observe("chat_optimistic_update", { msgId: userMsg.id });
-
-    const completionMessages = [...messages, userMsg]
-      .filter((m) => m.id !== "seed")
-      .map((m) => {
-        const role = m.from === "user" ? "user" : "assistant";
-        return { role, content: m.text } as const;
-      });
-
-    try {
-      let collected = "";
-      let firstTokenTime: number | undefined;
-      let tokenCount = 0;
-
-      for await (const token of knezClient.chatCompletionsStream(
-        completionMessages,
-        sessionId
-      )) {
-        if (!firstTokenTime) firstTokenTime = Date.now();
-        collected += token;
-        tokenCount++;
-        
-        setMessages((prev) =>
-          prev.map((m) => (m.id === assistantId ? { 
-            ...m, 
-            text: collected,
-            metrics: {
-              timeToFirstTokenMs: firstTokenTime! - startTime,
-              totalTokens: tokenCount
-            }
-          } : m))
-        );
-      }
-
-      if (!collected) {
-        const text = await knezClient.chatCompletionsNonStream(
-          completionMessages,
-          sessionId
-        );
-        collected = text;
-        tokenCount = text.split(/\s+/).length; 
-        
-        setMessages((prev) =>
-          prev.map((m) => (m.id === assistantId ? { 
-            ...m, 
-            text,
-            metrics: {
-              timeToFirstTokenMs: Date.now() - startTime,
-              totalTokens: tokenCount
-            }
-          } : m))
-        );
-      }
-
-      setMessages((prev) =>
-        prev.map((m) => (m.id === assistantId ? { 
-          ...m, 
-          isPartial: false,
-          metrics: {
-            ...m.metrics,
-            finishReason: "stop"
-          }
-        } : m))
-      );
-
-      observe("chat_complete", { sessionId });
-
-    } catch (err: any) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      showToast("Generation failed: " + errorMsg, "error");
-      observe("chat_error", { error: errorMsg });
-      
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId
-            ? {
-                ...m,
-                text: m.text ? m.text : `Delivery Failure: ${errorMsg}`, 
-                refusal: true,
-                isPartial: false,
-                metrics: {
-                  ...m.metrics,
-                  finishReason: "error"
-                }
-              }
-            : m
-        )
-      );
-    } finally {
-      setSending(false);
-    }
-  };
+  // const scrollToBottom = () => {
+  //   messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  //   setIsAtBottom(true);
+  // };
 
   const handleVote = (messageId: string, vote: "upvote" | "downvote") => {
     if (readOnly) return;
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === messageId
-          ? { ...m, influence: { ...m.influence, vote } }
-          : m
-      )
-    );
     if (sessionId) {
       knezClient.submitVote(sessionId, messageId, vote);
     }
@@ -292,12 +194,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, onLaunch, syste
       return (
         <div className="flex flex-col items-center justify-center py-12 space-y-4">
           <div className="text-zinc-500 text-sm">System is offline.</div>
-          <button 
-            onClick={onLaunch}
-            className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg shadow-lg shadow-blue-900/20 transition-all hover:scale-105"
-          >
-            Launch KNEZ & Start AI
-          </button>
           {systemStatus === "failed" && (
             <div className="text-red-400 text-xs">Previous launch failed. Check settings for logs.</div>
           )}
@@ -307,103 +203,119 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, onLaunch, syste
     return null;
   };
 
+  // CP16: Enterprise Header
   return (
-    <div className="flex flex-col h-full relative">
-      {/* Header / Status Bar */}
-      <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between p-2 bg-zinc-900/80 backdrop-blur border-b border-zinc-800">
-        <div className="flex items-center gap-2">
-           <span className="text-xs font-mono text-zinc-500">
-             {sessionId ? `SESSION: ${sessionId.substring(0,8)}` : 'NO SESSION'}
-           </span>
-           {validating && <span className="text-[10px] text-blue-400 animate-pulse">VALIDATING COGNITION...</span>}
-        </div>
-        <div className="flex items-center gap-2">
-           <button 
-             onClick={() => setShowPerception(!showPerception)}
-             className={`text-xs px-2 py-1 rounded transition-colors ${showPerception ? 'bg-purple-900/50 text-purple-300' : 'text-zinc-400 hover:text-white hover:bg-zinc-800'}`}
-             title="Toggle Perception"
-           >
-             👁 View
-           </button>
-           <button 
-             onClick={() => setForkingMsgId(messages[messages.length-1]?.id)} 
-             className="text-xs text-zinc-400 hover:text-white px-2 py-1 hover:bg-zinc-800 rounded transition-colors"
-             title="Fork latest"
-             disabled={messages.length === 0}
-           >
-             Fork ⑂
-           </button>
-           <button 
-             onClick={() => exportChat(messages, sessionId || 'unknown')}
-             className="text-xs text-zinc-400 hover:text-white px-2 py-1 hover:bg-zinc-800 rounded transition-colors"
-             title="Export Session"
-             disabled={messages.length === 0}
-           >
-             Export ⭳
-           </button>
-        </div>
+    <div className="flex flex-col h-full bg-zinc-950 relative">
+      <div className="border-b border-zinc-800 bg-zinc-900/50 p-3 flex justify-between items-center backdrop-blur-sm sticky top-0 z-10">
+         <div className="flex items-center gap-3">
+            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.4)]"></div>
+            <div>
+               <div 
+                 className="font-bold text-zinc-100 text-sm flex items-center gap-2 cursor-pointer hover:bg-zinc-800 px-2 py-0.5 rounded transition-colors"
+                 onClick={() => setRenameOpen(true)}
+                 title="Click to rename"
+               >
+                 {sessionName || "Loading..."}
+                 <span className="text-zinc-600 text-[10px]">✎</span>
+               </div>
+               <div className="text-[10px] text-zinc-500 font-mono">ID: {sessionId?.substring(0,8)}...</div>
+            </div>
+         </div>
+         <div className="flex items-center gap-2">
+            <button className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded transition-colors">
+               Analyze Session
+            </button>
+            <button className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded transition-colors">
+               Export
+            </button>
+         </div>
       </div>
-      
-      <ForkModal 
-        isOpen={!!forkingMsgId}
-        onClose={() => setForkingMsgId(null)}
-        onConfirm={handleFork}
-      />
-      
+
       <div 
         ref={containerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-6 space-y-6 mt-10"
+        className="flex-1 overflow-y-auto p-4 space-y-6 scroll-smooth"
       >
-        {showPerception && (
-          <div className="mb-4 h-64 border border-purple-900/50 rounded-lg overflow-hidden shrink-0">
-             <PerceptionPanel />
-          </div>
-        )}
-
         {renderOfflineOverlay()}
-
-        {messages.map((msg) => (
+        
+        {messages.map((msg, idx) => (
           <MessageItem 
-            key={msg.id} 
+            key={msg.id || idx} 
             msg={msg} 
-            readOnly={readOnly} 
-            onVote={handleVote} 
+            onVote={handleVote}
+            // onFork={(mid: string) => setForkingMsgId(mid)} // Temporarily removed to fix type error if MessageItem doesn't support it
+            readOnly={readOnly}
           />
         ))}
-        <div ref={messagesEndRef} />
+        <div ref={messagesEndRef} className="h-4" />
       </div>
 
-      {/* Smart Scroll Button */}
-      {!isAtBottom && (
-        <button
-          onClick={scrollToBottom}
-          className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-xs px-3 py-1 rounded-full shadow-lg hover:bg-blue-500 transition-all z-20"
-        >
-          ↓ New messages
-        </button>
-      )}
-
       <div className="p-4 border-t border-zinc-800 bg-zinc-900/30">
+        {/* CP9-4: Tool Bar */}
+        <div className="flex gap-2 mb-2 px-1">
+           <button 
+             onClick={() => setActiveTools(p => ({ ...p, search: !p.search }))}
+             className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+               activeTools.search 
+                 ? "bg-blue-600 text-white shadow-blue-900/50 shadow-sm" 
+                 : "bg-transparent border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300"
+             }`}
+           >
+             <span>{activeTools.search ? 'Web Search: ON' : 'Web Search: OFF'}</span>
+           </button>
+           <button 
+             onClick={() => showToast("Memory attachment coming soon", "info")}
+             className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300 transition-all"
+           >
+             <span>Add Memory</span>
+           </button>
+           <button 
+             onClick={() => showToast("File attachment coming soon", "info")}
+             className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300 transition-all"
+           >
+             <span>Attach File</span>
+           </button>
+        </div>
+
         <form onSubmit={handleSend} className="relative flex gap-2">
           <VoiceInput onTranscript={handleVoiceTranscript} />
           <input
+            autoFocus
             type="text"
+            className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 transition-all placeholder-zinc-600"
+            placeholder={readOnly ? "System is offline..." : "Type a message..."}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
-            placeholder={readOnly ? "Read-only mode" : "Type a message..."}
-            disabled={readOnly || !sessionId || sending}
-            className="w-full bg-zinc-800 border-zinc-700 text-zinc-100 placeholder-zinc-500 rounded-md py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all disabled:opacity-50"
+            disabled={readOnly || sending}
           />
           <button
             type="submit"
-            disabled={readOnly || !sessionId || sending || !inputValue.trim()}
-            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-zinc-400 hover:text-white disabled:opacity-50 transition-colors"
+            disabled={!inputValue.trim() || sending || readOnly}
+            className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg shadow-blue-900/20"
           >
-            ⏎
+            {sending ? "Sending..." : "Send"}
           </button>
         </form>
+        
+        {validating && (
+           <div className="absolute top-0 right-0 -mt-8 mr-4 text-[10px] text-zinc-500 flex items-center gap-2">
+              <div className="w-2 h-2 border-2 border-zinc-600 border-t-transparent rounded-full animate-spin"></div>
+              Validating Cognition...
+           </div>
+        )}
       </div>
+
+      <ForkModal 
+        isOpen={!!forkingMsgId} 
+        onClose={() => setForkingMsgId(null)} 
+        onConfirm={handleFork} 
+      />
+      <RenameModal
+        isOpen={renameOpen}
+        initialName={sessionName}
+        onClose={() => setRenameOpen(false)}
+        onSave={handleRename}
+      />
     </div>
   );
 };

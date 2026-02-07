@@ -1,50 +1,57 @@
 import React, { useEffect, useState } from "react";
-import { HealthBackend, AuditResult } from "../../domain/DataContracts";
+import { AuditResult, KnezHealthResponse } from "../../domain/DataContracts";
 import { knezClient } from "../../services/KnezClient";
-
-type Props = {
-  backends: HealthBackend[];
-  lastCheck: number | null;
-  onRefresh: () => void;
-};
-
+import { SystemPanel } from "../system/SystemPanel";
+import { SystemStatus } from "../system/useSystemOrchestrator";
 import { PerformancePanel } from "../performance/PerformancePanel";
 
-// ... existing imports
+type Props = {
+  isConnected: boolean;
+  status: KnezHealthResponse | null;
+  systemStatus: SystemStatus;
+  systemOutput: string;
+  onStopSystem?: () => void;
+};
 
 export const InfrastructurePanel: React.FC<Props> = ({
-  backends,
-  lastCheck,
-  onRefresh,
+  isConnected,
+  status,
+  systemStatus,
+  systemOutput,
+  onStopSystem,
 }) => {
   const [audits, setAudits] = useState<AuditResult[]>([]);
+  
+  // Use status.backends or empty
+  const backends = status?.backends ?? [];
 
   useEffect(() => {
-    knezClient.getAuditConsistency().then(setAudits).catch(() => {});
-  }, [lastCheck]);
+    if (isConnected) {
+       knezClient.getAuditConsistency().then(setAudits).catch(() => {});
+    }
+  }, [status, isConnected]);
 
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold text-zinc-100">Infrastructure</h2>
+        <h2 className="text-xl font-bold text-zinc-100">Observatory (Infrastructure)</h2>
         <div className="flex items-center gap-4">
-          <span className="text-xs text-zinc-500">
-            Last check: {lastCheck ? new Date(lastCheck).toLocaleTimeString() : "Never"}
-          </span>
-          <button
-            onClick={onRefresh}
-            className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-500"
-          >
-            Refresh Health
-          </button>
+           {status && (
+             <span className="text-xs text-zinc-500">
+               Status: {status.status}
+             </span>
+           )}
         </div>
       </div>
+      
+      {/* System Control Panel (Orchestration) */}
+      <SystemPanel status={systemStatus} output={systemOutput} onStop={onStopSystem} />
+      
+      <div className="h-6"></div>
 
       <PerformancePanel />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* ... existing grids ... */}
-
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
         {/* Backend Health */}
         <div className="space-y-4">
           <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider mb-2">Backend Services</h3>

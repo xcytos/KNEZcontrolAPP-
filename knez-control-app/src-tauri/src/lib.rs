@@ -54,6 +54,8 @@ pub fn run() {
                 }))?;
             }
             app.handle().plugin(tauri_plugin_shell::init())?;
+            app.handle().plugin(tauri_plugin_fs::init())?;
+            app.handle().plugin(tauri_plugin_http::init())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

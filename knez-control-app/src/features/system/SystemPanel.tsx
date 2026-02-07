@@ -4,8 +4,8 @@ import { SystemStatus } from "./useSystemOrchestrator";
 export const SystemPanel: React.FC<{ 
   status: SystemStatus;
   output: string;
-  onLaunch: () => void;
-}> = ({ status, output, onLaunch }) => {
+  onStop?: () => void;
+}> = ({ status, output, onStop }) => {
   const outputRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -18,24 +18,24 @@ export const SystemPanel: React.FC<{
     <div className="text-xs text-zinc-400 border border-zinc-800 rounded p-3 bg-zinc-950/40 mt-4">
       <div className="flex items-center justify-between mb-2">
         <div className="font-mono text-zinc-500">System Orchestration</div>
-        <div className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
-          status === "running" ? "bg-green-900/30 text-green-400" :
-          status === "failed" || status === "degraded" ? "bg-red-900/30 text-red-400" :
-          status === "starting" ? "bg-blue-900/30 text-blue-400" :
-          "bg-zinc-800 text-zinc-500"
-        }`}>
-          {status}
+        <div className="flex gap-2 items-center">
+           {status === "running" && onStop && (
+             <button 
+               onClick={onStop}
+               className="px-2 py-0.5 rounded text-[10px] bg-red-900/30 text-red-400 hover:bg-red-900/50 transition-colors border border-red-900/50"
+             >
+               INJECT FAILURE (STOP)
+             </button>
+           )}
+           <div className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
+             status === "running" ? "bg-green-900/30 text-green-400" :
+             status === "failed" || status === "degraded" ? "bg-red-900/30 text-red-400" :
+             status === "starting" ? "bg-blue-900/30 text-blue-400" :
+             "bg-zinc-800 text-zinc-500"
+           }`}>
+             {status}
+           </div>
         </div>
-      </div>
-
-      <div className="mb-3">
-        <button
-          onClick={onLaunch}
-          disabled={status === "starting" || status === "running"}
-          className="w-full py-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed text-zinc-300 rounded border border-zinc-700 transition-colors"
-        >
-          {status === "running" ? "Stack Running (Connected)" : "Launch & Connect KNEZ"}
-        </button>
       </div>
 
       <div 
@@ -47,4 +47,3 @@ export const SystemPanel: React.FC<{
     </div>
   );
 };
-
