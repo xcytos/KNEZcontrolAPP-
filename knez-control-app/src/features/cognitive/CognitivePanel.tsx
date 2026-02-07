@@ -9,11 +9,21 @@ export const CognitivePanel: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [subState, setSubState] = useState<any>(null);
+  const [routerDecisions, setRouterDecisions] = useState<any[]>([]);
 
   useEffect(() => {
     knezClient.getCognitiveState()
       .then(setState)
       .catch((err) => setError(err.message));
+  }, []);
+
+  useEffect(() => {
+    knezClient.listEvents("", 100)
+      .then((evs) => {
+        const filtered = (evs as any[]).filter((e: any) => e.event_name === "router_route_decision");
+        setRouterDecisions(filtered.slice(0, 10));
+      })
+      .catch(() => setRouterDecisions([]));
   }, []);
 
   useEffect(() => {
@@ -80,6 +90,33 @@ export const CognitivePanel: React.FC = () => {
             : subState ? JSON.stringify(subState, null, 2) : "Loading..."
           }
         </pre>
+      </div>
+
+      <div className="mt-6 bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
+        <div className="px-4 py-3 bg-zinc-800/50 border-b border-zinc-800 flex justify-between items-center">
+          <h3 className="text-sm font-medium text-zinc-200">Latest Router Decisions</h3>
+          <span className="text-[10px] text-zinc-500 font-mono">TRACE</span>
+        </div>
+        <div className="p-4 space-y-3">
+          {routerDecisions.length === 0 ? (
+            <div className="text-xs text-zinc-500">No router decisions found.</div>
+          ) : (
+            routerDecisions.map((e: any, idx: number) => (
+              <div key={idx} className="border border-zinc-800 rounded p-3 bg-zinc-950/30">
+                <div className="flex justify-between items-center">
+                  <div className="text-xs text-zinc-200 font-mono">{e.session_id || "no-session"}</div>
+                  <div className="text-[10px] text-zinc-500 font-mono">{e.timestamp}</div>
+                </div>
+                <div className="mt-2 text-xs text-zinc-400">
+                  selected: <span className="text-zinc-200">{e.payload?.selected_backend}</span> • hints: <span className="text-zinc-200">{e.payload?.memory_hint_count ?? 0}</span> • influence: <span className="text-zinc-200">{String(e.payload?.influence_applied)}</span>
+                </div>
+                <div className="mt-2 text-[10px] text-zinc-500 font-mono">
+                  candidates: {(e.payload?.candidates || []).join(", ")}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );

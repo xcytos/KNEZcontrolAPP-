@@ -11,6 +11,12 @@ For each task capture:
 Current graph seeds:
 ... (previous entries)
 
+- Task: CHECKPOINT 11 — BACKEND FEATURE COVERAGE & CONTROL APP INTEGRATION
+  - Status: active
+  - Dependencies: CP7 baseline runtime verification
+  - Why: No backend subsystem is considered operational unless observable and testable from Control App.
+  - Unblocked by: Backend feature map + CP11-1 → CP11-15 verified with tests and builds.
+
 - Task: CHECKPOINT 6 — NEW SUBSYSTEMS
   - Status: done
   - Dependencies: CP5

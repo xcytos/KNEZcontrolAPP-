@@ -63,4 +63,19 @@ If TAQWIN (parent) later provides execution tools:
 Always check KNEZ server capabilities (endpoints, schemas) before implementing new UI features.
 Do not assume endpoints exist; verify via code scan or /health.
 
+13. No simulation in production paths
+No mock, stub, or simulated data may exist in production paths or default tests.
+
+14. Backend-truth UI state
+UI state must be derivable from backend truth only.
+
+15. Runtime-verified tickets only
+A ticket is incomplete unless verified in the running desktop app.
+
+16. Prompt and ticket serialization
+Every prompt and ticket set must be serialized with IDs and ranges.
+
+17. Real test harness
+Any test harness must use real backend processes and real HTTP/SSE.
+
 Violation of these rules invalidates the response.

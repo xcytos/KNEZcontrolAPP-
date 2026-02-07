@@ -1,0 +1,26 @@
+# Backend Feature Map — KNEZ ↔ Control App
+
+Source of truth:
+- Backend entrypoint: [run.py](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/KNEZ/run.py) → serves [knez_core/app.py](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/KNEZ/knez/knez_core/app.py)
+- Control App API client: [KnezClient.ts](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/knez-control-app/src/services/KnezClient.ts)
+
+Table legend:
+- Used by Control App: YES / PARTIAL / NO
+- Tested: Backend = pytest under `KNEZ/tests/*`; Frontend = TestRunner/Playwright under `knez-control-app/tests/*`
+
+| Subsystem | Files | APIs | Used by Control App | Tested | Notes |
+| --- | --- | --- | --- | --- | --- |
+| cognitive | [cognitive/api.py](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/KNEZ/knez/cognitive/api.py) | `GET /state/{overview,governance,influence,stability,taqwin}`; `GET /runbooks/{session_id}`; `GET /audit/consistency`; operator toggles under `/operator/influence/*` | YES | Backend: `KNEZ/tests/test_cognitive_layer.py` | Approval/vote endpoints inside cognitive API are placeholders (not backed by real store). |
+| memory | [memory/api.py](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/KNEZ/knez/knez_core/memory/api.py), [memory/store.py](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/KNEZ/knez/knez_core/memory/store.py) | `GET /memory`; `GET /memory/{id}`; `GET/POST /memory/knowledge` | YES | Backend: `KNEZ/tests/test_memory.py`, `test_memory_governance.py`; Frontend: MemoryExplorer | Store is in-memory globals, not durable. |
+| replay | [replay/api.py](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/KNEZ/knez/knez_core/replay/api.py) | `GET /sessions/{id}/replay`; `GET /sessions/{id}/summary`; `GET /sessions/{id}/insights` | PARTIAL | Backend: `KNEZ/tests/test_replay.py`; Frontend: ReplayPane | UI fetch exists but correctness vs event stream not verified end-to-end. |
+| influence | [influence/contracts.py](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/KNEZ/knez/cognitive/influence/contracts.py) | Operator controls: `GET /operator/influence/contracts`, `POST /operator/influence/{global,domain,contract}` | YES (operator toggles) | Backend: `KNEZ/tests/test_influence_execution.py`, `test_influence_interface.py` | “Vote” and denial surfacing are not implemented as observable UI artifacts. |
+| approval | [approval/api.py](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/KNEZ/knez/cognitive/approval/api.py) | Service methods only; no real FastAPI endpoints wired | NO/PARTIAL | Backend: `KNEZ/tests/test_approval_gate.py` | Control App cannot observe or act on approval queue today. |
+| router | [router/router.py](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/KNEZ/knez/knez_core/router/router.py) | Internal routing selection + decision events | PARTIAL | Backend: `KNEZ/tests/test_hint_impact.py` | Router decisions exist as events but UI lacks trace visualization. |
+| models | [models/local_backend.py](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/KNEZ/knez/knez_core/models/local_backend.py), [models/cloud_backend.py](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/KNEZ/knez/knez_core/models/cloud_backend.py) | Internal backend calls; local uses `POST /api/generate` to model server | PARTIAL | Backend: `KNEZ/tests/test_local_streaming.py` | Cloud backend is stubbed; UI does not show chosen backend + scoring. |
+| events | [events/api.py](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/KNEZ/knez/knez_core/events/api.py) | `GET /events?limit&type&session_id&task_id` | YES | Backend: `KNEZ/tests/test_events.py`; Frontend: Events panel | Event causality chain not explicitly rendered in UI. |
+| sessions | [sessions.py](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/KNEZ/knez/knez_core/api/sessions.py) | `POST /sessions/{id}/resume`; `GET /sessions/{id}/resume_snapshot`; `POST /sessions/{id}/fork` | PARTIAL | Backend: `KNEZ/tests/test_continuous_sessions.py`, `test_resume_dedupe.py` | Control App uses resume/fork but lacks named session metadata sourced from backend. |
+| failover | [failover/manager.py](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/KNEZ/knez/knez_core/failover/manager.py) | Internal failover manager methods + events | NO/PARTIAL | Backend: `KNEZ/tests/test_failover_loop.py`, `test_local_failover.py` | No UI surface for failover status/trigger. |
+| telemetry | [telemetry/metrics.py](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/KNEZ/knez/knez_core/telemetry/metrics.py) | Prometheus client counters/gauges | NO/PARTIAL | Backend: `KNEZ/tests/test_ttft_keepalive.py` | No `/metrics` endpoint found; Control App cannot observe metrics. |
+| MCP | [mcp/api.py](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/KNEZ/knez/mcp/api.py) | `GET /mcp/registry`; `POST /mcp/registry/{id}/toggle` | YES (calls exist) | Frontend: MCP view | Backend endpoints hard-404 (“not available”), so feature is non-operational. |
+| shadow | [shadow/simulator.py](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/KNEZ/knez/cognitive/shadow/simulator.py) | Internal store/simulator methods | NO/PARTIAL | Backend: `KNEZ/tests/test_shadow_influence.py` | Simulator is placeholder returning `None`; no UI visibility. |
+

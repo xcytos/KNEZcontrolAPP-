@@ -13,6 +13,8 @@ interface MainLayoutProps {
     endpoint: string;
     lastCheck: number | null;
   };
+  headerActions?: React.ReactNode;
+  headerSubtitle?: React.ReactNode;
 }
 
 export const MainLayout: React.FC<MainLayoutProps> = ({
@@ -21,6 +23,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   presenceState,
   children,
   connectionStatus,
+  headerActions,
+  headerSubtitle,
 }) => {
   return (
     <div className="flex h-screen w-screen bg-zinc-950 text-zinc-100 overflow-hidden font-sans">
@@ -30,7 +34,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         <header className="h-14 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900/50 backdrop-blur-sm">
           <div className="flex items-center gap-4">
             <h1 className="text-sm font-semibold text-zinc-400 tracking-wide uppercase">
-              KNEZ Control Surface <span className="text-zinc-600 mx-2">/</span> {activeView}
+              KNEZ Control <span className="text-zinc-600 mx-2">/</span> {activeView}
             </h1>
             {connectionStatus && (
               <div className={`flex items-center gap-2 text-xs px-2 py-1 rounded border ${
@@ -44,8 +48,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                 <span className="font-mono">{connectionStatus.endpoint}</span>
               </div>
             )}
+            {headerSubtitle}
           </div>
-          <PresenceIndicator state={presenceState} />
+          <div className="flex items-center gap-3">
+            {headerActions}
+            <PresenceIndicator state={presenceState} />
+          </div>
         </header>
         
         <main className="flex-1 overflow-auto p-0 relative">

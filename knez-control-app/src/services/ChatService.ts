@@ -140,10 +140,15 @@ class ChatService {
       }
 
       // Finalize
+      if (tokenCount === 0 && collected.trim().length === 0) {
+        collected =
+          "No reply received from KNEZ. This usually means the backend is offline, the endpoint is wrong, or the stream returned an empty response.";
+      }
       this.state.messages = this.state.messages.map(m => m.id === assistantId ? {
         ...m,
         isPartial: false,
-        metrics: { ...m.metrics, finishReason: "stop" }
+        text: collected,
+        metrics: { ...m.metrics, finishReason: "stop", totalTokens: tokenCount }
       } : m);
 
       // Save

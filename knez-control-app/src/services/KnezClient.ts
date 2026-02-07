@@ -121,6 +121,21 @@ export class KnezClient {
     return this.sessionId;
   }
 
+  setSessionId(sessionId: string | null): void {
+    this.sessionId = sessionId;
+    if (sessionId) {
+      localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+    } else {
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+    }
+  }
+
+  createNewLocalSession(): string {
+    const fresh = newSessionId();
+    this.setSessionId(fresh);
+    return fresh;
+  }
+
   async health(): Promise<KnezHealthResponse> {
     const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/health`);
     if (!resp.ok) {
@@ -180,6 +195,18 @@ export class KnezClient {
     return (await resp.json()) as KnezEvent[];
   }
 
+  async emitTaqwinEvent(sessionId: string, eventName: string, payload: any = {}): Promise<void> {
+    const url = `${this.profile.endpoint.replace(/\/$/, "")}/taqwin/events`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, event: eventName, payload }),
+    });
+    if (!resp.ok) {
+      throw new Error(`taqwin_event_failed_${resp.status}`);
+    }
+  }
+
   async tryGetMcpRegistry(): Promise<McpRegistrySnapshot> {
     const url = `${this.profile.endpoint.replace(/\/$/, "")}/mcp/registry`;
     try {
@@ -218,6 +245,19 @@ export class KnezClient {
       throw new Error(`memory_failed_${resp.status}`);
     }
     return (await resp.json()) as KnezMemoryRecord[];
+  }
+
+  async checkMemoryGate(sessionId: string): Promise<any> {
+    const url = `${this.profile.endpoint.replace(/\/$/, "")}/memory/gate/check`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    if (!resp.ok) {
+      throw new Error(`memory_gate_failed_${resp.status}`);
+    }
+    return await resp.json();
   }
 
   async getInsights(sessionId: string): Promise<KnezInsight[]> {
@@ -397,12 +437,25 @@ export class KnezClient {
     }
   }
 
-  async submitApprovalDecision(approvalId: string, decision: "approved" | "rejected"): Promise<void> {
+  async requestApproval(kind: string, payload: any = {}, sessionId?: string): Promise<any> {
+    const url = `${this.profile.endpoint.replace(/\/$/, "")}/approvals/request`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind, payload, session_id: sessionId }),
+    });
+    if (!resp.ok) {
+      throw new Error(`approval_request_failed_${resp.status}`);
+    }
+    return await resp.json();
+  }
+
+  async submitApprovalDecision(approvalId: string, decision: "approve" | "deny", actor?: string, reason?: string, sessionId?: string): Promise<void> {
     const url = `${this.profile.endpoint.replace(/\/$/, "")}/approvals/${approvalId}/decision`;
     const resp = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ decision }),
+      body: JSON.stringify({ decision, actor, reason, session_id: sessionId }),
     });
     if (!resp.ok) {
       throw new Error(`approval_decision_failed_${resp.status}`);
@@ -480,6 +533,8 @@ export class KnezClient {
 
     while (attempts < maxAttempts) {
       try {
+        const controller = new AbortController();
+        const connectTimeoutId = window.setTimeout(() => controller.abort(), 12000);
         const resp = await fetch(url, {
           method: "POST",
           headers: {
@@ -487,7 +542,9 @@ export class KnezClient {
             Accept: "text/event-stream",
           },
           body: JSON.stringify(payload),
+          signal: controller.signal,
         });
+        clearTimeout(connectTimeoutId);
 
         if (!resp.ok) {
            // If 5xx error, maybe retry. If 4xx, likely client error, don't retry.
@@ -502,11 +559,14 @@ export class KnezClient {
         const reader = resp.body.getReader();
         const decoder = new TextDecoder("utf-8");
         let buffer = "";
+        let inactivityTimeoutId = window.setTimeout(() => controller.abort(), 25000);
         
         // Successful connection established, break retry loop and yield
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
+          clearTimeout(inactivityTimeoutId);
+          inactivityTimeoutId = window.setTimeout(() => controller.abort(), 25000);
           buffer += decoder.decode(value, { stream: true });
           let idx: number;
           while ((idx = buffer.indexOf("\n\n")) >= 0) {
@@ -530,6 +590,7 @@ export class KnezClient {
             }
           }
         }
+        clearTimeout(inactivityTimeoutId);
         return; // Success, exit generator
 
       } catch (err) {

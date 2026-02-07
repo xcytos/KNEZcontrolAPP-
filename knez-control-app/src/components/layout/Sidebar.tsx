@@ -13,6 +13,7 @@ export const Sidebar: FC<SidebarProps> = ({ activeView, onViewChange }) => {
     { id: 'agent', label: 'Agent Loop', icon: 'AGENT' },
     { id: 'memory', label: 'Memory', icon: 'MEM' },
     { id: 'timeline', label: 'Timeline', icon: 'TIME' },
+    { id: 'replay', label: 'Replay', icon: 'RPL' },
     { id: 'extraction', label: 'Extractor', icon: 'EXT' },
     { id: 'diagnostics', label: 'Diagnostics', icon: 'DIAG' },
     { id: 'skills', label: 'Skills', icon: 'SKL' },
