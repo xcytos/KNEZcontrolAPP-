@@ -160,6 +160,8 @@ export class TestRunner {
        // UI Navigation Smoke (CP12-4)
        // This runs in the actual window context
        const { uiDriver } = await import('./UiDriverService');
+       this.logStep(id, "Navigating to Chat view...");
+       await uiDriver.click('button[title="Chat"]');
        this.logStep(id, "Waiting for Chat Input...");
        await uiDriver.waitVisible('[data-testid="chat-input"]');
        
@@ -184,10 +186,13 @@ export class TestRunner {
 
     if (id === '6') {
        const { knezClient } = await import('./KnezClient');
+       this.logStep(id, "Checking health...");
+       await knezClient.health({ timeoutMs: 6000 });
        this.logStep(id, "Seeding events via TAQWIN adapter...");
        await knezClient.emitTaqwinEvent(testSessionId, "taqwin_replay_seed", { ok: true });
        this.logStep(id, "Fetching replay timeline...");
        const replay = await knezClient.getReplayTimeline(testSessionId);
+       if (!replay) throw new Error("Replay is unavailable (missing endpoint or no data)");
        const phases = Array.isArray((replay as any).timeline) ? (replay as any).timeline : [];
        if (phases.length === 0) throw new Error("Replay returned no phases");
        const all = phases.flatMap((p: any) => p.events || []);

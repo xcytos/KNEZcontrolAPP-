@@ -1,5 +1,7 @@
 export type ErrorCode =
   | "KNEZ_HEALTH_FAILED"
+  | "KNEZ_TIMEOUT"
+  | "KNEZ_FETCH_FAILED"
   | "KNEZ_COMPLETION_FAILED"
   | "KNEZ_STREAM_FAILED"
   | "KNEZ_STREAM_EMPTY"
@@ -21,4 +23,3 @@ export function asErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
 }
-

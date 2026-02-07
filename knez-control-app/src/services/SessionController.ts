@@ -62,27 +62,15 @@ class SessionController {
   }
 
   async resumeSession(sourceSessionId: string): Promise<string> {
-    try {
-      const newSessionId = await knezClient.resumeSession(sourceSessionId);
-      this.setSessionId(newSessionId);
-      return newSessionId;
-    } catch {
-      const created = knezClient.createNewLocalSession();
-      this.setSessionId(created);
-      return created;
-    }
+    const newSessionId = await knezClient.resumeSession(sourceSessionId);
+    this.setSessionId(newSessionId);
+    return newSessionId;
   }
 
   async forkSession(sourceSessionId: string, messageId?: string): Promise<string> {
-    try {
-      const newSessionId = await knezClient.forkSession(sourceSessionId, messageId);
-      this.setSessionId(newSessionId);
-      return newSessionId;
-    } catch {
-      const created = knezClient.createNewLocalSession();
-      this.setSessionId(created);
-      return created;
-    }
+    const newSessionId = await knezClient.forkSession(sourceSessionId, messageId);
+    this.setSessionId(newSessionId);
+    return newSessionId;
   }
 }
 

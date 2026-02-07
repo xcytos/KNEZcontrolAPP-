@@ -20,7 +20,8 @@ export const ConnectionPage: React.FC<{
   const [events, setEvents] = useState<KnezEvent[] | null>(null);
   const [mcp, setMcp] = useState<McpRegistrySnapshot | null>(null);
   const [message, setMessage] = useState("");
-  const isTauri = !!(window as any).__TAURI__ || !!(window as any).__TAURI_IPC__;
+  const w = window as any;
+  const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
 
   useEffect(() => {
     const profile = knezClient.getProfile();

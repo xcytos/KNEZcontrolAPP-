@@ -75,7 +75,8 @@ const DEFAULT_PROFILE: KnezConnectionProfile = {
 };
 
 function isTauriRuntime(): boolean {
-  return !!(window as any).__TAURI__ || !!(window as any).__TAURI_IPC__;
+  const w = window as any;
+  return !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
 }
 
 function normalizeEndpoint(endpoint: string): string {
@@ -161,16 +162,25 @@ export class KnezClient {
 
   async health(options?: { timeoutMs?: number }): Promise<KnezHealthResponse> {
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), options?.timeoutMs ?? 3500);
-    const resp = await fetch(`${this.baseUrl()}/health`, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (!resp.ok) {
-      logger.error("knez_client", "Health check failed", { status: resp.status });
-      throw new AppError("KNEZ_HEALTH_FAILED", `Health check failed (${resp.status})`, { status: resp.status });
+    const timeoutMs = options?.timeoutMs ?? 6000;
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const resp = await fetch(`${this.baseUrl()}/health`, { signal: controller.signal });
+      if (!resp.ok) {
+        logger.error("knez_client", "Health check failed", { status: resp.status });
+        throw new AppError("KNEZ_HEALTH_FAILED", `Health check failed (${resp.status})`, { status: resp.status });
+      }
+      const data = (await resp.json()) as KnezHealthResponse;
+      logger.debug("knez_client", "Health check passed", { backends: data.backends.length });
+      return data;
+    } catch (e: any) {
+      if (e?.name === "AbortError") {
+        throw new AppError("KNEZ_TIMEOUT", "Health check timed out", { timeoutMs });
+      }
+      throw new AppError("KNEZ_FETCH_FAILED", String(e?.message ?? e));
+    } finally {
+      clearTimeout(timeoutId);
     }
-    const data = (await resp.json()) as KnezHealthResponse;
-    logger.debug("knez_client", "Health check passed", { backends: data.backends.length });
-    return data;
   }
 
   async validateSession(sessionId: string): Promise<boolean> {
@@ -306,11 +316,20 @@ export class KnezClient {
 
   async getCognitiveState(): Promise<CognitiveState> {
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 2500);
-    const resp = await fetch(`${this.baseUrl()}/state/overview`, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (!resp.ok) throw new Error(`state_failed_${resp.status}`);
-    return await resp.json();
+    const timeoutMs = 6000;
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const resp = await fetch(`${this.baseUrl()}/state/overview`, { signal: controller.signal });
+      if (!resp.ok) throw new Error(`state_failed_${resp.status}`);
+      return await resp.json();
+    } catch (e: any) {
+      if (e?.name === "AbortError") {
+        throw new AppError("KNEZ_TIMEOUT", "State overview timed out", { timeoutMs });
+      }
+      throw e;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
   
   async getDetailedSubsystemState(subsystem: "governance" | "influence" | "taqwin"): Promise<any> {
@@ -351,11 +370,20 @@ export class KnezClient {
   
   async getResumeSnapshot(sessionId: string): Promise<ResumeSnapshot | null> {
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 2500);
-    const resp = await fetch(`${this.baseUrl()}/sessions/${sessionId}/resume_snapshot`, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (!resp.ok) return null;
-    return await resp.json();
+    const timeoutMs = 8000;
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const resp = await fetch(`${this.baseUrl()}/sessions/${sessionId}/resume_snapshot`, { signal: controller.signal });
+      if (!resp.ok) return null;
+      return await resp.json();
+    } catch (e: any) {
+      if (e?.name === "AbortError") {
+        throw new AppError("KNEZ_TIMEOUT", "Resume snapshot timed out", { timeoutMs });
+      }
+      throw e;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   async getOperatorControls(): Promise<{ enabled: boolean, policies: any[] }> {

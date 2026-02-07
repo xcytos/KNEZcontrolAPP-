@@ -1,65 +1,100 @@
 # TAQWIN Capability Registry (CP12-9)
 
-## MCP Adapter
+This registry reflects the TAQWIN_V1 folder on disk and the actual MCP server behavior.
 
-### analyze
-- Description: bounded TAQWIN cognitive analysis routed through TAQWIN.
-- Input: `{ text: string, session_id: string, intent?: string, correlation_id?: string }`
-- Output: TAQWIN response envelope (observations, proposals, errors).
-- Risk: low/medium (content processing, no direct filesystem/network required by contract).
+## MCP Protocol Contract (TAQWIN_V1)
 
-## Full TAQWIN MCP Server (Tool Registry)
+- Transport: STDIN/STDOUT JSON-RPC 2.0
+- Framing:
+  - Content-Length header mode (preferred)
+  - Line-delimited JSON mode (fallback)
+- Methods:
+  - initialize
+  - tools/list
+  - tools/call
+- tools/list response: `{ result: { tools: ToolDefinition[] } }`
+- tools/call response: `{ result: { content: Array<{ type: "text"; text: string }> } }`
+  - If a tool returns a dict, TAQWIN formats it as pretty-printed JSON string inside `content[0].text`.
+
+## MCP Servers Present
+
+### TAQWIN Core MCP Server (recommended)
+- Entry: `TAQWIN_V1/core/mcp_server.py`
+- Tools: full tool registry (listed below)
+
+### TAQWIN Adapter MCP Server (limited)
+- Entry: `TAQWIN_V1/taqwin/mcp_server.py`
+- Tools: exposes a single `analyze` tool and is not the full registry
+
+## Core Tool Registry (TAQWIN_V1/core/mcp_server.py)
 
 ### activate_taqwin_unified_consciousness
-- Description: activate/query TAQWIN consciousness.
-- Input: object (varies by handler).
-- Output: TAQWIN response fields (implementation-defined).
-- Risk: high (broad behavioral surface).
+- Purpose: activate TAQWIN unified consciousness and optionally process a query.
+- Key inputs:
+  - `level`: basic|enhanced|full|quantum|superintelligence
+  - `query` or `message`
+  - `context` (object)
+  - toggles: `enable_learning`, `enable_insights`, `enable_delegation`, `enable_council`, `enable_superintelligence`, `persistent_mode`, `memory_depth`
+- Key outputs:
+  - `taqwin_response` (string) when `query` is provided
+  - `consciousness_state`, `system_status`, `capabilities`, `system_metrics`
+- Risk: high
 
 ### get_server_status
-- Description: comprehensive TAQWIN server status.
-- Input: object.
-- Output: status payload.
-- Risk: low.
+- Purpose: system + database status snapshot.
+- Key inputs: `force_refresh` (bool), `include_db_analysis` (bool)
+- Key outputs: `status.server_overview`, `status.database_status`, `status.health_summary`
+- Risk: low
 
 ### deploy_real_taqwin_council
-- Description: deploy/manage TAQWIN council agents.
-- Input: object (actions/agents/session config).
-- Output: deployment result payload.
-- Risk: high (multi-agent execution).
+- Purpose: deploy/consult/manage council agents.
+- Key input: `action` (required), plus `session_id` for most operations.
+- Common actions:
+  - deploy | status | consult | dismiss
+  - comprehensive_consult | enhanced_analysis | full_capability_deployment
+  - learning_analysis | knowledge_evolution | share_knowledge | optimize_learning
+- Risk: high
 
-### session
-- Description: session operations (create/list/analyze/continue).
-- Input: object (handler-defined).
-- Output: session result payload.
-- Risk: medium.
+### session (bounded)
+- Purpose: bounded wrapper over the Ultimate Session Tool.
+- Allowed actions (required `action`):
+  - session_start
+  - session_attach
+  - session_context_query
+  - session_event_proposal
+  - session_summary_request
+  - session_close
+- Common inputs: `session_id`, `name`, `type`, `description`, `tags`, `privacy_level`, `auto_record`, `query`, `event_type`, `event_data`, `observation`
+- Risk: medium
 
-### session_v2
-- Description: v2 session management (RAG/LLM-context oriented).
-- Input: object (handler-defined).
-- Output: v2 session payload.
-- Risk: medium.
+### session_v2 (RAG/context)
+- Purpose: session storage + retrieval + “LLM-ready context” bundle.
+- Actions (required `action`):
+  - create_session | record_event | list_sessions | analyze_session | continue_session
+  - semantic_search | related_sessions
+  - index_session | index_raw
+  - get_llm_context | get_context_bundle
+- Key inputs: `session_id`, `event_type`, `event_data`, `semantic_query`/`query`, `k`, `recent`, `include_retrieval`, `auto_index`
+- Risk: medium
 
 ### scan_database
-- Description: database scanning and analysis.
-- Input: object (handler-defined).
-- Output: scan results.
-- Risk: high (filesystem/internal data access).
+- Purpose: DB scan/query/integrity/export/monitoring.
+- Actions include: scan_overview | schema_analysis | execute_query | search_content | analyze_integrity | linked_session_events
+- Key inputs vary by action; `session_id` is required for linked_session_events.
+- Risk: high
 
 ### web_intelligence
-- Description: web intelligence access and analysis.
-- Input: object (handler-defined).
-- Output: extracted intelligence payload.
-- Risk: high (network/external content).
+- Purpose: web retrieval/search/analysis/monitoring.
+- Actions include: get_content | search_web | analyze_content | bulk_analyze | trend_analysis | dashboard_overview
+- Key inputs: `url`, `query`, `urls`, `analysis_type`, `agent_context`
+- Risk: high
 
 ### debug_test
-- Description: debug test tool.
-- Input: object.
-- Output: debug payload.
-- Risk: medium.
+- Purpose: debug tool that returns environment details.
+- Key input: `message` (string)
+- Risk: low
 
 ### connection_info
-- Description: debug connection information.
-- Input: object.
-- Output: connection details.
-- Risk: medium.
+- Purpose: connection/protocol diagnostics.
+- Key input: none
+- Risk: low

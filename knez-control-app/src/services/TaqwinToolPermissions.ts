@@ -2,22 +2,24 @@ import { knezClient } from "./KnezClient";
 
 type Permissions = Record<string, boolean>;
 
-const STORAGE_KEY = "taqwin_tool_permissions_v1";
+const STORAGE_KEY = "taqwin_tool_permissions_v2";
 
-const DEFAULT_ENABLED: Permissions = {
-  analyze: true,
-  session: true,
-  session_v2: true
-};
+const SAFE_TOOLS_UNTRUSTED = new Set<string>([
+  "get_server_status",
+  "connection_info",
+  "debug_test",
+  "session",
+  "session_v2"
+]);
 
 export function getTaqwinToolPermissions(): Permissions {
   const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return { ...DEFAULT_ENABLED };
+  if (!raw) return {};
   try {
     const parsed = JSON.parse(raw) as Permissions;
-    return { ...DEFAULT_ENABLED, ...parsed };
+    return parsed ?? {};
   } catch {
-    return { ...DEFAULT_ENABLED };
+    return {};
   }
 }
 
@@ -28,9 +30,9 @@ export function setTaqwinToolEnabled(tool: string, enabled: boolean) {
 
 export function isTaqwinToolAllowed(tool: string): boolean {
   const trust = knezClient.getProfile().trustLevel;
-  const enabled = !!getTaqwinToolPermissions()[tool];
+  const enabledPref = getTaqwinToolPermissions()[tool];
+  const enabled = enabledPref !== false;
   if (!enabled) return false;
   if (trust === "verified") return true;
-  return tool === "analyze" || tool === "session" || tool === "session_v2";
+  return SAFE_TOOLS_UNTRUSTED.has(tool);
 }
-

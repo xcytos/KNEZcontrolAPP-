@@ -32,7 +32,8 @@ export const FloatingConsole: React.FC = () => {
   const [psCommand, setPsCommand] = useState<string>("Get-Date");
 
   const childRef = useRef<Child | null>(null);
-  const isTauri = !!(window as any).__TAURI__ || !!(window as any).__TAURI_IPC__;
+  const w = window as any;
+  const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
 
   useEffect(() => {
     setLogs(logger.getLogs().slice(0, 200));

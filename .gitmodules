@@ -1,0 +1,3 @@
+[submodule "TAQWIN_V1"]
+	path = TAQWIN_V1
+	url = https://github.com/xcytos/TAQWIN-MCP.git

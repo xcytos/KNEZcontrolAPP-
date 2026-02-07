@@ -517,7 +517,12 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         onClose={() => setHistoryOpen(false)}
         currentSessionId={sessionId}
         onSelect={async (sid) => {
-           await sessionController.resumeSession(sid);
+           try {
+             await sessionController.resumeSession(sid);
+             showToast(`Session resumed: ${sid.substring(0, 8)}`, "success");
+           } catch {
+             showToast("Failed to resume session", "error");
+           }
         }}
       />
     </div>

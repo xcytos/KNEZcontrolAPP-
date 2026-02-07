@@ -45,7 +45,8 @@ export function useSystemOrchestrator(onReady?: () => void) {
     // Launch Logic
     // Fix: We enabled withGlobalTauri: true, so window.__TAURI__ should be available.
     // Also checking __TAURI_IPC__ for v2.
-    const isTauri = !!(window as any).__TAURI__ || !!(window as any).__TAURI_IPC__;
+    const w = window as any;
+    const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
     
     if (!isTauri) {
       setOutput((prev) => prev + "\n[Web Mode] Shell unavailable. Launch requires the desktop app.");
