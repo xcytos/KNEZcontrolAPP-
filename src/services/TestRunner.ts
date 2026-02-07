@@ -1,6 +1,8 @@
 
 import { chatService } from "./ChatService";
-// import { persistenceService } from "./PersistenceService";
+import { persistenceService } from "./PersistenceService";
+import { sessionController } from "./SessionController";
+import { sessionDatabase } from "./SessionDatabase";
 
 export interface TestResult {
   id: string;
@@ -18,6 +20,10 @@ export class TestRunner {
     { id: '4', name: 'UI Navigation Smoke', status: 'pending', log: [] },
     { id: '5', name: 'Memory Gate Visibility', status: 'pending', log: [] },
     { id: '6', name: 'Replay Timeline Playback', status: 'pending', log: [] },
+    { id: '7', name: 'Send During Session Switch', status: 'pending', log: [] },
+    { id: '8', name: 'Send During Fork', status: 'pending', log: [] },
+    { id: '9', name: 'Send During Resume', status: 'pending', log: [] },
+    { id: '10', name: 'Send During Reconnect', status: 'pending', log: [] },
   ];
 
   subscribe(cb: (results: TestResult[]) => void) {
@@ -29,8 +35,12 @@ export class TestRunner {
   private updateResult(id: string, update: Partial<TestResult>) {
     this.results = this.results.map(r => {
        if (r.id === id) {
-          // Append log if present, don't overwrite array unless intended
-          const newLog = update.log ? [...r.log, ...update.log] : r.log;
+          const newLog =
+            update.log === undefined
+              ? r.log
+              : update.log.length === 0
+                ? []
+                : [...r.log, ...update.log];
           return { ...r, ...update, log: newLog };
        }
        return r;
@@ -60,14 +70,40 @@ export class TestRunner {
     }
   }
 
+  async runOne(id: string) {
+    const test = this.results.find(r => r.id === id);
+    if (!test) return;
+    this.updateResult(test.id, { status: 'running', log: [] });
+    try {
+      await this.runTest(test.id);
+      this.updateResult(test.id, { status: 'passed' });
+    } catch (e: any) {
+      this.updateResult(test.id, { status: 'failed', log: [String(e)] });
+    }
+  }
+
   private logStep(id: string, msg: string) {
      this.updateResult(id, { log: [`[STEP] ${msg}`] });
+  }
+
+  private async waitUntil(
+    cond: () => boolean,
+    opts: { timeoutMs?: number; intervalMs?: number; timeoutMessage?: string } = {}
+  ) {
+    const timeoutMs = opts.timeoutMs ?? 8000;
+    const intervalMs = opts.intervalMs ?? 250;
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (cond()) return;
+      await this.waitFor(intervalMs);
+    }
+    throw new Error(opts.timeoutMessage ?? "Timed out waiting for condition");
   }
 
   private async runTest(id: string) {
     // CP11: Use dedicated test sessions
     const testSessionId = `test-session-${id}-${Date.now()}`;
-    chatService.setSessionId(testSessionId);
+    sessionController.useSession(testSessionId);
 
     if (id === '1') {
        this.logStep(id, "Pinging system...");
@@ -75,9 +111,14 @@ export class TestRunner {
        chatService.clear();
        await chatService.sendMessage("Ping");
        this.logStep(id, "Waiting for response...");
-       await this.waitFor(2000); 
+       await this.waitUntil(() => {
+         const msgs = chatService.getMessages();
+         const last = msgs[msgs.length - 1];
+         return !!last && last.from === "knez" && !last.isPartial && last.text.trim().length > 0;
+       }, { timeoutMessage: "No response from KNEZ (timed out waiting for assistant message)" });
        const msgs = chatService.getMessages();
        const last = msgs[msgs.length - 1];
+       if (!last) throw new Error("No response from KNEZ (no messages)");
        if (last.from !== 'knez' || !last.text) throw new Error("No response from KNEZ");
        if (last.text.includes("Delivery Failure")) throw new Error(`KNEZ Error: ${last.text}`);
     }
@@ -88,16 +129,25 @@ export class TestRunner {
        chatService.clear();
        const testUrl = "https://example.com";
        await chatService.sendMessage(`check ${testUrl}`);
-       await this.waitFor(3000);
+       await this.waitUntil(() => {
+         const msgs = chatService.getMessages();
+         const last = msgs[msgs.length - 1];
+         return !!last && last.from === "knez" && !last.isPartial;
+       }, { timeoutMessage: "No web-search response from KNEZ (timed out)" });
        const msgs = chatService.getMessages();
        const last = msgs[msgs.length - 1];
+       if (!last) throw new Error("No web-search response from KNEZ (no messages)");
        if (last.refusal) throw new Error("Refusal/Error in web search");
     }
 
     if (id === '3') {
        this.logStep(id, "Saving memory fact...");
        await chatService.sendMessage("My magic number is 42");
-       await this.waitFor(2000);
+       await this.waitUntil(() => {
+         const msgs = chatService.getMessages();
+         const last = msgs[msgs.length - 1];
+         return !!last && last.from === "knez" && !last.isPartial;
+       }, { timeoutMessage: "Timed out waiting for memory fact response" });
        
        this.logStep(id, "Reloading session...");
        chatService.clear();
@@ -111,15 +161,13 @@ export class TestRunner {
        // This runs in the actual window context
        const { uiDriver } = await import('./UiDriverService');
        this.logStep(id, "Waiting for Chat Input...");
-       await uiDriver.waitVisible('input[placeholder*="Type a message"]');
+       await uiDriver.waitVisible('[data-testid="chat-input"]');
        
        this.logStep(id, "Checking Web Search button...");
-       // Use our custom selector syntax handled by UiDriverService
-       // Note: The button text is "Web Search: ON" or "Web Search: OFF"
-       await uiDriver.waitVisible('button:has-text("Web Search")'); 
+       await uiDriver.waitVisible('[data-testid="search-toggle"]'); 
        
        this.logStep(id, "Clicking Web Search toggle...");
-       await uiDriver.click('button:has-text("Web Search")');
+       await uiDriver.click('[data-testid="search-toggle"]');
     }
 
     if (id === '5') {
@@ -145,6 +193,71 @@ export class TestRunner {
        const all = phases.flatMap((p: any) => p.events || []);
        const found = all.find((e: any) => e.event_name === "taqwin_replay_seed");
        if (!found) throw new Error("Replay missing seeded event");
+    }
+
+    if (id === '7') {
+       this.logStep(id, "Sending message then switching sessions...");
+       await chatService.sendMessage("CP12 switch delivery test");
+       sessionController.createNewSession();
+       await this.waitFor(100);
+
+       const start = Date.now();
+       while (Date.now() - start < 8000) {
+         const msgs = (await persistenceService.loadChat(testSessionId)) ?? [];
+         const last = msgs[msgs.length - 1];
+         if (last && last.from === "knez" && last.deliveryStatus === "delivered" && !last.isPartial) return;
+         await this.waitFor(150);
+       }
+       throw new Error("Timed out waiting for delivered response after session switch");
+    }
+
+    if (id === '8') {
+       this.logStep(id, "Sending message then forking session...");
+       await chatService.sendMessage("CP12 fork delivery test");
+       await sessionController.forkSession(testSessionId);
+       await this.waitFor(100);
+
+       const start = Date.now();
+       while (Date.now() - start < 8000) {
+         const msgs = (await persistenceService.loadChat(testSessionId)) ?? [];
+         const last = msgs[msgs.length - 1];
+         if (last && last.from === "knez" && last.deliveryStatus === "delivered" && !last.isPartial) return;
+         await this.waitFor(150);
+       }
+       throw new Error("Timed out waiting for delivered response after fork");
+    }
+
+    if (id === '9') {
+       this.logStep(id, "Sending message then resuming session...");
+       await chatService.sendMessage("CP12 resume delivery test");
+       await sessionController.resumeSession(testSessionId);
+       await this.waitFor(100);
+
+       const start = Date.now();
+       while (Date.now() - start < 8000) {
+         const msgs = (await persistenceService.loadChat(testSessionId)) ?? [];
+         const last = msgs[msgs.length - 1];
+         if (last && last.from === "knez" && last.deliveryStatus === "delivered" && !last.isPartial) return;
+         await this.waitFor(150);
+       }
+       throw new Error("Timed out waiting for delivered response after resume");
+    }
+
+    if (id === '10') {
+       this.logStep(id, "Sending message that fails once then retries...");
+       await chatService.sendMessage("[FAIL_ONCE] CP12 reconnect retry test");
+       await this.waitFor(150);
+
+       const start = Date.now();
+       while (Date.now() - start < 12000) {
+         const msgs = (await persistenceService.loadChat(testSessionId)) ?? [];
+         const last = msgs[msgs.length - 1];
+         const queue = await sessionDatabase.listOutgoing();
+         const scoped = queue.filter((q) => q.sessionId === testSessionId);
+         if (scoped.length === 0 && last && last.from === "knez" && last.deliveryStatus === "delivered" && !last.isPartial) return;
+         await this.waitFor(250);
+       }
+       throw new Error("Timed out waiting for retry delivery to complete");
     }
   }
 

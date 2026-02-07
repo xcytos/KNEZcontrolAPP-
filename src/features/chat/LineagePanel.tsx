@@ -16,6 +16,8 @@ export const LineagePanel: React.FC<{ sessionId: string; onResume: (sid: string)
 
   if (loading) return <div className="p-4 text-xs text-zinc-500">Tracing lineage...</div>;
   if (!snapshot) return <div className="p-4 text-xs text-zinc-500">No lineage data available for this session.</div>;
+  const headId = typeof (snapshot as any).session_id === "string" ? (snapshot as any).session_id : sessionId;
+  const acceptedFacts = Array.isArray((snapshot as any).accepted_facts) ? (snapshot as any).accepted_facts : [];
 
   return (
     <div className="p-4 space-y-4">
@@ -25,21 +27,21 @@ export const LineagePanel: React.FC<{ sessionId: string; onResume: (sid: string)
          <div className="absolute -left-[5px] top-0 w-2 h-2 bg-blue-500 rounded-full" />
          <div className="text-xs text-zinc-400 mb-1">Current Head</div>
          <div className="text-xs font-mono text-white bg-zinc-800 p-2 rounded mb-2">
-           {snapshot.session_id.substring(0,8)}...
+           {headId.substring(0, 8)}...
          </div>
       </div>
 
       <div className="bg-zinc-900 border border-zinc-800 rounded p-3">
         <div className="text-[10px] uppercase text-zinc-500 mb-2">Resume Snapshot State</div>
         <div className="text-xs text-zinc-300 mb-2">
-          <span className="font-bold">Task:</span> {snapshot.high_level_task_state || "None"}
+          <span className="font-bold">Task:</span> {(snapshot as any).high_level_task_state || "None"}
         </div>
         
-        {snapshot.accepted_facts.length > 0 && (
+        {acceptedFacts.length > 0 && (
           <div className="mb-2">
              <div className="text-[10px] text-zinc-500">Facts</div>
              <ul className="list-disc pl-3 text-[10px] text-zinc-400">
-               {snapshot.accepted_facts.map((f, i) => <li key={i}>{f}</li>)}
+               {acceptedFacts.map((f: any, i: number) => <li key={i}>{String(f)}</li>)}
              </ul>
           </div>
         )}

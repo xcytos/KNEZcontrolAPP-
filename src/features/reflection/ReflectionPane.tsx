@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { knezClient, KnezInsight } from "../../services/KnezClient";
+import { Sparkles } from "lucide-react";
 
 type Props = {
   sessionId: string | null;
@@ -69,7 +70,7 @@ export const ReflectionPane: React.FC<Props> = ({ sessionId, readOnly }) => {
         )}
         {!readOnly && !error && insights.length === 0 && !analyzing && (
           <div className="flex flex-col items-center justify-center h-64 text-zinc-600 border border-dashed border-zinc-800 rounded-lg">
-            <span className="text-4xl mb-4 opacity-20">🔮</span>
+            <Sparkles size={48} className="mb-4 opacity-20" />
             <p>No active reflection analysis.</p>
             <p className="text-xs mt-2">Trigger an analysis to view observations.</p>
           </div>

@@ -16,17 +16,47 @@ export interface StoredMessage {
   text: string;
   createdAt: string;
   metrics?: any;
+  toolCall?: any;
+  refusal?: boolean;
+  isPartial?: boolean;
+  deliveryStatus?: "pending" | "delivered" | "failed";
+  deliveryError?: string;
+  replyToMessageId?: string;
+  correlationId?: string;
+}
+
+export interface OutgoingQueueItem {
+  id: string;
+  sessionId: string;
+  text: string;
+  searchEnabled: boolean;
+  createdAt: string;
+  status: "pending" | "in_flight" | "failed";
+  attempts: number;
+  nextRetryAt: string;
+  lastError?: string;
 }
 
 export class KnezDatabase extends Dexie {
   sessions!: Table<Session>;
   messages!: Table<StoredMessage>;
+  outgoingQueue!: Table<OutgoingQueueItem>;
 
   constructor() {
     super('KnezDatabase');
     this.version(1).stores({
       sessions: 'id, name, createdAt, updatedAt',
       messages: 'id, sessionId, from, createdAt' // Indexes
+    });
+    this.version(2).stores({
+      sessions: 'id, name, createdAt, updatedAt',
+      messages: 'id, sessionId, from, createdAt, deliveryStatus',
+      outgoingQueue: 'id, sessionId, createdAt, status, nextRetryAt'
+    }).upgrade(async (tx) => {
+      const messages = tx.table<StoredMessage, string>("messages");
+      await messages.toCollection().modify((m) => {
+        if (!m.deliveryStatus) m.deliveryStatus = "delivered";
+      });
     });
   }
 }
@@ -60,7 +90,14 @@ export class SessionDatabase {
        from: m.from,
        text: m.text,
        createdAt: m.createdAt,
-       metrics: m.metrics
+       metrics: m.metrics,
+       toolCall: m.toolCall,
+       refusal: m.refusal,
+       isPartial: m.isPartial,
+       deliveryStatus: m.deliveryStatus,
+       deliveryError: m.deliveryError,
+       replyToMessageId: m.replyToMessageId,
+       correlationId: m.correlationId
      }));
      await db.messages.bulkPut(rows);
      // Update session timestamp
@@ -75,8 +112,65 @@ export class SessionDatabase {
        from: r.from,
        text: r.text,
        createdAt: r.createdAt,
-       metrics: r.metrics
+       metrics: r.metrics,
+       toolCall: r.toolCall,
+       refusal: r.refusal,
+       isPartial: r.isPartial,
+       deliveryStatus: r.deliveryStatus,
+       deliveryError: r.deliveryError,
+       replyToMessageId: r.replyToMessageId,
+       correlationId: r.correlationId
      }));
+  }
+
+  async getMessage(id: string): Promise<StoredMessage | undefined> {
+    return await db.messages.get(id);
+  }
+
+  async updateMessage(id: string, update: Partial<StoredMessage>): Promise<void> {
+    await db.messages.update(id, update);
+  }
+
+  async enqueueOutgoing(item: Omit<OutgoingQueueItem, "attempts" | "status" | "nextRetryAt"> & { attempts?: number; status?: OutgoingQueueItem["status"]; nextRetryAt?: string }): Promise<void> {
+    const now = new Date().toISOString();
+    await db.outgoingQueue.put({
+      id: item.id,
+      sessionId: item.sessionId,
+      text: item.text,
+      searchEnabled: item.searchEnabled,
+      createdAt: item.createdAt,
+      status: item.status ?? "pending",
+      attempts: item.attempts ?? 0,
+      nextRetryAt: item.nextRetryAt ?? now,
+      lastError: item.lastError
+    });
+  }
+
+  async listOutgoing(status?: OutgoingQueueItem["status"]): Promise<OutgoingQueueItem[]> {
+    if (!status) {
+      return await db.outgoingQueue.orderBy("createdAt").toArray();
+    }
+    return await db.outgoingQueue.where("status").equals(status).toArray();
+  }
+
+  async getOutgoing(id: string): Promise<OutgoingQueueItem | undefined> {
+    return await db.outgoingQueue.get(id);
+  }
+
+  async updateOutgoing(id: string, update: Partial<OutgoingQueueItem>): Promise<void> {
+    await db.outgoingQueue.update(id, update);
+  }
+
+  async removeOutgoing(id: string): Promise<void> {
+    await db.outgoingQueue.delete(id);
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    await db.transaction("rw", db.sessions, db.messages, db.outgoingQueue, async () => {
+      await db.messages.where("sessionId").equals(sessionId).delete();
+      await db.outgoingQueue.where("sessionId").equals(sessionId).delete();
+      await db.sessions.delete(sessionId);
+    });
   }
 }
 

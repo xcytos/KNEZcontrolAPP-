@@ -1,4 +1,20 @@
 import { FC } from 'react';
+import { 
+  MessageSquare, 
+  Activity, 
+  Brain, 
+  Clock, 
+  PlayCircle, 
+  Database, 
+  Cpu, 
+  Wrench, 
+  BookOpen, 
+  Shield, 
+  Server, 
+  Puzzle, 
+  TerminalSquare, 
+  Zap
+} from 'lucide-react';
 
 export type View = 'chat' | 'memory' | 'timeline' | 'reflection' | 'infrastructure' | 'mcp' | 'governance' | 'agent' | 'logs' | 'replay' | 'updates' | 'extraction' | 'diagnostics' | 'skills';
 
@@ -8,45 +24,47 @@ interface SidebarProps {
 }
 
 export const Sidebar: FC<SidebarProps> = ({ activeView, onViewChange }) => {
-  const items: { id: View; label: string; icon: string; locked?: boolean }[] = [
-    { id: 'chat', label: 'Chat', icon: 'CHAT' },
-    { id: 'agent', label: 'Agent Loop', icon: 'AGENT' },
-    { id: 'memory', label: 'Memory', icon: 'MEM' },
-    { id: 'timeline', label: 'Timeline', icon: 'TIME' },
-    { id: 'replay', label: 'Replay', icon: 'RPL' },
-    { id: 'extraction', label: 'Extractor', icon: 'EXT' },
-    { id: 'diagnostics', label: 'Diagnostics', icon: 'DIAG' },
-    { id: 'skills', label: 'Skills', icon: 'SKL' },
-    { id: 'reflection', label: 'Reflection', icon: 'RFL', locked: false },
-    { id: 'governance', label: 'Governance', icon: 'GOV' },
-    { id: 'infrastructure', label: 'Observatory', icon: '🔭' },
-    { id: 'mcp', label: 'MCP Registry', icon: '🧩' },
-    { id: 'logs', label: 'System Logs', icon: '📟' },
-    { id: 'updates', label: 'Updates', icon: '⚡' },
+  const items: { id: View; label: string; icon: React.FC<any>; locked?: boolean }[] = [
+    { id: 'chat', label: 'Chat', icon: MessageSquare },
+    { id: 'agent', label: 'Agent Loop', icon: Activity },
+    { id: 'memory', label: 'Memory', icon: Brain },
+    { id: 'timeline', label: 'Timeline', icon: Clock },
+    { id: 'replay', label: 'Replay', icon: PlayCircle },
+    { id: 'extraction', label: 'Extractor', icon: Database },
+    { id: 'diagnostics', label: 'Diagnostics', icon: Cpu },
+    { id: 'skills', label: 'Skills', icon: Wrench },
+    { id: 'reflection', label: 'Reflection', icon: BookOpen, locked: false },
+    { id: 'governance', label: 'Governance', icon: Shield },
+    { id: 'infrastructure', label: 'Observatory', icon: Server },
+    { id: 'mcp', label: 'MCP Registry', icon: Puzzle },
+    { id: 'logs', label: 'System Logs', icon: TerminalSquare },
+    { id: 'updates', label: 'Updates', icon: Zap },
   ];
 
   return (
-    <div className="w-16 flex flex-col items-center py-4 bg-zinc-900 border-r border-zinc-800 h-full">
-      <div className="mb-8">
-        <div className="w-8 h-8 bg-zinc-700 rounded-md flex items-center justify-center font-bold text-white">
-          K
+    <div className="group/sidebar w-16 hover:w-56 transition-all duration-200 flex flex-col items-center hover:items-stretch py-4 bg-zinc-900 border-r border-zinc-800 h-full scrollbar-hide overflow-y-auto">
+      <div className="mb-8 flex-shrink-0 px-2">
+        <div className="w-10 h-10 bg-zinc-800 rounded-xl flex items-center justify-center font-bold text-white border border-zinc-700 shadow-lg mx-auto group-hover/sidebar:mx-0">
+          <span className="bg-gradient-to-br from-blue-400 to-blue-600 bg-clip-text text-transparent">K</span>
         </div>
       </div>
-      <div className="flex flex-col space-y-4 w-full">
+      <div className="flex flex-col space-y-2 w-full px-2">
         {items.map((item) => (
           <button
             key={item.id}
             onClick={() => !item.locked && onViewChange(item.id)}
             disabled={item.locked}
-            className={`w-full h-12 flex items-center justify-center transition-colors duration-200 relative group ${
-              activeView === item.id ? 'text-white' : 'text-zinc-500 hover:text-zinc-300'
+            className={`w-full h-11 flex items-center justify-center group-hover/sidebar:justify-start gap-3 rounded-xl transition-all duration-200 relative group px-0 group-hover/sidebar:px-3 ${
+              activeView === item.id 
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' 
+                : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
             } ${item.locked ? 'opacity-30 cursor-not-allowed' : ''}`}
             title={item.locked ? `${item.label} (Phase Locked)` : item.label}
           >
-            <span className="text-xl">{item.icon}</span>
-            {activeView === item.id && (
-              <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-blue-500 rounded-r-full" />
-            )}
+            <item.icon size={20} strokeWidth={2} className="shrink-0" />
+            <span className="hidden group-hover/sidebar:block text-xs font-medium text-zinc-200 whitespace-nowrap overflow-hidden text-ellipsis">
+              {item.label}
+            </span>
           </button>
         ))}
       </div>

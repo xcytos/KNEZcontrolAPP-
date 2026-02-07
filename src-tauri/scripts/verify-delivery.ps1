@@ -1,7 +1,7 @@
 # verify-delivery.ps1
 # Verifies KNEZ delivery behavior (Success or Graceful Failure)
 
-$KnezUrl = "http://localhost:8000"
+$KnezUrl = "http://127.0.0.1:8000"
 $Prompt = @{
     model = "local"
     messages = @(
@@ -15,7 +15,7 @@ Write-Host "Sending test request to KNEZ..." -ForegroundColor Cyan
 
 try {
     # We use Invoke-WebRequest to handle the stream or error
-    $Response = Invoke-WebRequest -Uri "$KnezUrl/v1/chat/completions" -Method Post -Body $JsonPayload -ContentType "application/json" -ErrorAction Stop
+    $Response = Invoke-WebRequest -UseBasicParsing -Proxy $null -Uri "$KnezUrl/v1/chat/completions" -Method Post -Body $JsonPayload -ContentType "application/json" -ErrorAction Stop
     
     # If we get here, we got a 200 OK (likely streaming started)
     Write-Host "Response received. Status: $($Response.StatusCode)" -ForegroundColor Green

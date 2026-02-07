@@ -1,18 +1,32 @@
 
 import React, { useEffect, useState } from 'react';
 import { testRunner, TestResult } from '../../services/TestRunner';
+import { useStatus } from '../../contexts/useStatus';
+import { useSystemOrchestrator } from '../system/useSystemOrchestrator';
+import { clearTestSessions, getRecommendedFixes } from '../../services/Troubleshooter';
 
 export const TestPanel: React.FC = () => {
   const [results, setResults] = useState<TestResult[]>([]);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const [busyFixId, setBusyFixId] = useState<string | null>(null);
+
+  const { forceCheck, health } = useStatus();
+  const { launchAndConnect } = useSystemOrchestrator(async () => {
+    await forceCheck();
+  });
 
   useEffect(() => {
     const unsub = testRunner.subscribe(setResults);
     return () => { unsub(); };
   }, []);
 
-  const runAll = () => {
-    testRunner.runAll();
+  const runAll = async () => {
+    if (!health) {
+      await launchAndConnect(true);
+      await new Promise((r) => setTimeout(r, 250));
+      await forceCheck();
+    }
+    await testRunner.runAll();
   };
 
   return (
@@ -23,7 +37,7 @@ export const TestPanel: React.FC = () => {
            <p className="text-xs text-zinc-500">Automated Integration Tests (CP10/11)</p>
         </div>
         <button 
-          onClick={runAll}
+          onClick={() => { void runAll(); }}
           className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-sm font-medium transition-colors"
         >
           Run All Tests
@@ -31,11 +45,18 @@ export const TestPanel: React.FC = () => {
       </div>
 
       <div className="space-y-4">
-        {results.map(r => (
-          <div key={r.id} className="flex flex-col bg-zinc-900 border border-zinc-800 rounded overflow-hidden">
+        {results.map((r) => {
+          const errorCount = r.log.filter((l) => !l.startsWith("[STEP]")).length;
+          return (
+            <div key={r.id} className="flex flex-col bg-zinc-900 border border-zinc-800 rounded overflow-hidden">
              <div 
                className="p-4 flex items-center justify-between cursor-pointer hover:bg-zinc-800/50 transition-colors"
-               onClick={() => setExpandedId(expandedId === r.id ? null : r.id)}
+               onClick={() => setExpandedIds((prev) => {
+                 const next = new Set(prev);
+                 if (next.has(r.id)) next.delete(r.id);
+                 else next.add(r.id);
+                 return next;
+               })}
              >
                  <div className="flex items-center gap-4">
                     <div className={`w-3 h-3 rounded-full ${
@@ -47,30 +68,86 @@ export const TestPanel: React.FC = () => {
                     <div>
                        <div className="font-medium text-zinc-200">{r.name}</div>
                        <div className="text-[10px] text-zinc-500">
-                           {r.status.toUpperCase()} {r.log.length > 0 ? `• ${r.log.length} errors` : '• 0 errors'}
+                           {r.status.toUpperCase()} {errorCount > 0 ? `• ${errorCount} errors` : '• 0 errors'}
                        </div>
                     </div>
                  </div>
                  <div className="text-zinc-500 text-xs">
-                    {expandedId === r.id ? '▲' : '▼'}
+                    {expandedIds.has(r.id) ? '▲' : '▼'}
                  </div>
              </div>
              
-             {expandedId === r.id && (
-               <div className="bg-zinc-950 p-4 border-t border-zinc-800 text-xs font-mono">
-                  {r.log.length === 0 ? (
-                    <span className="text-zinc-600 italic">No errors logged.</span>
-                  ) : (
-                    <ul className="space-y-1">
-                      {r.log.map((l, i) => (
-                        <li key={i} className="text-red-400">{l}</li>
-                      ))}
-                    </ul>
+             {expandedIds.has(r.id) && (
+               <div className="bg-zinc-950 p-4 border-t border-zinc-800">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="text-xs font-mono text-zinc-500">Logs</div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => { void (async () => {
+                          if (!health) {
+                            await launchAndConnect(true);
+                            await new Promise((x) => setTimeout(x, 250));
+                            await forceCheck();
+                          }
+                          await testRunner.runOne(r.id);
+                        })(); }}
+                        className="px-3 py-1 rounded text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="text-xs font-mono">
+                    {r.log.length === 0 ? (
+                      <span className="text-zinc-600 italic">No errors logged.</span>
+                    ) : (
+                      <ul className="space-y-1">
+                        {r.log.map((l, i) => (
+                          <li
+                            key={i}
+                            className={l.startsWith("[STEP]") ? "text-zinc-500" : "text-red-400"}
+                          >
+                            {l}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+
+                  {r.status === "failed" && (
+                    <div className="mt-4 border-t border-zinc-800 pt-4">
+                      <div className="text-xs font-mono text-zinc-500 mb-2">Recommended fixes</div>
+                      <div className="flex flex-wrap gap-2">
+                        {getRecommendedFixes(r.id, {
+                          forceCheck,
+                          launchAndConnect,
+                          clearTestSessions
+                        }).map((fix) => (
+                          <button
+                            key={fix.id}
+                            onClick={async () => {
+                              setBusyFixId(fix.id);
+                              try {
+                                await fix.run();
+                              } finally {
+                                setBusyFixId(null);
+                              }
+                            }}
+                            disabled={busyFixId !== null}
+                            className="px-3 py-1 rounded text-xs bg-blue-900/30 hover:bg-blue-900/50 text-blue-200 border border-blue-800 disabled:opacity-50 transition-colors"
+                          >
+                            {busyFixId === fix.id ? "Applying..." : fix.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   )}
                </div>
              )}
-          </div>
-        ))}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
