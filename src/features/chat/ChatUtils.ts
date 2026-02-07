@@ -8,7 +8,10 @@ export const parseMessageContent = (text: string) => {
   while ((match = thinkRegex.exec(text)) !== null) {
     // Content before think
     if (match.index > lastIndex) {
-      parts.push({ type: 'text', content: text.substring(lastIndex, match.index) });
+      const contentBefore = text.substring(lastIndex, match.index);
+      if (contentBefore) {
+          parts.push({ type: 'text', content: contentBefore });
+      }
     }
     // Think content
     parts.push({ type: 'think', content: match[1] });
@@ -17,7 +20,10 @@ export const parseMessageContent = (text: string) => {
   
   // Remaining content
   if (lastIndex < text.length) {
-    parts.push({ type: 'text', content: text.substring(lastIndex) });
+    const remaining = text.substring(lastIndex);
+    if (remaining) {
+        parts.push({ type: 'text', content: remaining });
+    }
   }
 
   return parts;
@@ -33,14 +39,20 @@ export const formatMarkdown = (text: string) => {
 
   while ((match = codeBlockRegex.exec(text)) !== null) {
     if (match.index > lastIndex) {
-      parts.push({ type: 'text', content: text.substring(lastIndex, match.index) });
+      const contentBefore = text.substring(lastIndex, match.index);
+      if (contentBefore) {
+          parts.push({ type: 'text', content: contentBefore });
+      }
     }
     parts.push({ type: 'code', language: match[1] || 'text', content: match[2] });
     lastIndex = codeBlockRegex.lastIndex;
   }
 
   if (lastIndex < text.length) {
-    parts.push({ type: 'text', content: text.substring(lastIndex) });
+    const remaining = text.substring(lastIndex);
+    if (remaining) {
+        parts.push({ type: 'text', content: remaining });
+    }
   }
 
   return parts;

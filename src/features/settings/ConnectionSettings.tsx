@@ -9,8 +9,7 @@ export const ConnectionSettings: React.FC<{
   onClose: () => void;
   systemStatus: SystemStatus;
   systemOutput: string;
-  onLaunch: () => void;
-}> = ({ onClose, systemStatus, systemOutput, onLaunch }) => {
+}> = ({ onClose, systemStatus, systemOutput }) => {
   const [endpoint, setEndpoint] = useState("http://localhost:8000");
   const [status, setStatus] = useState<"idle" | "checking" | "healthy" | "failed">("idle");
   const [health, setHealth] = useState<KnezHealthResponse | null>(null);
@@ -150,7 +149,6 @@ export const ConnectionSettings: React.FC<{
           <SystemPanel 
             status={systemStatus}
             output={systemOutput}
-            onLaunch={onLaunch}
           />
 
           {/* Backend Discovery */}

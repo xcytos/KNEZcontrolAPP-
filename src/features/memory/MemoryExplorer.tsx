@@ -56,60 +56,192 @@ const MemoryDetailModal: React.FC<{
   );
 };
 
+import { persistenceService } from '../../services/PersistenceService'
 export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: boolean }> = ({ sessionId }) => {
   const [memories, setMemories] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"memories" | "knowledge">("memories");
+  const [activeTab, setActiveTab] = useState<"memories" | "knowledge" | "graph">("memories");
+  const [lastCount, setLastCount] = useState(0);
+  const [isRecording, setIsRecording] = useState(false);
+  const [sessions, setSessions] = useState<string[]>([])
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<any[]>([]);
 
   useEffect(() => {
-    knezClient.listMemory(sessionId || undefined).then(recs => {
-       setMemories(knezClient.mapMemoryToUi(recs));
-    });
-  }, [sessionId]);
+    let interval: any;
+    
+    const fetchMemories = () => {
+      knezClient.listMemory(sessionId || undefined).then(recs => {
+         const newMemories = knezClient.mapMemoryToUi(recs);
+         if (newMemories.length > lastCount && lastCount > 0) {
+            setIsRecording(true);
+            setTimeout(() => setIsRecording(false), 2000);
+         }
+         setMemories(newMemories);
+         setLastCount(newMemories.length);
+      });
+    };
+
+    fetchMemories();
+    // CP8-7: Real-time feedback polling
+    interval = setInterval(fetchMemories, 3000);
+    return () => clearInterval(interval);
+  }, [sessionId, lastCount]);
+
+  useEffect(() => {
+    persistenceService.listSessions().then(setSessions)
+  }, [])
+  useEffect(() => {
+     if (searchQuery.length > 2) {
+        // CP8-9: Client-side search for now (Simulated Cross-Session if we had all memories)
+        // Since listMemory(undefined) returns recent memories from ALL sessions if backend supports it
+        // (Our KnezClient implementation passes sessionId optional)
+        const lower = searchQuery.toLowerCase();
+        const results = memories.filter(m => 
+           m.summary.toLowerCase().includes(lower) || 
+           m.details.toLowerCase().includes(lower)
+        );
+        setSearchResults(results);
+     } else {
+        setSearchResults([]);
+     }
+  }, [searchQuery, memories]);
 
   return (
     <div className="h-full flex flex-col">
-      <div className="p-4 border-b border-zinc-800 flex justify-between items-center">
-        <h2 className="font-bold text-zinc-100">Memory Graph</h2>
-        <div className="flex gap-2">
-           <button 
-             onClick={() => setActiveTab("memories")}
-             className={`text-xs px-2 py-1 rounded ${activeTab === 'memories' ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
-           >
-             Memories
-           </button>
-           <button 
-             onClick={() => setActiveTab("knowledge")}
-             className={`text-xs px-2 py-1 rounded ${activeTab === 'knowledge' ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
-           >
-             Knowledge Base
-           </button>
+      <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-900/50">
+        <div className="flex items-center gap-2">
+           <h2 className="font-bold text-zinc-100">Memory Graph</h2>
+           {isRecording && (
+              <span className="flex items-center gap-1 text-[10px] text-red-400 animate-pulse bg-red-900/20 px-2 py-0.5 rounded-full border border-red-900/50">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+                RECORDING
+              </span>
+           )}
         </div>
+        
+        <div className="flex items-center gap-4">
+           {/* CP8-9 Search Input */}
+           <div className="relative">
+             <input 
+               type="text" 
+               placeholder="Search memories..." 
+               className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-300 w-40 focus:w-64 transition-all outline-none focus:border-blue-900"
+               value={searchQuery}
+               onChange={(e) => setSearchQuery(e.target.value)}
+             />
+             {searchQuery && (
+               <div className="absolute right-2 top-1.5 text-[10px] text-zinc-500">
+                 {searchResults.length} results
+               </div>
+             )}
+           </div>
+
+           <div className="flex gap-2">
+             <button 
+               onClick={() => setActiveTab("memories")}
+               className={`text-xs px-2 py-1 rounded ${activeTab === 'memories' ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+             >
+               Memories
+             </button>
+             <button 
+               onClick={() => setActiveTab("knowledge")}
+               className={`text-xs px-2 py-1 rounded ${activeTab === 'knowledge' ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+             >
+               Knowledge Base
+             </button>
+             <button 
+               onClick={() => setActiveTab("graph")}
+               className={`text-xs px-2 py-1 rounded ${activeTab === 'graph' ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+             >
+               Nav Graph
+             </button>
+            </div>
+        </div>
+      </div>
+
+      <div className="px-4 py-2 bg-zinc-900/30 border-b border-zinc-800 text-[10px] text-zinc-500">
+        Sessions: {sessions.slice(0, 6).map(s => s.slice(0,8)).join(', ')}{sessions.length > 6 ? '…' : ''}
       </div>
       
       {activeTab === 'memories' ? (
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          {memories.map((m) => (
+          {(searchQuery ? searchResults : memories).map((m) => (
             <div 
               key={m.id} 
               onClick={() => setSelectedId(m.id)}
-              className="p-3 bg-zinc-900 border border-zinc-800 rounded hover:bg-zinc-800 cursor-pointer transition-colors group"
+              className={`p-3 border rounded hover:bg-zinc-800 cursor-pointer transition-colors group ${
+                 searchQuery && searchResults.includes(m) ? 'bg-blue-900/10 border-blue-900/50' : 'bg-zinc-900 border-zinc-800'
+              }`}
             >
-              <div className="text-sm text-zinc-300 group-hover:text-white">{m.summary}</div>
+              <div className="text-sm text-zinc-300 group-hover:text-white flex justify-between">
+                 <span>{m.summary}</span>
+                 {m.sessionId !== sessionId && (
+                    <span className="text-[9px] text-zinc-600 bg-zinc-950 px-1 rounded">
+                       SID: {m.sessionId?.slice(0,6)}
+                    </span>
+                 )}
+              </div>
               <div className="mt-2 flex items-center justify-between">
                 <span className="text-[10px] text-zinc-500">{new Date(m.createdAt).toLocaleTimeString()}</span>
                 <div className="flex items-center gap-2">
+                  {/* CP7-12: Show evidence hint if present */}
+                  {m.evidence_event_ids && m.evidence_event_ids.length > 0 && (
+                     <span className="text-[10px] text-blue-500" title="Has Provenance">🔗</span>
+                  )}
                   <span className="text-[10px] text-zinc-600 font-mono">{(m.importance * 100).toFixed(0)}% Conf</span>
                 </div>
               </div>
             </div>
           ))}
+          {searchQuery && searchResults.length === 0 && (
+             <div className="text-center text-zinc-500 text-xs py-8">
+                No memories found matching "{searchQuery}"
+             </div>
+          )}
         </div>
-      ) : (
+      ) : activeTab === 'knowledge' ? (
         <KnowledgeBaseView />
+      ) : (
+        <div className="flex-1 p-4 flex flex-col items-center justify-center bg-zinc-950 text-zinc-600">
+           {/* CP8-8: Simple Node Graph Visualization */}
+           <div className="w-full h-full relative border border-zinc-800 rounded bg-zinc-900 overflow-hidden">
+              <svg className="w-full h-full">
+                 {/* Edges */}
+                 {memories.map((_, i) => {
+                    if (i === 0) return null;
+                    // Simple linear chain for now
+                    return (
+                       <line 
+                         key={`edge-${i}`}
+                         x1={50 + (i-1) * 100} y1={150 + ((i-1)%2)*50}
+                         x2={50 + i * 100} y2={150 + (i%2)*50}
+                         stroke="#333" strokeWidth="2"
+                       />
+                    );
+                 })}
+                 
+                 {/* Nodes */}
+                 {memories.map((m, i) => (
+                    <g 
+                      key={m.id} 
+                      transform={`translate(${50 + i * 100}, ${150 + (i%2)*50})`}
+                      onClick={() => setSelectedId(m.id)}
+                      className="cursor-pointer hover:opacity-80"
+                    >
+                       <circle r="20" fill={m.importance > 0.8 ? "#2563eb" : "#3f3f46"} />
+                       <text y="35" textAnchor="middle" fill="#71717a" fontSize="10">{m.summary.substring(0, 10)}...</text>
+                    </g>
+                 ))}
+              </svg>
+              <div className="absolute top-2 right-2 text-[10px] text-zinc-500 bg-black/50 p-1 rounded">
+                 Interactive Session Graph
+              </div>
+           </div>
+        </div>
       )}
       
-      <MemoryDetailModal 
+      <MemoryDetailModal  
         memoryId={selectedId}
         onClose={() => setSelectedId(null)}
       />

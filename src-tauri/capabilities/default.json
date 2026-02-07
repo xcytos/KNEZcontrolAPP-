@@ -4,6 +4,8 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "fs:default",
+    "http:default",
     "shell:allow-open",
     {
       "identifier": "shell:allow-spawn",
@@ -17,6 +19,11 @@
             "-File",
             "scripts/start_local_stack.ps1"
           ]
+        },
+        {
+          "name": "exec",
+          "cmd": "taskkill",
+          "args": true
         }
       ]
     }

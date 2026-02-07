@@ -17,43 +17,87 @@ import { CognitivePanel } from './features/cognitive/CognitivePanel';
 import { GovernancePanel } from './features/governance/GovernancePanel';
 import { LogsPanel } from './features/logs/LogsPanel';
 import { ReplayPane } from './features/replay/ReplayPane';
+import { UpdatesPanel } from './features/updates/UpdatesPanel';
+import { ExtractionPanel } from './features/extraction/ExtractionPanel';
+import { TestPanel } from './features/diagnostics/TestPanel';
+import { SkillsView } from './features/skills/SkillsView';
 import { PresenceEngine, PresenceConfig } from './presence/PresenceEngine';
 import { PresenceState, McpRegistrySnapshot } from './domain/DataContracts';
 import { knezClient } from './services/KnezClient';
 import { useSystemOrchestrator } from './features/system/useSystemOrchestrator';
 import { ToastProvider } from './components/ui/Toast';
 import { StatusProvider, useStatus } from './contexts/StatusProvider';
+import { setObserverState } from './utils/observer';
 import './App.css';
 
 const PRESENCE_CONFIG: PresenceConfig = {
   debounceMillis: 1000,
 };
 
+import { CommandPalette } from './components/ui/CommandPalette';
+
+// ...
+
 function AppContent() {
   const [activeView, setActiveView] = useState<View>('chat');
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [presenceState, setPresenceState] = useState<PresenceState>('SILENT');
   const [showSettings, setShowSettings] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(knezClient.getSessionId());
   const [readOnly, setReadOnly] = useState(true);
   
-  const { isConnected, lastCheck, health, forceCheck } = useStatus();
+  const { isConnected, isDegraded, lastCheck, health, forceCheck } = useStatus();
   const engineRef = useRef<PresenceEngine>(null);
+
+  // CP9-6: Global Command Palette Listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setCommandPaletteOpen(true);
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'r') {
+        e.preventDefault();
+        // Resume last session quick action
+        import('./services/PersistenceService').then(async ({ persistenceService }) => {
+          const sessions = await persistenceService.listSessions()
+          const last = sessions[0]
+          if (last) {
+            await knezClient.resumeSession(last)
+            window.location.reload()
+          }
+        })
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Sync StatusProvider state to App logic
   useEffect(() => {
-    if (isConnected) {
+    if (health) {
       setReadOnly(false);
       knezClient.ensureSession().then(setSessionId);
       knezClient.tryGetMcpRegistry(); // Background fetch
     } else {
       setReadOnly(true);
     }
-  }, [isConnected]);
+  }, [health]);
 
   // Orchestrator
-  const { status: systemStatus, output: systemOutput, launchAndAssumeRunning } = useSystemOrchestrator(() => {
+  const { status: systemStatus, output: systemOutput, launchAndConnect, stopKnez } = useSystemOrchestrator(() => {
     forceCheck();
   });
+
+  useEffect(() => {
+    setObserverState({
+      connected: !!health && (isConnected || isDegraded),
+      endpoint: knezClient.getProfile().endpoint,
+      sessionId,
+      readOnly,
+      systemStatus,
+    });
+  }, [health, isConnected, isDegraded, sessionId, readOnly, systemStatus]);
 
   // Bootstrap
   useEffect(() => {
@@ -74,7 +118,6 @@ function AppContent() {
               <ChatPane 
                 sessionId={sessionId} 
                 readOnly={readOnly} 
-                onLaunch={launchAndAssumeRunning}
                 systemStatus={systemStatus}
               />
             </div>
@@ -118,9 +161,11 @@ function AppContent() {
       case 'infrastructure':
         return (
           <InfrastructurePanel 
-            backends={health?.backends ?? []} 
-            lastCheck={lastCheck}
-            onRefresh={forceCheck}
+             isConnected={isConnected} 
+             status={health} 
+             systemStatus={systemStatus}
+             systemOutput={systemOutput}
+             onStopSystem={stopKnez}
           />
         );
       case 'mcp':
@@ -130,15 +175,19 @@ function AppContent() {
         );
       case 'logs':
         return <LogsPanel />;
-      case 'replay': // Assuming View type needs update, but for now we might reuse a slot or add if possible. 
-                   // Since View is likely a string union, I can't easily extend it without seeing sidebar.
-                   // I'll assume 'timeline' is the place for replay or I add a new one if permitted.
-                   // The prompt said "Replay Timeline with Phase Segmentation".
-                   // Existing 'timeline' view returns SessionTimeline. I will replace it with ReplayPane for CP5.
+      case 'replay':
         return <ReplayPane sessionId={sessionId} />;
+      case 'updates':
+        return <UpdatesPanel />;
+      case 'extraction':
+        return <ExtractionPanel />;
+      case 'diagnostics':
+        return <TestPanel />;
+      case 'skills':
+        return <SkillsView />;
         
       default:
-        return <ChatPane sessionId={sessionId} readOnly={readOnly} onLaunch={launchAndAssumeRunning} systemStatus={systemStatus} />;
+        return <ChatPane sessionId={sessionId} readOnly={readOnly} systemStatus={systemStatus} />;
     }
   };
 
@@ -148,11 +197,17 @@ function AppContent() {
       onViewChange={setActiveView}
       presenceState={presenceState}
       connectionStatus={{
-        connected: isConnected,
+        connected: isConnected || isDegraded,
         endpoint: knezClient.getProfile().endpoint,
         lastCheck: lastCheck
       }}
     >
+      <CommandPalette 
+        isOpen={commandPaletteOpen} 
+        onClose={() => setCommandPaletteOpen(false)}
+        onNavigate={(view) => { setActiveView(view); setCommandPaletteOpen(false); }}
+      />
+      
       {readOnly && (
         <div className="px-4 py-2 border-b border-zinc-800 bg-zinc-950 text-xs text-zinc-400 flex items-center justify-between">
           <span>
@@ -163,11 +218,20 @@ function AppContent() {
           </span>
           {!isConnected && (
             <button 
-              onClick={() => forceCheck()}
-              className="text-blue-400 hover:text-blue-300 underline ml-4"
+              onClick={() => launchAndConnect()}
+              disabled={systemStatus === "starting" || systemStatus === "running"}
+              className="text-blue-400 hover:text-blue-300 underline ml-4 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Retry Connection
+              {systemStatus === "starting" ? "Starting..." : "Launch & Connect"}
             </button>
+          )}
+          {isConnected && systemStatus === "running" && (
+             <button
+               onClick={() => stopKnez && stopKnez()}
+               className="text-red-400 hover:text-red-300 underline ml-4 text-[10px]"
+             >
+               STOP KNEZ
+             </button>
           )}
         </div>
       )}
@@ -189,13 +253,11 @@ function AppContent() {
          }}
          systemStatus={systemStatus}
          systemOutput={systemOutput}
-         onLaunch={launchAndAssumeRunning}
        />}
     </MainLayout>
   );
 }
 
-// Helper to handle async loading for MCP
 const McpLoader = () => {
   const [snapshot, setSnapshot] = useState<McpRegistrySnapshot | null>(null);
   const load = () => knezClient.tryGetMcpRegistry().then(setSnapshot);
@@ -206,7 +268,7 @@ const McpLoader = () => {
 import { ThemeProvider } from './contexts/ThemeContext';
 import { analytics } from './services/AnalyticsService';
 
-// ... existing imports
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
 
 function App() {
   // Track open session
@@ -218,7 +280,9 @@ function App() {
     <ThemeProvider>
       <StatusProvider>
         <ToastProvider>
-          <AppContent />
+          <ErrorBoundary>
+             <AppContent />
+          </ErrorBoundary>
         </ToastProvider>
       </StatusProvider>
     </ThemeProvider>

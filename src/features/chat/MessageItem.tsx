@@ -84,34 +84,46 @@ export const MessageItem: React.FC<{
 
   return (
     <div
-      className={`flex ${msg.from === "user" ? "justify-end" : "justify-start"} group relative`}
+      className={`flex ${msg.from === "user" ? "justify-end" : "justify-start"} group relative mb-6`}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
+      {/* Avatar for Assistant */}
+      {msg.from !== "user" && (
+         <div className="w-8 h-8 rounded-full bg-indigo-900/50 flex items-center justify-center border border-indigo-700/50 mr-3 mt-1 shrink-0 text-xs font-bold text-indigo-200">
+            KNEZ
+         </div>
+      )}
+
       <div
       data-testid="message-bubble"
       data-role={msg.from}
-      className={`max-w-[85%] rounded-lg p-4 ${
+      className={`max-w-[85%] rounded-2xl p-4 shadow-sm ${
           msg.from === "user"
-            ? "bg-blue-600/20 border border-blue-500/30 text-blue-100"
+            ? "bg-zinc-800 text-zinc-100 rounded-tr-sm"
             : msg.refusal
-              ? "bg-red-900/20 border border-red-800 text-red-200"
-              : "bg-zinc-800 border border-zinc-700 text-zinc-300"
+              ? "bg-red-900/10 border border-red-900/30 text-red-200 rounded-tl-sm"
+              : "bg-transparent text-zinc-300 pl-0 pt-0" // Transparent for assistant (Claude style)
         }`}
       >
+        {/* Header Label */}
+        <div className="text-xs font-bold text-zinc-500 mb-1">
+           {msg.from === 'user' ? 'You' : 'Assistant'}
+        </div>
+
         {/* Content Rendering */}
         {parts.map((part, i) => {
           if (part.type === 'think') {
              return (
-               <div key={i} className="mb-3 border-l-2 border-zinc-600 pl-3">
+               <div key={i} className="mb-3 pl-3 border-l-2 border-indigo-500/30">
                  <button 
                    onClick={() => setThoughtsOpen(!thoughtsOpen)}
-                   className="text-xs font-mono text-zinc-500 hover:text-zinc-300 flex items-center gap-2 mb-1"
+                   className="text-xs font-medium text-indigo-400/70 hover:text-indigo-300 flex items-center gap-2 mb-1 transition-colors"
                  >
                    {thoughtsOpen ? '▼' : '▶'} Thought Process
                  </button>
                  {thoughtsOpen && (
-                   <div className="text-zinc-500 text-sm italic whitespace-pre-wrap bg-black/20 p-2 rounded">
+                   <div className="text-zinc-500 text-sm italic whitespace-pre-wrap bg-zinc-900/50 p-3 rounded-lg border border-zinc-800/50">
                      {part.content}
                    </div>
                  )}
@@ -120,65 +132,31 @@ export const MessageItem: React.FC<{
           }
           return <FormattedContent key={i} text={part.content} />;
         })}
-
-        {msg.isPartial && <span className="inline-block w-2 h-4 ml-1 bg-zinc-500 animate-pulse align-middle" />}
+        
+        {msg.isPartial && <span className="inline-block w-2 h-4 ml-1 bg-indigo-500 animate-pulse align-middle" />}
 
         {/* Metadata Footer */}
-        <div className="mt-2 flex items-center justify-between gap-4 border-t border-white/5 pt-2 min-h-[24px]">
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-zinc-500 opacity-70" title={new Date(msg.createdAt).toISOString()}>
-              {new Date(msg.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-            </span>
-            
-            {/* CP3-G: Enhanced Metadata */}
-            {msg.from === 'knez' && msg.metrics && (
-              <div className="flex items-center gap-2 text-[10px] font-mono text-zinc-600">
-                {msg.isPartial ? (
-                  <span className="text-blue-400 animate-pulse">GENERATING...</span>
-                ) : (
-                  <>
-                    <span title="Time to First Token">TTFT: {msg.metrics.timeToFirstTokenMs ?? '-'}ms</span>
-                    <span title="Total Tokens">TOK: {msg.metrics.totalTokens ?? '-'}</span>
-                    {msg.metrics.timeToFirstTokenMs && msg.metrics.totalTokens && (
-                       <span title="Tokens per second">
-                         {((msg.metrics.totalTokens / ((Date.now() - new Date(msg.createdAt).getTime())/1000)).toFixed(1))} t/s
-                       </span>
-                    )}
-                  </>
-                )}
+        <div className={`flex items-center gap-3 mt-2 ${msg.from === "user" ? "justify-end opacity-50 text-zinc-400" : "justify-start text-zinc-500"}`}>
+           {msg.metrics?.totalTokens !== undefined && (
+              <span className="text-[10px] font-mono bg-zinc-900/50 px-1.5 py-0.5 rounded border border-zinc-800">
+                {msg.metrics.totalTokens} tokens
+                {msg.metrics.timeToFirstTokenMs && ` · ${(msg.metrics.timeToFirstTokenMs/1000).toFixed(1)}s latency`}
+              </span>
+           )}
+           
+           {(isHovered || copied) && (
+              <div className="flex items-center gap-2 transition-opacity duration-200">
+                 <button onClick={handleCopy} className="text-[10px] hover:text-zinc-300 px-1.5 py-0.5 rounded hover:bg-zinc-800 transition-colors" title="Copy">
+                    {copied ? "Copied" : "Copy"}
+                 </button>
+                 {!readOnly && (
+                    <>
+                      <button onClick={() => onVote(msg.id, "upvote")} className="text-[10px] hover:text-green-400 px-1.5 py-0.5 rounded hover:bg-zinc-800 transition-colors" title="Good">Upvote</button>
+                      <button onClick={() => onVote(msg.id, "downvote")} className="text-[10px] hover:text-red-400 px-1.5 py-0.5 rounded hover:bg-zinc-800 transition-colors" title="Bad">Downvote</button>
+                    </>
+                 )}
               </div>
-            )}
-          </div>
-
-          {/* Actions */}
-          <div className={`flex items-center gap-2 transition-opacity ${isHovered || copied ? 'opacity-100' : 'opacity-0'}`}>
-            <button 
-              onClick={handleCopy}
-              className="text-zinc-500 hover:text-white text-xs"
-              title="Copy message"
-            >
-              {copied ? '✓' : 'Copy'}
-            </button>
-            
-            {msg.from === "knez" && !msg.isPartial && (
-              <>
-                <button
-                  onClick={() => onVote(msg.id, "upvote")}
-                  disabled={readOnly}
-                  className={`p-1 hover:bg-zinc-700 rounded ${msg.influence?.vote === "upvote" ? "text-green-400" : "text-zinc-600"}`}
-                >
-                  👍
-                </button>
-                <button
-                  onClick={() => onVote(msg.id, "downvote")}
-                  disabled={readOnly}
-                  className={`p-1 hover:bg-zinc-700 rounded ${msg.influence?.vote === "downvote" ? "text-red-400" : "text-zinc-600"}`}
-                >
-                  👎
-                </button>
-              </>
-            )}
-          </div>
+           )}
         </div>
       </div>
     </div>

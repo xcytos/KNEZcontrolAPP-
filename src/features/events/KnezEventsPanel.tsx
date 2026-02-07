@@ -36,7 +36,12 @@ export const KnezEventsPanel: React.FC<{ sessionId: string | null; readOnly: boo
   return (
     <div className="flex flex-col h-full bg-zinc-900/50 border border-zinc-800 rounded-lg overflow-hidden">
       <div className="flex items-center justify-between p-3 border-b border-zinc-800 bg-zinc-900">
-        <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">System Events</h3>
+        <div className="flex flex-col">
+          <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">System Events</h3>
+          <span className="text-[9px] text-zinc-600 font-mono">
+            SID: {sessionId ? sessionId.slice(0, 8) + '...' : 'NONE'}
+          </span>
+        </div>
         <div className="flex items-center gap-2">
           <select 
             value={filterSeverity}
