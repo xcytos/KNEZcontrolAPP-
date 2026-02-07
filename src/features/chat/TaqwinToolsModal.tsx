@@ -20,7 +20,7 @@ export const TaqwinToolsModal: React.FC<{
   onClose: () => void;
 }> = ({ isOpen, onClose }) => {
   const [tools, setTools] = useState<McpToolDefinition[]>([]);
-  const [selectedTool, setSelectedTool] = useState<string>("analyze");
+  const [selectedTool, setSelectedTool] = useState<string>("");
   const [argsText, setArgsText] = useState<string>("{}");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>("");
@@ -28,13 +28,43 @@ export const TaqwinToolsModal: React.FC<{
 
   const toolByName = useMemo(() => new Map(tools.map(t => [t.name, t])), [tools]);
 
+  const defaultArgsForTool = (tool: string) => {
+    const sessionId = sessionController.getSessionId();
+    if (tool === "activate_taqwin_unified_consciousness") {
+      return { level: "superintelligence", query: "Hello TAQWIN.", context: { session_id: sessionId } };
+    }
+    if (tool === "get_server_status") {
+      return { force_refresh: true, include_db_analysis: true };
+    }
+    if (tool === "deploy_real_taqwin_council") {
+      return { action: "status", session_id: sessionId };
+    }
+    if (tool === "session") {
+      return { action: "session_start", session_id: sessionId, name: `control_app_${sessionId.substring(0, 8)}` };
+    }
+    if (tool === "session_v2") {
+      return { action: "get_llm_context", session_id: sessionId };
+    }
+    if (tool === "connection_info") {
+      return {};
+    }
+    return {};
+  };
+
   useEffect(() => {
     if (!isOpen) return;
     let cancelled = false;
     const load = async (force = false) => {
       try {
         const list = await taqwinMcpService.listTools(force);
-        if (!cancelled) setTools(list);
+        if (!cancelled) {
+          setTools(list);
+          setSelectedTool((prev) => {
+            const next = prev && list.some((t) => t.name === prev) ? prev : (list[0]?.name ?? "");
+            if (next && next !== prev) setArgsText(JSON.stringify(defaultArgsForTool(next), null, 2));
+            return next;
+          });
+        }
       } catch (e: any) {
         if (!cancelled) setError(String(e?.message ?? e));
       }
@@ -58,6 +88,10 @@ export const TaqwinToolsModal: React.FC<{
     setError("");
     const sessionId = sessionController.getSessionId();
     const tool = selectedTool;
+    if (!tool) {
+      setError("Select a tool");
+      return;
+    }
     if (!isTaqwinToolAllowed(tool)) {
       setError(`Tool not allowed: ${tool}`);
       return;
@@ -129,7 +163,7 @@ export const TaqwinToolsModal: React.FC<{
                 <div className="p-3 text-xs text-zinc-500">No tools loaded.</div>
               ) : (
                 tools.map((t) => {
-                  const enabled = !!permissions[t.name];
+                  const enabled = permissions[t.name] !== false;
                   const allowed = isTaqwinToolAllowed(t.name);
                   return (
                     <div
@@ -142,11 +176,7 @@ export const TaqwinToolsModal: React.FC<{
                         className="flex-1 text-left"
                         onClick={() => {
                           setSelectedTool(t.name);
-                          if (t.name === "analyze") {
-                            setArgsText(JSON.stringify({ text: "Analyze this.", session_id: sessionController.getSessionId() }, null, 2));
-                          } else {
-                            setArgsText("{}");
-                          }
+                          setArgsText(JSON.stringify(defaultArgsForTool(t.name), null, 2));
                         }}
                       >
                         <div className="text-xs font-mono text-zinc-200">{t.name}</div>

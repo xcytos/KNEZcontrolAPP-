@@ -99,7 +99,8 @@ function AppContent() {
     const isLocal =
       endpoint.includes("localhost:8000") ||
       endpoint.includes("127.0.0.1:8000");
-    const isTauri = !!(window as any).__TAURI__ || !!(window as any).__TAURI_IPC__;
+    const w = window as any;
+    const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
     const keepAlive = getKeepAliveEnabled();
     if (health) return;
     if (!isLocal) return;
