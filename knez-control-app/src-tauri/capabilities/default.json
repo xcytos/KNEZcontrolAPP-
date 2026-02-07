@@ -21,6 +21,51 @@
           ]
         },
         {
+          "name": "taqwin-mcp",
+          "cmd": "powershell.exe",
+          "args": [
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            "scripts/start_taqwin_mcp.ps1"
+          ]
+        },
+        {
+          "name": "start-knez",
+          "cmd": "powershell.exe",
+          "args": [
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            "scripts/start_knez.ps1"
+          ]
+        },
+        {
+          "name": "start-ollama",
+          "cmd": "powershell.exe",
+          "args": [
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            "scripts/start_ollama.ps1"
+          ]
+        },
+        {
+          "name": "verify-delivery",
+          "cmd": "powershell.exe",
+          "args": [
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            "scripts/verify-delivery.ps1"
+          ]
+        },
+        {
+          "name": "powershell",
+          "cmd": "powershell.exe",
+          "args": true
+        },
+        {
           "name": "exec",
           "cmd": "taskkill",
           "args": true

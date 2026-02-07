@@ -15,12 +15,11 @@ export default defineConfig(async () => ({
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
     port: 5173,
-    strictPort: false, // Allow fallback if port is busy
+    strictPort: true,
     host: true,
     hmr: {
       protocol: 'ws',
       host: 'localhost',
-      port: 5183, // Dedicated HMR port to avoid conflicts
     },
     watch: {
       ignored: ["**/src-tauri/**"],

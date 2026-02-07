@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { Brain, Zap, Eye } from 'lucide-react';
 
 type AgentState = "IDLE" | "THINKING" | "ACTING" | "OBSERVING" | "FINISHED";
 
@@ -104,7 +105,7 @@ export const AgentPane: React.FC = () => {
                    step.type === 'action' ? 'bg-blue-900/20 border-blue-800 text-blue-400' :
                    'bg-green-900/20 border-green-800 text-green-400'
                 }`}>
-                  {step.type === 'thought' ? '💭' : step.type === 'action' ? '⚡' : '👁'}
+                  {step.type === 'thought' ? <Brain size={14} /> : step.type === 'action' ? <Zap size={14} /> : <Eye size={14} />}
                 </div>
                 <div className="flex-1">
                   <div className="text-[10px] uppercase font-bold text-zinc-500 mb-1">{step.type}</div>

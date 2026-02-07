@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useToast } from '../../components/ui/Toast';
 import { readDir, BaseDirectory } from '@tauri-apps/plugin-fs';
+import { Zap } from 'lucide-react';
 
 export const UpdatesPanel: React.FC = () => {
   const [checking, setChecking] = useState(false);
@@ -58,8 +59,8 @@ export const UpdatesPanel: React.FC = () => {
 
       <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 max-w-2xl">
         <div className="flex items-center gap-4 mb-4">
-          <div className="w-12 h-12 bg-blue-900/30 rounded-full flex items-center justify-center text-blue-400 text-xl">
-            ⚡
+          <div className="w-12 h-12 bg-blue-900/30 rounded-full flex items-center justify-center text-blue-400">
+            <Zap size={24} />
           </div>
           <div>
             <h3 className="font-semibold text-zinc-200">KNEZ Control Surface</h3>

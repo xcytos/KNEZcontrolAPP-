@@ -112,31 +112,76 @@ export const MessageItem: React.FC<{
         </div>
 
         {/* Content Rendering */}
-        {parts.map((part, i) => {
-          if (part.type === 'think') {
-             return (
-               <div key={i} className="mb-3 pl-3 border-l-2 border-indigo-500/30">
-                 <button 
-                   onClick={() => setThoughtsOpen(!thoughtsOpen)}
-                   className="text-xs font-medium text-indigo-400/70 hover:text-indigo-300 flex items-center gap-2 mb-1 transition-colors"
-                 >
-                   {thoughtsOpen ? 'Hide' : 'Show'} Thought Process
-                 </button>
-                 {thoughtsOpen && (
-                   <div className="text-zinc-500 text-sm italic whitespace-pre-wrap bg-zinc-900/50 p-3 rounded-lg border border-zinc-800/50">
-                     {part.content}
-                   </div>
-                 )}
-               </div>
-             );
-          }
-          return <FormattedContent key={i} text={part.content} />;
-        })}
+        {msg.toolCall ? (
+          <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs font-mono text-zinc-200">{msg.toolCall.tool}</div>
+              <div className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                msg.toolCall.status === "succeeded"
+                  ? "bg-green-900/20 text-green-300 border-green-900/40"
+                  : msg.toolCall.status === "failed"
+                    ? "bg-red-900/20 text-red-300 border-red-900/40"
+                    : "bg-blue-900/20 text-blue-200 border-blue-900/40"
+              }`}>
+                {msg.toolCall.status}
+              </div>
+            </div>
+            <div className="text-[10px] font-mono text-zinc-500 mb-1">args</div>
+            <pre className="text-[10px] bg-zinc-950 p-2 rounded overflow-x-auto text-zinc-300 border border-zinc-900">
+              {JSON.stringify(msg.toolCall.args ?? {}, null, 2)}
+            </pre>
+            {msg.toolCall.status !== "calling" && (
+              <>
+                <div className="text-[10px] font-mono text-zinc-500 mt-3 mb-1">
+                  {msg.toolCall.status === "failed" ? "error" : "result"}
+                </div>
+                <pre className={`text-[10px] bg-zinc-950 p-2 rounded overflow-x-auto border border-zinc-900 ${
+                  msg.toolCall.status === "failed" ? "text-red-300" : "text-green-300"
+                }`}>
+                  {msg.toolCall.status === "failed"
+                    ? String(msg.toolCall.error ?? "unknown error")
+                    : JSON.stringify(msg.toolCall.result ?? {}, null, 2)}
+                </pre>
+              </>
+            )}
+          </div>
+        ) : (
+          parts.map((part, i) => {
+            if (part.type === 'think') {
+               return (
+                 <div key={i} className="mb-3 pl-3 border-l-2 border-indigo-500/30">
+                   <button 
+                     onClick={() => setThoughtsOpen(!thoughtsOpen)}
+                     className="text-xs font-medium text-indigo-400/70 hover:text-indigo-300 flex items-center gap-2 mb-1 transition-colors"
+                   >
+                     {thoughtsOpen ? 'Hide' : 'Show'} Thought Process
+                   </button>
+                   {thoughtsOpen && (
+                     <div className="text-zinc-500 text-sm italic whitespace-pre-wrap bg-zinc-900/50 p-3 rounded-lg border border-zinc-800/50">
+                       {part.content}
+                     </div>
+                   )}
+                 </div>
+               );
+            }
+            return <FormattedContent key={i} text={part.content} />;
+          })
+        )}
         
         {msg.isPartial && <span className="inline-block w-2 h-4 ml-1 bg-indigo-500 animate-pulse align-middle" />}
 
         {/* Metadata Footer */}
         <div className={`flex items-center gap-3 mt-2 ${msg.from === "user" ? "justify-end opacity-50 text-zinc-400" : "justify-start text-zinc-500"}`}>
+           {msg.deliveryStatus === "pending" && (
+             <span className="text-[10px] font-mono bg-blue-900/20 text-blue-200 px-1.5 py-0.5 rounded border border-blue-900/40">
+               pending
+             </span>
+           )}
+           {msg.deliveryStatus === "failed" && (
+             <span className="text-[10px] font-mono bg-red-900/20 text-red-200 px-1.5 py-0.5 rounded border border-red-900/40" title={msg.deliveryError || "delivery failed"}>
+               failed
+             </span>
+           )}
            {msg.isPartial && msg.from !== "user" && (msg.metrics?.totalTokens ?? 0) === 0 && (
              <span className="text-[10px] font-mono bg-zinc-900/50 px-1.5 py-0.5 rounded border border-zinc-800">
                waiting for response

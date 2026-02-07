@@ -1,10 +1,7 @@
 # Active Checkpoint
 
-**Current Status:** CP6.1 — Observation & Automation Verification
-**State:** ✅ VERIFIED
-**Next:** CP7 — Cloud & Auth
+**Current Status:** CP12 — Chat Integrity + TAQWIN Integration
+**State:** ACTIVE
 
 ## Verification Status
-- **Test Suite:** `tests/playwright/journey.spec.ts` (PASS)
-- **Truth Layer:** Active
-- **Observer:** Installed (`window.__KNEZ_OBSERVER__`)
+- Pending

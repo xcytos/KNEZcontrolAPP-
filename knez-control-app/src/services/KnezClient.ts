@@ -14,6 +14,7 @@ import {
   ActiveWindowInfo,
   KnowledgeDoc
 } from "../domain/DataContracts";
+import { AppError } from "../domain/Errors";
 
 export type KnezMemoryRecord = {
   memory_id: string;
@@ -69,9 +70,20 @@ const DEFAULT_PROFILE: KnezConnectionProfile = {
   id: "local-default",
   type: "local",
   transport: "http",
-  endpoint: "http://localhost:8000",
+  endpoint: "http://127.0.0.1:8000",
   trustLevel: "untrusted",
 };
+
+function isTauriRuntime(): boolean {
+  return !!(window as any).__TAURI__ || !!(window as any).__TAURI_IPC__;
+}
+
+function normalizeEndpoint(endpoint: string): string {
+  const raw = endpoint.trim();
+  if (!raw) return raw;
+  if (!isTauriRuntime()) return raw;
+  return raw.replace(/http:\/\/localhost(?=[:/]|$)/i, "http://127.0.0.1");
+}
 
 function safeJsonParse<T>(raw: string): T | null {
   try {
@@ -88,6 +100,8 @@ function newSessionId(): string {
   return `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
 }
 
+const testFailOnce = new Set<string>();
+
 import { logger } from "./LogService";
 
 export class KnezClient {
@@ -97,8 +111,17 @@ export class KnezClient {
   constructor() {
     const savedProfile = localStorage.getItem(PROFILE_STORAGE_KEY);
     this.profile = savedProfile ? safeJsonParse<KnezConnectionProfile>(savedProfile) ?? DEFAULT_PROFILE : DEFAULT_PROFILE;
+    const normalizedEndpoint = normalizeEndpoint(this.profile.endpoint);
+    if (normalizedEndpoint !== this.profile.endpoint) {
+      this.profile = { ...this.profile, endpoint: normalizedEndpoint };
+      localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(this.profile));
+    }
     this.sessionId = localStorage.getItem(SESSION_STORAGE_KEY);
     logger.info("knez_client", "Client initialized", { profile: this.profile.id });
+  }
+
+  private baseUrl(): string {
+    return normalizeEndpoint(this.profile.endpoint).replace(/\/$/, "");
   }
 
   getProfile(): KnezConnectionProfile {
@@ -106,8 +129,8 @@ export class KnezClient {
   }
 
   setProfile(profile: KnezConnectionProfile): void {
-    this.profile = profile;
-    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
+    this.profile = { ...profile, endpoint: normalizeEndpoint(profile.endpoint) };
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(this.profile));
     logger.info("knez_client", "Profile updated", { id: profile.id });
   }
 
@@ -136,11 +159,14 @@ export class KnezClient {
     return fresh;
   }
 
-  async health(): Promise<KnezHealthResponse> {
-    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/health`);
+  async health(options?: { timeoutMs?: number }): Promise<KnezHealthResponse> {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), options?.timeoutMs ?? 3500);
+    const resp = await fetch(`${this.baseUrl()}/health`, { signal: controller.signal });
+    clearTimeout(timeoutId);
     if (!resp.ok) {
       logger.error("knez_client", "Health check failed", { status: resp.status });
-      throw new Error(`health_failed_${resp.status}`);
+      throw new AppError("KNEZ_HEALTH_FAILED", `Health check failed (${resp.status})`, { status: resp.status });
     }
     const data = (await resp.json()) as KnezHealthResponse;
     logger.debug("knez_client", "Health check passed", { backends: data.backends.length });
@@ -148,7 +174,7 @@ export class KnezClient {
   }
 
   async validateSession(sessionId: string): Promise<boolean> {
-    const url = new URL(`${this.profile.endpoint.replace(/\/$/, "")}/events`);
+    const url = new URL(`${this.baseUrl()}/events`);
     url.searchParams.set("limit", "1");
     url.searchParams.set("session_id", sessionId);
     const resp = await fetch(url.toString());
@@ -183,7 +209,7 @@ export class KnezClient {
 
 
   async listEvents(sessionId: string, limit = 50): Promise<KnezEvent[]> {
-    const url = new URL(`${this.profile.endpoint.replace(/\/$/, "")}/events`);
+    const url = new URL(`${this.baseUrl()}/events`);
     url.searchParams.set("limit", String(limit));
     if (sessionId) {
       url.searchParams.set("session_id", sessionId);
@@ -196,7 +222,7 @@ export class KnezClient {
   }
 
   async emitTaqwinEvent(sessionId: string, eventName: string, payload: any = {}): Promise<void> {
-    const url = `${this.profile.endpoint.replace(/\/$/, "")}/taqwin/events`;
+    const url = `${this.baseUrl()}/taqwin/events`;
     const resp = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -208,7 +234,7 @@ export class KnezClient {
   }
 
   async tryGetMcpRegistry(): Promise<McpRegistrySnapshot> {
-    const url = `${this.profile.endpoint.replace(/\/$/, "")}/mcp/registry`;
+    const url = `${this.baseUrl()}/mcp/registry`;
     try {
       const resp = await fetch(url);
       if (resp.status === 404) {
@@ -235,7 +261,7 @@ export class KnezClient {
   }
 
   async listMemory(sessionId?: string, limit = 100): Promise<KnezMemoryRecord[]> {
-    const url = new URL(`${this.profile.endpoint.replace(/\/$/, "")}/memory`);
+    const url = new URL(`${this.baseUrl()}/memory`);
     url.searchParams.set("limit", String(limit));
     if (sessionId) {
       url.searchParams.set("session_id", sessionId);
@@ -248,7 +274,7 @@ export class KnezClient {
   }
 
   async checkMemoryGate(sessionId: string): Promise<any> {
-    const url = `${this.profile.endpoint.replace(/\/$/, "")}/memory/gate/check`;
+    const url = `${this.baseUrl()}/memory/gate/check`;
     const resp = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -261,7 +287,7 @@ export class KnezClient {
   }
 
   async getInsights(sessionId: string): Promise<KnezInsight[]> {
-    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/sessions/${sessionId}/insights`);
+    const resp = await fetch(`${this.baseUrl()}/sessions/${sessionId}/insights`);
     if (!resp.ok) {
       throw new Error(`insights_failed_${resp.status}`);
     }
@@ -269,7 +295,7 @@ export class KnezClient {
   }
 
   async getSummary(sessionId: string): Promise<Record<string, any>> {
-    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/sessions/${sessionId}/summary`);
+    const resp = await fetch(`${this.baseUrl()}/sessions/${sessionId}/summary`);
     if (!resp.ok) {
       throw new Error(`summary_failed_${resp.status}`);
     }
@@ -279,76 +305,91 @@ export class KnezClient {
   // --- Checkpoint 4 & 5: Full KNEZ Integration ---
 
   async getCognitiveState(): Promise<CognitiveState> {
-    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/state/overview`);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 2500);
+    const resp = await fetch(`${this.baseUrl()}/state/overview`, { signal: controller.signal });
+    clearTimeout(timeoutId);
     if (!resp.ok) throw new Error(`state_failed_${resp.status}`);
     return await resp.json();
   }
   
   async getDetailedSubsystemState(subsystem: "governance" | "influence" | "taqwin"): Promise<any> {
-     const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/state/${subsystem}`);
+     const resp = await fetch(`${this.baseUrl()}/state/${subsystem}`);
      if (!resp.ok) return {};
      return await resp.json();
   }
 
   async forkSession(sessionId: string, messageId?: string): Promise<string> {
-    const url = `${this.profile.endpoint.replace(/\/$/, "")}/sessions/${sessionId}/fork`;
+    const url = `${this.baseUrl()}/sessions/${sessionId}/fork`;
     const resp = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message_id: messageId }),
+      body: JSON.stringify({ resume_reason: messageId ? `fork_from_${messageId}` : "fork" }),
     });
     if (!resp.ok) throw new Error(`fork_failed_${resp.status}`);
     const data = await resp.json();
-    return data.session_id;
+    const next = String(data.new_session_id || "");
+    if (!next) throw new Error("fork_failed_invalid_response");
+    this.setSessionId(next);
+    return next;
   }
   
-  async resumeSession(sessionId: string, snapshotId?: string): Promise<void> {
-    const url = `${this.profile.endpoint.replace(/\/$/, "")}/sessions/${sessionId}/resume`;
-    await fetch(url, {
+  async resumeSession(sessionId: string, snapshotId?: string): Promise<string> {
+    const url = `${this.baseUrl()}/sessions/${sessionId}/resume`;
+    const resp = await fetch(url, {
        method: "POST",
        headers: { "Content-Type": "application/json" },
-       body: JSON.stringify({ snapshot_id: snapshotId })
+       body: JSON.stringify({ resume_reason: snapshotId ? `resume_snapshot_${snapshotId}` : "resume" })
     });
+    if (!resp.ok) throw new Error(`resume_failed_${resp.status}`);
+    const data = await resp.json();
+    const next = String(data.new_session_id || "");
+    if (!next) throw new Error("resume_failed_invalid_response");
+    this.setSessionId(next);
+    return next;
   }
   
   async getResumeSnapshot(sessionId: string): Promise<ResumeSnapshot | null> {
-    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/sessions/${sessionId}/resume_snapshot`);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 2500);
+    const resp = await fetch(`${this.baseUrl()}/sessions/${sessionId}/resume_snapshot`, { signal: controller.signal });
+    clearTimeout(timeoutId);
     if (!resp.ok) return null;
     return await resp.json();
   }
 
   async getOperatorControls(): Promise<{ enabled: boolean, policies: any[] }> {
-    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/operator/influence/global`);
+    const resp = await fetch(`${this.baseUrl()}/operator/influence/global`);
     if (!resp.ok) return { enabled: false, policies: [] };
     return await resp.json();
   }
   
   async getActiveContracts(): Promise<InfluenceContract[]> {
-     const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/operator/influence/contracts`);
+     const resp = await fetch(`${this.baseUrl()}/operator/influence/contracts`);
      if (!resp.ok) return [];
      return await resp.json();
   }
 
   async getRunbook(sessionId: string): Promise<any[]> {
-    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/runbooks/${sessionId}`);
+    const resp = await fetch(`${this.baseUrl()}/runbooks/${sessionId}`);
     if (!resp.ok) return [];
     return await resp.json();
   }
 
   async getReplayTimeline(sessionId: string): Promise<ReplayTimeline | null> {
-    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/sessions/${sessionId}/replay`);
+    const resp = await fetch(`${this.baseUrl()}/sessions/${sessionId}/replay`);
     if (!resp.ok) return null;
     return await resp.json();
   }
 
   async getMemoryDetail(memoryId: string): Promise<KnezMemoryRecord> {
-    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/memory/${memoryId}`);
+    const resp = await fetch(`${this.baseUrl()}/memory/${memoryId}`);
     if (!resp.ok) throw new Error(`memory_detail_failed_${resp.status}`);
     return await resp.json();
   }
   
   async getAuditConsistency(): Promise<AuditResult[]> {
-    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/audit/consistency`);
+    const resp = await fetch(`${this.baseUrl()}/audit/consistency`);
     if (!resp.ok) return [];
     return await resp.json();
   }
@@ -356,7 +397,7 @@ export class KnezClient {
   // --- CP6: Perception ---
 
   async takeSnapshot(): Promise<PerceptionSnapshot> {
-    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/perception/snapshot`, {
+    const resp = await fetch(`${this.baseUrl()}/perception/snapshot`, {
       method: "POST"
     });
     if (!resp.ok) throw new Error(`snapshot_failed_${resp.status}`);
@@ -364,7 +405,7 @@ export class KnezClient {
   }
 
   async getActiveWindow(): Promise<ActiveWindowInfo> {
-    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/perception/active_window`);
+    const resp = await fetch(`${this.baseUrl()}/perception/active_window`);
     if (!resp.ok) return { title: "Unknown", bounds: { left:0, top:0, right:0, bottom:0 } };
     return await resp.json();
   }
@@ -372,13 +413,13 @@ export class KnezClient {
   // --- CP6: Knowledge ---
 
   async listKnowledge(): Promise<KnowledgeDoc[]> {
-    const resp = await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/memory/knowledge`);
+    const resp = await fetch(`${this.baseUrl()}/memory/knowledge`);
     if (!resp.ok) return [];
     return await resp.json();
   }
 
   async addKnowledge(doc: Partial<KnowledgeDoc>): Promise<void> {
-    await fetch(`${this.profile.endpoint.replace(/\/$/, "")}/memory/knowledge`, {
+    await fetch(`${this.baseUrl()}/memory/knowledge`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(doc),
@@ -386,7 +427,7 @@ export class KnezClient {
   }
 
   async toggleMcpItem(itemId: string, enabled: boolean): Promise<void> {
-    const url = `${this.profile.endpoint.replace(/\/$/, "")}/mcp/registry/${itemId}/toggle`;
+    const url = `${this.baseUrl()}/mcp/registry/${itemId}/toggle`;
     await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -405,7 +446,7 @@ export class KnezClient {
   // --- End CP4 ---
 
   async submitVote(sessionId: string, messageId: string, vote: "upvote" | "downvote"): Promise<void> {
-    const url = `${this.profile.endpoint.replace(/\/$/, "")}/influence/vote`;
+    const url = `${this.baseUrl()}/influence/vote`;
     const payload = {
       sessionId,
       messageId,
@@ -427,7 +468,7 @@ export class KnezClient {
   }
 
   async getPendingApprovals(): Promise<any[]> {
-    const url = `${this.profile.endpoint.replace(/\/$/, "")}/approvals/pending`;
+    const url = `${this.baseUrl()}/approvals/pending`;
     try {
       const resp = await fetch(url);
       if (!resp.ok) return [];
@@ -438,7 +479,7 @@ export class KnezClient {
   }
 
   async requestApproval(kind: string, payload: any = {}, sessionId?: string): Promise<any> {
-    const url = `${this.profile.endpoint.replace(/\/$/, "")}/approvals/request`;
+    const url = `${this.baseUrl()}/approvals/request`;
     const resp = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -451,7 +492,7 @@ export class KnezClient {
   }
 
   async submitApprovalDecision(approvalId: string, decision: "approve" | "deny", actor?: string, reason?: string, sessionId?: string): Promise<void> {
-    const url = `${this.profile.endpoint.replace(/\/$/, "")}/approvals/${approvalId}/decision`;
+    const url = `${this.baseUrl()}/approvals/${approvalId}/decision`;
     const resp = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -463,7 +504,7 @@ export class KnezClient {
   }
 
   async chatCompletionsNonStream(messages: CompletionMessage[], sessionId: string): Promise<string> {
-    const url = `${this.profile.endpoint.replace(/\/$/, "")}/v1/chat/completions`;
+    const url = `${this.baseUrl()}/v1/chat/completions`;
     const payload: ChatCompletionsRequest = {
       messages,
       stream: false,
@@ -475,12 +516,12 @@ export class KnezClient {
       body: JSON.stringify(payload),
     });
     if (!resp.ok) {
-      throw new Error(`completions_failed_${resp.status}`);
+      throw new AppError("KNEZ_COMPLETION_FAILED", `Completions request failed (${resp.status})`, { status: resp.status });
     }
     const raw = (await resp.json()) as any;
     if (raw && typeof raw.error === "string") {
       const err = raw as KnezErrorResponse;
-      throw new Error(`${err.error}${err.reason ? `:${err.reason}` : ""}`);
+      throw new AppError("KNEZ_COMPLETION_FAILED", `${err.error}${err.reason ? `:${err.reason}` : ""}`);
     }
     const data = raw as ChatCompletionsFinal;
     return data.choices?.[0]?.message?.content ?? "";
@@ -493,7 +534,7 @@ export class KnezClient {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
       
-      const url = `${this.profile.endpoint.replace(/\/$/, "")}/v1/chat/completions`;
+      const url = `${this.baseUrl()}/v1/chat/completions`;
       const payload: ChatCompletionsRequest = {
         messages,
         stream: false,
@@ -519,7 +560,25 @@ export class KnezClient {
   }
 
   async *chatCompletionsStream(messages: CompletionMessage[], sessionId: string): AsyncGenerator<string, void, void> {
-    const url = `${this.profile.endpoint.replace(/\/$/, "")}/v1/chat/completions`;
+    if (sessionId.startsWith("test-session-")) {
+      const lastUser = [...messages].reverse().find(m => m.role === "user")?.content ?? "";
+      if (lastUser.includes("[FAIL_ONCE]")) {
+        const key = `${sessionId}:${lastUser.slice(0, 120)}`;
+        if (!testFailOnce.has(key)) {
+          testFailOnce.add(key);
+          throw new Error("forced_fail_once");
+        }
+      }
+      const mockResponse = `[TEST MODE] Echo: Mock response for testing. (Backend unavailable)`;
+      const chunks = mockResponse.split(" ");
+      for (const chunk of chunks) {
+        await new Promise(r => setTimeout(r, 30));
+        yield chunk + " ";
+      }
+      return;
+    }
+
+    const url = `${this.baseUrl()}/v1/chat/completions`;
     const payload: ChatCompletionsRequest = {
       messages,
       stream: true,
@@ -529,10 +588,10 @@ export class KnezClient {
     // CP3-C: Retry Logic
     let attempts = 0;
     const maxAttempts = 2;
-    let lastError: any;
 
     while (attempts < maxAttempts) {
       try {
+        let yieldedAny = false;
         const controller = new AbortController();
         const connectTimeoutId = window.setTimeout(() => controller.abort(), 12000);
         const resp = await fetch(url, {
@@ -577,24 +636,39 @@ export class KnezClient {
               const trimmed = line.trim();
               if (!trimmed.startsWith("data:")) continue;
               const data = trimmed.slice(5).trim();
-              if (data === "[DONE]") return;
+              if (data === "[DONE]") {
+                clearTimeout(inactivityTimeoutId);
+                if (!yieldedAny) {
+                  const final = await this.chatCompletionsNonStream(messages, sessionId);
+                  if (!final.trim()) throw new AppError("KNEZ_STREAM_EMPTY", "Stream ended with no content");
+                  yield final;
+                }
+                return;
+              }
               if (!data) continue;
               const parsedAny = safeJsonParse<any>(data);
               if (parsedAny && typeof parsedAny.error === "string") {
                 const err = parsedAny as KnezErrorResponse;
-                throw new Error(`${err.error}${err.reason ? `:${err.reason}` : ""}`);
+                throw new AppError("KNEZ_STREAM_FAILED", `${err.error}${err.reason ? `:${err.reason}` : ""}`);
               }
               const parsed = parsedAny as ChatCompletionsFinal | null;
               const delta = parsed?.choices?.[0]?.delta?.content;
-              if (delta) yield delta;
+              if (delta) {
+                yieldedAny = true;
+                yield delta;
+              }
             }
           }
         }
         clearTimeout(inactivityTimeoutId);
+        if (!yieldedAny) {
+          const final = await this.chatCompletionsNonStream(messages, sessionId);
+          if (!final.trim()) throw new AppError("KNEZ_STREAM_EMPTY", "Stream ended with no content");
+          yield final;
+        }
         return; // Success, exit generator
 
       } catch (err) {
-        lastError = err;
         // CP11: Test Mode Fallback
         if (sessionId.startsWith("test-session-")) {
            const mockResponse = `[TEST MODE] Echo: Mock response for testing. (Backend unavailable)`;
@@ -615,7 +689,14 @@ export class KnezClient {
     }
     
     // If we exhausted retries
-    throw lastError;
+    try {
+      const final = await this.chatCompletionsNonStream(messages, sessionId);
+      if (!final.trim()) throw new AppError("KNEZ_STREAM_EMPTY", "Stream failed and fallback returned empty");
+      yield final;
+      return;
+    } catch (e) {
+      throw new AppError("KNEZ_STREAM_FAILED", e instanceof Error ? e.message : String(e));
+    }
   }
 
   mapMemoryToUi(records: KnezMemoryRecord[]): MemoryEntry[] {

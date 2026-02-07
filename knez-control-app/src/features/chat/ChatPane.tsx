@@ -9,6 +9,96 @@ import { VoiceInput } from "../voice/VoiceInput";
 // import { observe } from "../../utils/observer";
 import { chatService } from "../../services/ChatService";
 import { sessionDatabase } from "../../services/SessionDatabase";
+import { sessionController } from "../../services/SessionController";
+import { History, MessageSquarePlus, Search, Trash2 } from "lucide-react";
+import { TaqwinToolsModal } from "./TaqwinToolsModal";
+
+// CP17: History Modal
+const HistoryModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  onSelect: (sessionId: string) => void;
+  currentSessionId: string | null;
+}> = ({ isOpen, onClose, onSelect, currentSessionId }) => {
+  const [sessions, setSessions] = useState<{id: string, name: string, updatedAt: string}[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (isOpen) {
+      setLoading(true);
+      sessionDatabase.getSessions()
+        .then(list => {
+          const sorted = list.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+          const filtered = sorted.filter(s => !s.id.startsWith("test-session-"));
+          if (!cancelled) setSessions(filtered);
+        })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    }
+    return () => { cancelled = true; };
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 backdrop-blur-sm">
+      <div className="bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl max-w-md w-full max-h-[80vh] flex flex-col overflow-hidden">
+        <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-900/50">
+          <h3 className="text-sm font-bold text-white flex items-center gap-2">
+            <History size={16} />
+            Session History
+          </h3>
+          <button onClick={onClose} className="text-zinc-500 hover:text-white transition-colors">✕</button>
+        </div>
+        
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          {loading ? (
+             <div className="p-8 text-center text-zinc-500 text-xs">Loading sessions...</div>
+          ) : sessions.length === 0 ? (
+             <div className="p-8 text-center text-zinc-500 text-xs">No history found.</div>
+          ) : (
+            sessions.map(s => (
+              <div
+                key={s.id}
+                className={`w-full text-left p-3 rounded-lg text-sm transition-all border ${
+                  currentSessionId === s.id
+                    ? "bg-blue-900/20 border-blue-800 text-blue-200"
+                    : "bg-zinc-900 border-transparent hover:bg-zinc-800 hover:border-zinc-700 text-zinc-300"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <button
+                    onClick={() => { onSelect(s.id); onClose(); }}
+                    className="flex-1 text-left"
+                  >
+                    <div className="font-medium truncate">{s.name}</div>
+                    <div className="flex justify-between mt-1">
+                      <span className="text-[10px] text-zinc-500 font-mono">ID: {s.id.substring(0,8)}</span>
+                      <span className="text-[10px] text-zinc-600">{new Date(s.updatedAt).toLocaleDateString()}</span>
+                    </div>
+                  </button>
+                  <button
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      await sessionDatabase.deleteSession(s.id);
+                      setSessions((prev) => prev.filter((x) => x.id !== s.id));
+                    }}
+                    className="p-2 rounded bg-zinc-950/40 border border-zinc-800 hover:bg-zinc-950/70 text-zinc-400 hover:text-red-300 transition-colors"
+                    title="Delete session"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 
 // CP4-B: Forking Support
 const ForkModal: React.FC<{ 
@@ -63,6 +153,74 @@ const RenameModal: React.FC<{
    );
 };
 
+const AuditModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  sessionId: string | null;
+  messages: ChatMessage[];
+}> = ({ isOpen, onClose, sessionId, messages }) => {
+  const [queueCount, setQueueCount] = useState(0);
+  const [inFlightCount, setInFlightCount] = useState(0);
+  const [failedQueueCount, setFailedQueueCount] = useState(0);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    const tick = async () => {
+      if (!sessionId) return;
+      const all = await sessionDatabase.listOutgoing();
+      const scoped = all.filter((x) => x.sessionId === sessionId);
+      if (cancelled) return;
+      setQueueCount(scoped.length);
+      setInFlightCount(scoped.filter((x) => x.status === "in_flight").length);
+      setFailedQueueCount(scoped.filter((x) => x.status === "failed").length);
+    };
+    void tick();
+    const t = window.setInterval(() => void tick(), 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [isOpen, sessionId]);
+
+  if (!isOpen) return null;
+
+  const pendingMessages = messages.filter((m) => m.deliveryStatus === "pending").length;
+  const failedMessages = messages.filter((m) => m.deliveryStatus === "failed").length;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg w-[640px] shadow-xl max-h-[90vh] flex flex-col">
+        <div className="p-6 pb-4 flex-none border-b border-zinc-800/50">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-light text-zinc-200">Chat State Audit</h2>
+            <button onClick={onClose} className="text-xs text-zinc-400 hover:text-white">Close</button>
+          </div>
+        </div>
+        <div className="p-6 overflow-y-auto flex-1 space-y-4">
+          <div className="text-xs text-zinc-400 border border-zinc-800 rounded p-3 bg-zinc-950/40">
+            <div className="font-mono text-zinc-500 mb-2">Active Session</div>
+            <div className="font-mono text-zinc-200">{sessionId ?? "none"}</div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="text-xs text-zinc-400 border border-zinc-800 rounded p-3 bg-zinc-950/40">
+              <div className="font-mono text-zinc-500 mb-2">Messages</div>
+              <div className="flex justify-between"><span className="text-zinc-500">pending</span><span className="font-mono text-zinc-200">{pendingMessages}</span></div>
+              <div className="flex justify-between"><span className="text-zinc-500">failed</span><span className="font-mono text-zinc-200">{failedMessages}</span></div>
+            </div>
+            <div className="text-xs text-zinc-400 border border-zinc-800 rounded p-3 bg-zinc-950/40">
+              <div className="font-mono text-zinc-500 mb-2">Outgoing Queue</div>
+              <div className="flex justify-between"><span className="text-zinc-500">total</span><span className="font-mono text-zinc-200">{queueCount}</span></div>
+              <div className="flex justify-between"><span className="text-zinc-500">in_flight</span><span className="font-mono text-zinc-200">{inFlightCount}</span></div>
+              <div className="flex justify-between"><span className="text-zinc-500">failed</span><span className="font-mono text-zinc-200">{failedQueueCount}</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 type Props = {
   sessionId: string | null;
   readOnly: boolean;
@@ -84,6 +242,9 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   // CP15
   const [sessionName, setSessionName] = useState<string>("");
   const [renameOpen, setRenameOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -91,15 +252,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
 
   // Sync with Service
   useEffect(() => {
-    if (sessionId) {
-       chatService.setSessionId(sessionId);
-       // Load name
-       sessionDatabase.getSession(sessionId).then(s => {
-          if (s) setSessionName(s.name);
-          else setSessionName(`Session ${sessionId.substring(0,6)}`);
-       });
-    }
-    
     const unsub = chatService.subscribe((state) => {
        setMessages(state.messages);
        setSending(state.sending);
@@ -108,9 +260,17 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     return unsub;
   }, [sessionId]);
 
+  useEffect(() => {
+    if (!sessionId) return;
+    sessionDatabase.getSession(sessionId).then(s => {
+      if (s) setSessionName(s.name);
+      else setSessionName(`Session ${sessionId.substring(0,6)}`);
+    });
+  }, [sessionId, messages.length]);
+
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (readOnly || !inputValue.trim()) return;
+    if (!inputValue.trim()) return;
     
     // UI clears immediately, service handles logic
     setInputValue("");
@@ -130,9 +290,8 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const handleFork = async () => {
     if (!sessionId || !forkingMsgId) return;
     try {
-      const newSessionId = await knezClient.forkSession(sessionId, forkingMsgId);
+      const newSessionId = await sessionController.forkSession(sessionId, forkingMsgId);
       showToast(`Session forked: ${newSessionId.substring(0,8)}`, "success");
-      window.location.reload(); 
     } catch (e) {
       showToast("Failed to fork session", "error");
     } finally {
@@ -190,14 +349,21 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   };
 
   const renderOfflineOverlay = () => {
-    if (readOnly && (systemStatus === "idle" || systemStatus === "failed")) {
+    if (systemStatus === "starting") {
       return (
-        <div className="flex flex-col items-center justify-center py-12 space-y-4">
-          <div className="text-zinc-500 text-sm">System is offline.</div>
+        <div className="p-3 rounded-lg border border-blue-900/40 bg-blue-900/10 text-xs text-blue-200">
+          Starting KNEZ... this can take up to 30 seconds on first boot.
+        </div>
+      );
+    }
+    if (readOnly) {
+      return (
+        <div className="p-3 rounded-lg border border-zinc-800 bg-zinc-900/30 text-xs text-zinc-300">
+          Offline. Use Start in the header or Force Start in Settings.
           {systemStatus === "failed" && (
-            <div className="text-red-400 text-xs">Previous launch failed. Check settings for logs.</div>
+            <div className="mt-1 text-red-400">Previous launch failed. Open Settings for logs.</div>
           )}
-       </div>
+        </div>
       );
     }
     return null;
@@ -218,6 +384,22 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
             </div>
          </div>
          <div className="flex items-center gap-2">
+            <button
+               onClick={() => setHistoryOpen(true)}
+               className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
+               title="Session History"
+            >
+               <History size={18} />
+            </button>
+            <button
+                onClick={() => {
+                   sessionController.createNewSession();
+                }}
+                className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
+                title="New Session"
+             >
+               <MessageSquarePlus size={18} />
+            </button>
             <button
               onClick={() => setRenameOpen(true)}
               className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-1.5 rounded transition-colors"
@@ -249,31 +431,52 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
       <div className="p-4 border-t border-zinc-800 bg-zinc-900/30">
         <div className="flex gap-2 mb-2 px-1">
            <button 
-             onClick={() => setActiveTools(p => ({ ...p, search: !p.search }))}
-             className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+             data-testid="search-toggle"
+             onClick={() => {
+               const next = { ...activeTools, search: !activeTools.search };
+               chatService.setActiveTools(next);
+             }}
+             className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
                activeTools.search 
                  ? "bg-blue-600 text-white shadow-blue-900/50 shadow-sm" 
                  : "bg-transparent border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300"
              }`}
            >
-             <span>{activeTools.search ? 'Web Search: ON' : 'Web Search: OFF'}</span>
+             <Search size={14} />
+             <span>{activeTools.search ? 'Search On' : 'Search Off'}</span>
+           </button>
+           <button
+             onClick={() => setAuditOpen(true)}
+             className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300 transition-all"
+             title="Chat State Audit"
+           >
+             <span>Audit</span>
+           </button>
+           <button
+             onClick={() => setToolsOpen(true)}
+             className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300 transition-all"
+             title="TAQWIN Tools"
+           >
+             <span>Tools</span>
            </button>
         </div>
 
         <form onSubmit={handleSend} className="relative flex gap-2">
           <VoiceInput onTranscript={handleVoiceTranscript} />
           <input
+            data-testid="chat-input"
             autoFocus
             type="text"
             className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 transition-all placeholder-zinc-600"
             placeholder={readOnly ? "System is offline..." : "Type a message..."}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
-            disabled={readOnly || sending}
+            disabled={sending}
           />
           <button
+            data-testid="chat-send"
             type="submit"
-            disabled={!inputValue.trim() || sending || readOnly}
+            disabled={!inputValue.trim() || sending}
             className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg shadow-blue-900/20"
           >
             {sending ? "Sending..." : "Send"}
@@ -298,6 +501,24 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         initialName={sessionName}
         onClose={() => setRenameOpen(false)}
         onSave={handleRename}
+      />
+      <AuditModal
+        isOpen={auditOpen}
+        onClose={() => setAuditOpen(false)}
+        sessionId={sessionId}
+        messages={messages}
+      />
+      <TaqwinToolsModal
+        isOpen={toolsOpen}
+        onClose={() => setToolsOpen(false)}
+      />
+      <HistoryModal
+        isOpen={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        currentSessionId={sessionId}
+        onSelect={async (sid) => {
+           await sessionController.resumeSession(sid);
+        }}
       />
     </div>
   );

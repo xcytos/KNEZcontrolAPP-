@@ -7,6 +7,14 @@ export const SystemPanel: React.FC<{
   onStop?: () => void;
 }> = ({ status, output, onStop }) => {
   const outputRef = useRef<HTMLDivElement>(null);
+  const fallback =
+    status === "idle"
+      ? "Idle. Use Start or Force Start to launch KNEZ."
+      : status === "starting"
+        ? "Starting KNEZ..."
+        : status === "failed"
+          ? "Startup failed. Check logs in Settings / Observatory."
+          : "No output yet.";
 
   useEffect(() => {
     if (outputRef.current) {
@@ -42,7 +50,7 @@ export const SystemPanel: React.FC<{
         ref={outputRef}
         className="bg-black/50 border border-zinc-800 rounded p-2 h-32 overflow-y-auto font-mono text-[10px] text-zinc-400 whitespace-pre-wrap"
       >
-        {output || "// Output will appear here..."}
+        {output || fallback}
       </div>
     </div>
   );

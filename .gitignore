@@ -12,7 +12,9 @@ Thumbs.db
 .idea/
 *.log
 
+# Trae IDE artifacts
+.trae/
+
 # User requested exclusion
 knez
 !KNEZ/
-

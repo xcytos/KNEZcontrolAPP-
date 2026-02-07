@@ -9,13 +9,15 @@ export const ConnectionSettings: React.FC<{
   onClose: () => void;
   systemStatus: SystemStatus;
   systemOutput: string;
-}> = ({ onClose, systemStatus, systemOutput }) => {
-  const [endpoint, setEndpoint] = useState("http://localhost:8000");
+  onForceStart?: () => void;
+}> = ({ onClose, systemStatus, systemOutput, onForceStart }) => {
+  const [endpoint, setEndpoint] = useState("http://127.0.0.1:8000");
   const [status, setStatus] = useState<"idle" | "checking" | "healthy" | "failed">("idle");
   const [health, setHealth] = useState<KnezHealthResponse | null>(null);
   const [events, setEvents] = useState<KnezEvent[] | null>(null);
   const [mcp, setMcp] = useState<McpRegistrySnapshot | null>(null);
   const [message, setMessage] = useState("");
+  const isTauri = !!(window as any).__TAURI__ || !!(window as any).__TAURI_IPC__;
 
   useEffect(() => {
     const profile = knezClient.getProfile();
@@ -47,9 +49,9 @@ export const ConnectionSettings: React.FC<{
 
     try {
       // Small delay to allow stack to fully bind ports if this was triggered immediately after "STACK READY"
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 100));
       
-      const h = await knezClient.health();
+      const h = await knezClient.health({ timeoutMs: 2000 });
       setHealth(h);
       setStatus("healthy");
       
@@ -108,7 +110,7 @@ export const ConnectionSettings: React.FC<{
               value={endpoint}
               onChange={(e) => setEndpoint(e.target.value)}
               className="w-full bg-zinc-950 border border-zinc-800 rounded p-2 text-zinc-300 text-sm focus:border-blue-500 outline-none"
-              placeholder="http://localhost:8000"
+              placeholder="http://127.0.0.1:8000"
             />
           </div>
 
@@ -237,7 +239,21 @@ export const ConnectionSettings: React.FC<{
 
         {/* Footer */}
         <div className="p-6 pt-4 flex-none border-t border-zinc-800/50 bg-zinc-900 rounded-b-lg">
-          <div className="flex justify-end space-x-2">
+          <div className="flex items-center justify-between gap-2">
+             <button
+               onClick={() => {
+                 if (!onForceStart) return;
+                 if (!isTauri) {
+                   setMessage("Web mode cannot start the local stack. Use the desktop app to launch KNEZ.");
+                   setStatus("failed");
+                   return;
+                 }
+                 onForceStart();
+               }}
+               className="px-4 py-2 text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded transition-colors"
+             >
+               Force Start
+             </button>
              <button 
                onClick={onClose}
                className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors"

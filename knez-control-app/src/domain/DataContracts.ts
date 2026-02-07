@@ -12,6 +12,11 @@ export interface ChatMessage {
   hiddenLocally?: boolean;
   refusal?: boolean;
   isPartial?: boolean;
+  deliveryStatus?: "pending" | "delivered" | "failed";
+  deliveryError?: string;
+  replyToMessageId?: string;
+  correlationId?: string;
+  toolCall?: ToolCallMessage;
   metrics?: {
     timeToFirstTokenMs?: number;
     totalTokens?: number;
@@ -21,6 +26,16 @@ export interface ChatMessage {
     vote?: InfluenceVote;
     reason?: string;
   };
+}
+
+export interface ToolCallMessage {
+  tool: string;
+  args: any;
+  status: "calling" | "succeeded" | "failed";
+  result?: any;
+  error?: string;
+  startedAt: string;
+  finishedAt?: string;
 }
 
 export type InfluenceVote = "upvote" | "downvote";
@@ -348,6 +363,4 @@ export interface KnowledgeDoc {
   tags: string[];
   status: "indexing" | "indexed" | "failed";
 }
-
-
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { MainLayout } from './components/layout/MainLayout';
 import { View } from './components/layout/Sidebar';
 import { ChatPane } from './features/chat/ChatPane';
@@ -8,7 +8,7 @@ import { SessionTimeline } from './features/timeline/SessionTimeline';
 import { ReflectionPane } from './features/reflection/ReflectionPane';
 import { MistakeLedger } from './features/mistakes/MistakeLedger';
 import { DriftVisualizer } from './features/drift/DriftVisualizer';
-import { ConnectionSettings } from './features/settings/ConnectionSettings';
+import { SettingsModal } from './features/settings/SettingsModal';
 import { KnezEventsPanel } from './features/events/KnezEventsPanel';
 import { InfrastructurePanel } from './features/infrastructure/InfrastructurePanel';
 import { McpRegistryView } from './features/mcp/McpRegistryView';
@@ -21,20 +21,20 @@ import { UpdatesPanel } from './features/updates/UpdatesPanel';
 import { ExtractionPanel } from './features/extraction/ExtractionPanel';
 import { TestPanel } from './features/diagnostics/TestPanel';
 import { SkillsView } from './features/skills/SkillsView';
-import { PresenceEngine, PresenceConfig } from './presence/PresenceEngine';
 import { PresenceState, McpRegistrySnapshot } from './domain/DataContracts';
 import { knezClient } from './services/KnezClient';
+import { chatService } from './services/ChatService';
+import { sessionController } from './services/SessionController';
+import { getKeepAliveEnabled } from './services/Preferences';
 import { useSystemOrchestrator } from './features/system/useSystemOrchestrator';
 import { ToastProvider } from './components/ui/Toast';
-import { StatusProvider, useStatus } from './contexts/StatusProvider';
+import { StatusProvider } from './contexts/StatusProvider';
+import { useStatus } from './contexts/useStatus';
 import { setObserverState } from './utils/observer';
 import './App.css';
 
-const PRESENCE_CONFIG: PresenceConfig = {
-  debounceMillis: 1000,
-};
-
 import { CommandPalette } from './components/ui/CommandPalette';
+import { FloatingConsole } from './components/ui/FloatingConsole';
 
 // ...
 
@@ -43,13 +43,18 @@ function AppContent() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [presenceState, setPresenceState] = useState<PresenceState>('SILENT');
   const [showSettings, setShowSettings] = useState(false);
-  const [sessionId, setSessionId] = useState<string | null>(knezClient.getSessionId());
+  const [sessionId, setSessionId] = useState<string | null>(sessionController.getSessionId());
   const [readOnly, setReadOnly] = useState(true);
+  const [chatSending, setChatSending] = useState(false);
   
   const { isConnected, isDegraded, lastCheck, health, forceCheck } = useStatus();
-  const engineRef = useRef<PresenceEngine>(null);
 
   // CP9-6: Global Command Palette Listener
+  useEffect(() => {
+    const unsub = sessionController.subscribe(({ sessionId }) => setSessionId(sessionId));
+    return unsub;
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -63,8 +68,7 @@ function AppContent() {
           const sessions = await persistenceService.listSessions()
           const last = sessions[0]
           if (last) {
-            await knezClient.resumeSession(last)
-            window.location.reload()
+            await sessionController.resumeSession(last)
           }
         })
       }
@@ -77,12 +81,11 @@ function AppContent() {
   useEffect(() => {
     if (health) {
       setReadOnly(false);
-      if (!sessionId) {
-        knezClient.ensureSession().then(setSessionId);
-      }
+      if (!sessionId) sessionController.ensureLocalSession();
       knezClient.tryGetMcpRegistry(); // Background fetch
     } else {
       setReadOnly(true);
+      if (!sessionId) sessionController.ensureLocalSession();
     }
   }, [health]);
 
@@ -91,20 +94,19 @@ function AppContent() {
     forceCheck();
   });
 
-  const autoConnectRef = useRef(0);
   useEffect(() => {
     const endpoint = knezClient.getProfile().endpoint;
     const isLocal =
       endpoint.includes("localhost:8000") ||
       endpoint.includes("127.0.0.1:8000");
     const isTauri = !!(window as any).__TAURI__ || !!(window as any).__TAURI_IPC__;
+    const keepAlive = getKeepAliveEnabled();
     if (health) return;
     if (!isLocal) return;
     if (!isTauri) return;
+    if (!keepAlive) return;
     if (systemStatus === "starting" || systemStatus === "running") return;
-    const now = Date.now();
-    if (now - autoConnectRef.current < 15000) return;
-    autoConnectRef.current = now;
+    // Removed 15s delay for immediate connection
     launchAndConnect();
   }, [health, systemStatus, launchAndConnect]);
 
@@ -118,15 +120,30 @@ function AppContent() {
     });
   }, [health, isConnected, isDegraded, sessionId, readOnly, systemStatus]);
 
-  // Bootstrap
   useEffect(() => {
-    if (!engineRef.current) {
-      engineRef.current = new PresenceEngine(PRESENCE_CONFIG);
-      setPresenceState(engineRef.current.getSnapshot().state);
-    }
-    const opened = engineRef.current.apply({ kind: 'app_opened', at: Date.now() });
-    setPresenceState(opened.state);
+    const unsub = chatService.subscribe((s) => setChatSending(s.sending));
+    return unsub;
   }, []);
+
+  useEffect(() => {
+    if (!health) {
+      setPresenceState("SILENT");
+      return;
+    }
+    if (systemStatus === "starting") {
+      setPresenceState("OBSERVING");
+      return;
+    }
+    if (activeView === "reflection") {
+      setPresenceState("REFLECTING");
+      return;
+    }
+    if (chatSending) {
+      setPresenceState("RESPONDING");
+      return;
+    }
+    setPresenceState("OBSERVING");
+  }, [health, systemStatus, activeView, chatSending]);
 
   const renderContent = () => {
     switch (activeView) {
@@ -145,8 +162,7 @@ function AppContent() {
                 <LineagePanel 
                   sessionId={sessionId} 
                   onResume={async (sid) => {
-                    await knezClient.resumeSession(sid);
-                    window.location.reload();
+                    await sessionController.resumeSession(sid);
                   }} 
                 />
               </div>
@@ -216,6 +232,16 @@ function AppContent() {
       onViewChange={setActiveView}
       presenceState={presenceState}
       connectionStatus={{
+        state:
+          systemStatus === "starting"
+            ? "starting"
+            : systemStatus === "failed"
+              ? "error"
+              : isDegraded
+                ? "degraded"
+                : isConnected
+                  ? "running"
+                  : "down",
         connected: isConnected || isDegraded,
         endpoint: knezClient.getProfile().endpoint,
         lastCheck: lastCheck
@@ -230,7 +256,7 @@ function AppContent() {
       headerActions={
         <div className="flex items-center gap-2">
           <button
-            onClick={() => launchAndConnect()}
+            onClick={() => launchAndConnect(systemStatus === "failed")}
             disabled={systemStatus === "starting" || systemStatus === "running"}
             className="text-xs bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 px-3 py-1 rounded"
           >
@@ -250,16 +276,18 @@ function AppContent() {
         onClose={() => setCommandPaletteOpen(false)}
         onNavigate={(view) => { setActiveView(view); setCommandPaletteOpen(false); }}
       />
+      <FloatingConsole />
       
       {renderContent()}
       
-       {showSettings && <ConnectionSettings 
+       {showSettings && <SettingsModal 
          onClose={() => {
            setShowSettings(false);
            forceCheck();
          }}
          systemStatus={systemStatus}
          systemOutput={systemOutput}
+         onForceStart={launchAndConnect}
        />}
     </MainLayout>
   );

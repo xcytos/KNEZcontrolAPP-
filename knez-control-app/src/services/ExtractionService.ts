@@ -13,6 +13,51 @@ export interface ExtractionResult {
 }
 
 export class ExtractionService {
+  private proxyUrl(url: string): string {
+    const trimmed = url.trim();
+    if (!/^https?:\/\//i.test(trimmed)) return trimmed;
+    return `https://r.jina.ai/${trimmed}`;
+  }
+
+  private async fetchTextWithFallback(url: string, timeoutMs = 6500): Promise<{ text: string; finalUrl: string }> {
+    const attempt = async (u: string) => {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(u, { signal: controller.signal });
+        if (!response.ok) throw new Error(`Fetch failed: ${response.status}`);
+        return await response.text();
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    };
+
+    try {
+      return { text: await attempt(url), finalUrl: url };
+    } catch {
+      const proxied = this.proxyUrl(url);
+      return { text: await attempt(proxied), finalUrl: proxied };
+    }
+  }
+
+  async search(query: string, limit = 5): Promise<Array<{ title: string; url: string; snippet?: string }>> {
+    const q = query.trim();
+    if (!q) return [];
+    const searchUrl = `https://duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
+    const { text } = await this.fetchTextWithFallback(searchUrl, 6500);
+
+    const results: Array<{ title: string; url: string; snippet?: string }> = [];
+    const re = /result__a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) && results.length < limit) {
+      const url = m[1];
+      const rawTitle = m[2];
+      const title = rawTitle.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      if (!/^https?:\/\//i.test(url)) continue;
+      results.push({ title: title || url, url });
+    }
+    return results;
+  }
   
   async extract(url: string, mode: ExtractionMode): Promise<ExtractionResult> {
     try {
@@ -20,10 +65,7 @@ export class ExtractionService {
          await knezClient.addKnowledge({ title: "Extraction", content: url });
       }
 
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`Fetch failed: ${response.status}`);
-      
-      const text = await response.text();
+      const { text, finalUrl } = await this.fetchTextWithFallback(url, 6500);
       
       let summary = `Extracted ${text.length} chars.`;
       let keywords: string[] = [];
@@ -85,7 +127,7 @@ export class ExtractionService {
         source: url,
         mode,
         extracted_at: new Date().toISOString(),
-        summary,
+        summary: finalUrl !== url ? `${summary} (via proxy)` : summary,
         data: finalData
       };
 

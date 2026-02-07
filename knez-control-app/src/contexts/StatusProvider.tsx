@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useEffect, useRef, useState } from 'react';
 import { knezClient } from '../services/KnezClient';
 import { KnezHealthResponse, CognitiveState } from '../domain/DataContracts';
 
@@ -11,7 +11,7 @@ interface StatusContextValue {
   forceCheck: () => Promise<void>;
 }
 
-const StatusContext = createContext<StatusContextValue | null>(null);
+export const StatusContext = createContext<StatusContextValue | null>(null);
 
 export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [health, setHealth] = useState<KnezHealthResponse | null>(null);
@@ -93,10 +93,4 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       {children}
     </StatusContext.Provider>
   );
-};
-
-export const useStatus = () => {
-  const ctx = useContext(StatusContext);
-  if (!ctx) throw new Error("useStatus must be used within StatusProvider");
-  return ctx;
 };
