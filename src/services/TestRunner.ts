@@ -16,6 +16,8 @@ export class TestRunner {
     { id: '2', name: 'Web Search Extraction', status: 'pending', log: [] },
     { id: '3', name: 'Memory Persistence', status: 'pending', log: [] },
     { id: '4', name: 'UI Navigation Smoke', status: 'pending', log: [] },
+    { id: '5', name: 'Memory Gate Visibility', status: 'pending', log: [] },
+    { id: '6', name: 'Replay Timeline Playback', status: 'pending', log: [] },
   ];
 
   subscribe(cb: (results: TestResult[]) => void) {
@@ -118,6 +120,31 @@ export class TestRunner {
        
        this.logStep(id, "Clicking Web Search toggle...");
        await uiDriver.click('button:has-text("Web Search")');
+    }
+
+    if (id === '5') {
+       const { knezClient } = await import('./KnezClient');
+       this.logStep(id, "Triggering memory gate check...");
+       await knezClient.checkMemoryGate(testSessionId);
+       this.logStep(id, "Fetching events for gate evidence...");
+       const evs = await knezClient.listEvents(testSessionId, 200);
+       const found = evs.find((e: any) => e.event_name === "reflection_memory_rejected");
+       if (!found) throw new Error("No gate event found in /events");
+       const p = (found as any).payload || {};
+       if (!p.policy_name || !p.rule_name) throw new Error("Gate event missing policy_name/rule_name");
+    }
+
+    if (id === '6') {
+       const { knezClient } = await import('./KnezClient');
+       this.logStep(id, "Seeding events via TAQWIN adapter...");
+       await knezClient.emitTaqwinEvent(testSessionId, "taqwin_replay_seed", { ok: true });
+       this.logStep(id, "Fetching replay timeline...");
+       const replay = await knezClient.getReplayTimeline(testSessionId);
+       const phases = Array.isArray((replay as any).timeline) ? (replay as any).timeline : [];
+       if (phases.length === 0) throw new Error("Replay returned no phases");
+       const all = phases.flatMap((p: any) => p.events || []);
+       const found = all.find((e: any) => e.event_name === "taqwin_replay_seed");
+       if (!found) throw new Error("Replay missing seeded event");
     }
   }
 

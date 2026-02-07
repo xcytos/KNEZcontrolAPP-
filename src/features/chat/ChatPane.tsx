@@ -208,25 +208,21 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     <div className="flex flex-col h-full bg-zinc-950 relative">
       <div className="border-b border-zinc-800 bg-zinc-900/50 p-3 flex justify-between items-center backdrop-blur-sm sticky top-0 z-10">
          <div className="flex items-center gap-3">
-            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.4)]"></div>
             <div>
                <div 
-                 className="font-bold text-zinc-100 text-sm flex items-center gap-2 cursor-pointer hover:bg-zinc-800 px-2 py-0.5 rounded transition-colors"
-                 onClick={() => setRenameOpen(true)}
-                 title="Click to rename"
+                 className="font-bold text-zinc-100 text-sm"
                >
                  {sessionName || "Loading..."}
-                 <span className="text-zinc-600 text-[10px]">✎</span>
                </div>
                <div className="text-[10px] text-zinc-500 font-mono">ID: {sessionId?.substring(0,8)}...</div>
             </div>
          </div>
          <div className="flex items-center gap-2">
-            <button className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded transition-colors">
-               Analyze Session
-            </button>
-            <button className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded transition-colors">
-               Export
+            <button
+              onClick={() => setRenameOpen(true)}
+              className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-1.5 rounded transition-colors"
+            >
+              Rename
             </button>
          </div>
       </div>
@@ -251,7 +247,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
       </div>
 
       <div className="p-4 border-t border-zinc-800 bg-zinc-900/30">
-        {/* CP9-4: Tool Bar */}
         <div className="flex gap-2 mb-2 px-1">
            <button 
              onClick={() => setActiveTools(p => ({ ...p, search: !p.search }))}
@@ -262,18 +257,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
              }`}
            >
              <span>{activeTools.search ? 'Web Search: ON' : 'Web Search: OFF'}</span>
-           </button>
-           <button 
-             onClick={() => showToast("Memory attachment coming soon", "info")}
-             className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300 transition-all"
-           >
-             <span>Add Memory</span>
-           </button>
-           <button 
-             onClick={() => showToast("File attachment coming soon", "info")}
-             className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300 transition-all"
-           >
-             <span>Attach File</span>
            </button>
         </div>
 

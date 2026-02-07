@@ -8,7 +8,11 @@ export const GovernancePanel: React.FC = () => {
   const { showToast } = useToast();
   const [controls, setControls] = useState<any>(null);
   const [contracts, setContracts] = useState<InfluenceContract[]>([]);
-  const [activeTab, setActiveTab] = useState<'controls' | 'prompts' | 'tickets'>('controls');
+  const [activeTab, setActiveTab] = useState<'controls' | 'approvals' | 'prompts' | 'tickets'>('controls');
+  const [denials, setDenials] = useState<any[]>([]);
+  const [approvals, setApprovals] = useState<any[]>([]);
+  const [newApprovalKind, setNewApprovalKind] = useState("generic");
+  const [decisionReason, setDecisionReason] = useState("");
   
   // CP7-8 & CP7-9 Data
   const [promptsContent, setPromptsContent] = useState<string>("");
@@ -22,7 +26,19 @@ export const GovernancePanel: React.FC = () => {
     knezClient.getActiveContracts()
       .then(setContracts)
       .catch(() => {});
+
+    knezClient.listEvents("", 200)
+      .then((evs) => {
+        const filtered = (evs as any[]).filter((e: any) => e.event_name === "routing_influence_denied");
+        setDenials(filtered.slice(0, 20));
+      })
+      .catch(() => setDenials([]));
   }, []);
+
+  const refreshApprovals = async () => {
+    const pending = await knezClient.getPendingApprovals();
+    setApprovals(pending);
+  };
 
   const loadGovernanceFiles = async () => {
     try {
@@ -113,6 +129,12 @@ export const GovernancePanel: React.FC = () => {
             Controls
           </button>
           <button 
+            onClick={() => { setActiveTab('approvals'); refreshApprovals(); }}
+            className={`px-3 py-1 text-xs rounded transition-colors ${activeTab === 'approvals' ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+          >
+            Approvals
+          </button>
+          <button 
             onClick={() => setActiveTab('prompts')}
             className={`px-3 py-1 text-xs rounded transition-colors ${activeTab === 'prompts' ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
           >
@@ -191,6 +213,120 @@ export const GovernancePanel: React.FC = () => {
                        <div>Weight: <span className="text-white">{contract.max_weight.toFixed(1)}</span></div>
                        <div>Reversible: <span className={contract.reversible ? 'text-green-400' : 'text-red-400'}>{contract.reversible ? 'Yes' : 'No'}</span></div>
                        <div>Override: <span className={contract.no_override ? 'text-red-400' : 'text-green-400'}>{contract.no_override ? 'Blocked' : 'Allowed'}</span></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
+            <div className="px-6 py-4 border-b border-zinc-800 bg-zinc-950/30">
+              <h3 className="text-lg font-medium text-white">Influence Denials</h3>
+              <div className="text-xs text-zinc-500 mt-1">Shows recent routing influence denials (observable events).</div>
+            </div>
+            <div className="divide-y divide-zinc-800">
+              {denials.length === 0 ? (
+                <div className="p-6 text-center text-zinc-500 italic">No denials recorded.</div>
+              ) : (
+                denials.map((e: any, idx: number) => (
+                  <div key={idx} className="p-4">
+                    <div className="flex justify-between items-center">
+                      <div className="text-sm text-zinc-200 font-mono">{e.payload?.influence_id || "unknown"}</div>
+                      <div className="text-[10px] text-zinc-500 font-mono">{e.timestamp}</div>
+                    </div>
+                    <div className="mt-1 text-xs text-zinc-400">
+                      domain: <span className="text-zinc-200">{e.payload?.domain}</span> • reason: <span className="text-zinc-200">{e.payload?.reason}</span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'approvals' && (
+        <div className="space-y-4 overflow-y-auto">
+          <div className="bg-zinc-900 border border-zinc-800 rounded p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-bold text-zinc-100">Pending Approvals</div>
+                <div className="text-xs text-zinc-500">Create, approve, or deny actions. All actions are audited via events.</div>
+              </div>
+              <button
+                onClick={refreshApprovals}
+                className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-1 rounded"
+              >
+                Refresh
+              </button>
+            </div>
+            <div className="mt-4 flex gap-2">
+              <input
+                className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-200"
+                value={newApprovalKind}
+                onChange={(e) => setNewApprovalKind(e.target.value)}
+                placeholder="kind (e.g. influence_contract)"
+              />
+              <button
+                onClick={async () => {
+                  try {
+                    await knezClient.requestApproval(newApprovalKind, { note: "requested from control app" });
+                    await refreshApprovals();
+                    showToast("Approval requested", "success");
+                  } catch {
+                    showToast("Approval request failed", "error");
+                  }
+                }}
+                className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded"
+              >
+                Request Approval
+              </button>
+            </div>
+            <div className="mt-3">
+              <input
+                className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-200"
+                value={decisionReason}
+                onChange={(e) => setDecisionReason(e.target.value)}
+                placeholder="decision reason (optional)"
+              />
+            </div>
+          </div>
+
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
+            <div className="px-4 py-3 border-b border-zinc-800 bg-zinc-950/30 text-sm text-zinc-200">
+              Queue
+            </div>
+            {approvals.length === 0 ? (
+              <div className="p-6 text-center text-zinc-500 italic">No pending approvals.</div>
+            ) : (
+              <div className="divide-y divide-zinc-800">
+                {approvals.map((a: any) => (
+                  <div key={a.approval_id} className="p-4">
+                    <div className="flex justify-between items-center">
+                      <div className="text-sm text-zinc-200 font-mono">{a.approval_id}</div>
+                      <div className="text-[10px] text-zinc-500 font-mono">{a.requested_at}</div>
+                    </div>
+                    <div className="text-xs text-zinc-400 mt-1">kind: <span className="text-zinc-200">{a.kind}</span></div>
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        onClick={async () => {
+                          await knezClient.submitApprovalDecision(a.approval_id, "approve", "operator", decisionReason);
+                          await refreshApprovals();
+                        }}
+                        className="text-xs bg-green-600/20 border border-green-900/50 text-green-200 px-3 py-1 rounded hover:border-green-600"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        onClick={async () => {
+                          await knezClient.submitApprovalDecision(a.approval_id, "deny", "operator", decisionReason);
+                          await refreshApprovals();
+                        }}
+                        className="text-xs bg-red-600/10 border border-red-900/50 text-red-200 px-3 py-1 rounded hover:border-red-600"
+                      >
+                        Deny
+                      </button>
                     </div>
                   </div>
                 ))}

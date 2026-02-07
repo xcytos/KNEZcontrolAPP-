@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { ApprovalRequest } from "../../domain/DataContracts";
 import { knezClient } from "../../services/KnezClient";
 
 export const ApprovalPanel: React.FC = () => {
-  const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
+  const [approvals, setApprovals] = useState<any[]>([]);
 
   useEffect(() => {
     fetchApprovals();
@@ -20,15 +19,15 @@ export const ApprovalPanel: React.FC = () => {
     }
   };
 
-  const handleDecision = async (id: string, decision: "approved" | "rejected") => {
+  const handleDecision = async (approvalId: string, decision: "approve" | "deny") => {
     // Optimistic update
     setApprovals((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, status: decision } : a))
+      prev.map((a) => (a.approval_id === approvalId ? { ...a, status: decision === "approve" ? "approved" : "denied" } : a))
     );
     
     try {
-      await knezClient.submitApprovalDecision(id, decision);
-      console.log(`[Approval] ${decision} request ${id}`);
+      await knezClient.submitApprovalDecision(approvalId, decision, "operator");
+      console.log(`[Approval] ${decision} request ${approvalId}`);
     } catch (err) {
       console.error("Failed to submit decision:", err);
       // Revert on failure (could improve this with robust state management)
@@ -53,14 +52,14 @@ export const ApprovalPanel: React.FC = () => {
         ) : (
           approvals.map((req) => (
             <div
-              key={req.id}
+              key={req.approval_id}
               className="bg-zinc-800 border border-zinc-700 rounded-lg p-4 space-y-3"
             >
               <div className="flex items-start justify-between">
                 <div>
-                  <h3 className="font-semibold text-zinc-200">{req.summary}</h3>
+                  <h3 className="font-semibold text-zinc-200">{req.kind}</h3>
                   <p className="text-xs text-zinc-500 font-mono mt-1">
-                    ID: {req.id} • {new Date(req.createdAt).toLocaleString()}
+                    ID: {req.approval_id} • {new Date(req.requested_at).toLocaleString()}
                   </p>
                 </div>
                 <div className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider border ${
@@ -81,13 +80,13 @@ export const ApprovalPanel: React.FC = () => {
               {req.status === "pending" && (
                 <div className="flex items-center gap-3 pt-2">
                   <button
-                    onClick={() => handleDecision(req.id, "approved")}
+                    onClick={() => handleDecision(req.approval_id, "approve")}
                     className="flex-1 bg-green-900/30 hover:bg-green-800/50 text-green-300 border border-green-800 rounded px-4 py-2 text-sm font-medium transition-colors"
                   >
                     Approve
                   </button>
                   <button
-                    onClick={() => handleDecision(req.id, "rejected")}
+                    onClick={() => handleDecision(req.approval_id, "deny")}
                     className="flex-1 bg-red-900/30 hover:bg-red-800/50 text-red-300 border border-red-800 rounded px-4 py-2 text-sm font-medium transition-colors"
                   >
                     Reject

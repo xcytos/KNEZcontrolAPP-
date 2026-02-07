@@ -77,7 +77,9 @@ function AppContent() {
   useEffect(() => {
     if (health) {
       setReadOnly(false);
-      knezClient.ensureSession().then(setSessionId);
+      if (!sessionId) {
+        knezClient.ensureSession().then(setSessionId);
+      }
       knezClient.tryGetMcpRegistry(); // Background fetch
     } else {
       setReadOnly(true);
@@ -88,6 +90,23 @@ function AppContent() {
   const { status: systemStatus, output: systemOutput, launchAndConnect, stopKnez } = useSystemOrchestrator(() => {
     forceCheck();
   });
+
+  const autoConnectRef = useRef(0);
+  useEffect(() => {
+    const endpoint = knezClient.getProfile().endpoint;
+    const isLocal =
+      endpoint.includes("localhost:8000") ||
+      endpoint.includes("127.0.0.1:8000");
+    const isTauri = !!(window as any).__TAURI__ || !!(window as any).__TAURI_IPC__;
+    if (health) return;
+    if (!isLocal) return;
+    if (!isTauri) return;
+    if (systemStatus === "starting" || systemStatus === "running") return;
+    const now = Date.now();
+    if (now - autoConnectRef.current < 15000) return;
+    autoConnectRef.current = now;
+    launchAndConnect();
+  }, [health, systemStatus, launchAndConnect]);
 
   useEffect(() => {
     setObserverState({
@@ -201,6 +220,30 @@ function AppContent() {
         endpoint: knezClient.getProfile().endpoint,
         lastCheck: lastCheck
       }}
+      headerSubtitle={
+        sessionId ? (
+          <div className="text-xs text-zinc-500 font-mono">
+            session {sessionId.slice(0, 8)}
+          </div>
+        ) : null
+      }
+      headerActions={
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => launchAndConnect()}
+            disabled={systemStatus === "starting" || systemStatus === "running"}
+            className="text-xs bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 px-3 py-1 rounded"
+          >
+            {systemStatus === "starting" ? "Starting" : (isConnected || isDegraded) ? "Reconnect" : "Start"}
+          </button>
+          <button
+            onClick={() => setShowSettings(true)}
+            className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-1 rounded"
+          >
+            Settings
+          </button>
+        </div>
+      }
     >
       <CommandPalette 
         isOpen={commandPaletteOpen} 
@@ -208,43 +251,7 @@ function AppContent() {
         onNavigate={(view) => { setActiveView(view); setCommandPaletteOpen(false); }}
       />
       
-      {readOnly && (
-        <div className="px-4 py-2 border-b border-zinc-800 bg-zinc-950 text-xs text-zinc-400 flex items-center justify-between">
-          <span>
-            {isConnected
-              ? 'KNEZ connected.'
-              : 'KNEZ unreachable — read-only mode.'}
-            {sessionId ? ` Session: ${sessionId}` : ''}
-          </span>
-          {!isConnected && (
-            <button 
-              onClick={() => launchAndConnect()}
-              disabled={systemStatus === "starting" || systemStatus === "running"}
-              className="text-blue-400 hover:text-blue-300 underline ml-4 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {systemStatus === "starting" ? "Starting..." : "Launch & Connect"}
-            </button>
-          )}
-          {isConnected && systemStatus === "running" && (
-             <button
-               onClick={() => stopKnez && stopKnez()}
-               className="text-red-400 hover:text-red-300 underline ml-4 text-[10px]"
-             >
-               STOP KNEZ
-             </button>
-          )}
-        </div>
-      )}
       {renderContent()}
-      
-      <div className="fixed bottom-4 right-4 opacity-50 hover:opacity-100">
-         <button 
-           onClick={() => setShowSettings(true)}
-           className="text-xs text-zinc-600 hover:text-zinc-400"
-         >
-           ⚙
-         </button>
-      </div>
       
        {showSettings && <ConnectionSettings 
          onClose={() => {

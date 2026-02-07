@@ -67,7 +67,7 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const scheduleNext = async () => {
       await performCheck();
       const current = healthRef.current;
-      const delay = current && current.status === "ok" ? 3000 : 250;
+      const delay = current && current.status === "ok" ? 3000 : 1500;
       timeoutRef.current = window.setTimeout(scheduleNext, delay);
     };
 

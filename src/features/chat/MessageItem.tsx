@@ -91,7 +91,7 @@ export const MessageItem: React.FC<{
       {/* Avatar for Assistant */}
       {msg.from !== "user" && (
          <div className="w-8 h-8 rounded-full bg-indigo-900/50 flex items-center justify-center border border-indigo-700/50 mr-3 mt-1 shrink-0 text-xs font-bold text-indigo-200">
-            KNEZ
+            K
          </div>
       )}
 
@@ -120,7 +120,7 @@ export const MessageItem: React.FC<{
                    onClick={() => setThoughtsOpen(!thoughtsOpen)}
                    className="text-xs font-medium text-indigo-400/70 hover:text-indigo-300 flex items-center gap-2 mb-1 transition-colors"
                  >
-                   {thoughtsOpen ? '▼' : '▶'} Thought Process
+                   {thoughtsOpen ? 'Hide' : 'Show'} Thought Process
                  </button>
                  {thoughtsOpen && (
                    <div className="text-zinc-500 text-sm italic whitespace-pre-wrap bg-zinc-900/50 p-3 rounded-lg border border-zinc-800/50">
@@ -137,11 +137,16 @@ export const MessageItem: React.FC<{
 
         {/* Metadata Footer */}
         <div className={`flex items-center gap-3 mt-2 ${msg.from === "user" ? "justify-end opacity-50 text-zinc-400" : "justify-start text-zinc-500"}`}>
-           {msg.metrics?.totalTokens !== undefined && (
-              <span className="text-[10px] font-mono bg-zinc-900/50 px-1.5 py-0.5 rounded border border-zinc-800">
-                {msg.metrics.totalTokens} tokens
-                {msg.metrics.timeToFirstTokenMs && ` · ${(msg.metrics.timeToFirstTokenMs/1000).toFixed(1)}s latency`}
-              </span>
+           {msg.isPartial && msg.from !== "user" && (msg.metrics?.totalTokens ?? 0) === 0 && (
+             <span className="text-[10px] font-mono bg-zinc-900/50 px-1.5 py-0.5 rounded border border-zinc-800">
+               waiting for response
+             </span>
+           )}
+           {msg.metrics?.totalTokens !== undefined && (!msg.isPartial || (msg.metrics.totalTokens ?? 0) > 0) && (
+             <span className="text-[10px] font-mono bg-zinc-900/50 px-1.5 py-0.5 rounded border border-zinc-800">
+               {msg.metrics.totalTokens} tokens
+               {msg.metrics.timeToFirstTokenMs && ` · ${(msg.metrics.timeToFirstTokenMs/1000).toFixed(1)}s latency`}
+             </span>
            )}
            
            {(isHovered || copied) && (

@@ -60,12 +60,13 @@ import { persistenceService } from '../../services/PersistenceService'
 export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: boolean }> = ({ sessionId }) => {
   const [memories, setMemories] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"memories" | "knowledge" | "graph">("memories");
+  const [activeTab, setActiveTab] = useState<"memories" | "knowledge" | "graph" | "gate">("memories");
   const [lastCount, setLastCount] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
   const [sessions, setSessions] = useState<string[]>([])
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [gateEvents, setGateEvents] = useState<any[]>([]);
 
   useEffect(() => {
     let interval: any;
@@ -91,6 +92,29 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
   useEffect(() => {
     persistenceService.listSessions().then(setSessions)
   }, [])
+
+  const loadGate = async () => {
+    try {
+      const evs = await knezClient.listEvents(sessionId || "", 200);
+      const gate = evs.filter((e: any) => {
+        const name = String(e?.event_name || e?.eventName || "");
+        return (
+          name === "reflection_memory_rejected" ||
+          name === "reflection_memory_promoted" ||
+          name === "reflection_memory_insight_rejected" ||
+          name === "reflection_memory_insight_needs_review" ||
+          name === "reflection_memory_insight_promotable"
+        );
+      });
+      setGateEvents(gate);
+    } catch {
+      setGateEvents([]);
+    }
+  };
+
+  useEffect(() => {
+    loadGate();
+  }, [sessionId]);
   useEffect(() => {
      if (searchQuery.length > 2) {
         // CP8-9: Client-side search for now (Simulated Cross-Session if we had all memories)
@@ -156,6 +180,12 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
              >
                Nav Graph
              </button>
+            <button 
+              onClick={() => setActiveTab("gate")}
+              className={`text-xs px-2 py-1 rounded ${activeTab === 'gate' ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+            >
+              Gate
+            </button>
             </div>
         </div>
       </div>
@@ -187,7 +217,7 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
                 <div className="flex items-center gap-2">
                   {/* CP7-12: Show evidence hint if present */}
                   {m.evidence_event_ids && m.evidence_event_ids.length > 0 && (
-                     <span className="text-[10px] text-blue-500" title="Has Provenance">🔗</span>
+                     <span className="text-[10px] text-blue-500" title="Has Provenance">EVID</span>
                   )}
                   <span className="text-[10px] text-zinc-600 font-mono">{(m.importance * 100).toFixed(0)}% Conf</span>
                 </div>
@@ -202,6 +232,44 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
         </div>
       ) : activeTab === 'knowledge' ? (
         <KnowledgeBaseView />
+      ) : activeTab === 'gate' ? (
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          <div className="flex justify-end">
+            <button
+              disabled={!sessionId}
+              onClick={async () => {
+                if (!sessionId) return;
+                await knezClient.checkMemoryGate(sessionId);
+                await loadGate();
+              }}
+              className="text-xs bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 px-3 py-1 rounded"
+            >
+              Run Gate Check
+            </button>
+          </div>
+          {gateEvents.length === 0 && (
+            <div className="text-zinc-500 text-xs">No memory gate events found.</div>
+          )}
+          {gateEvents.map((e: any, idx: number) => {
+            const ts = e.timestamp || e.created_at || e.createdAt;
+            const name = e.event_name || e.eventName;
+            const payload = e.payload || {};
+            return (
+              <div key={idx} className="bg-zinc-900 border border-zinc-800 rounded p-3">
+                <div className="flex justify-between items-center">
+                  <div className="text-sm text-zinc-200">{name}</div>
+                  <div className="text-[10px] text-zinc-500 font-mono">{ts ? new Date(ts).toLocaleString() : ""}</div>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-zinc-400">
+                  <div>policy: {payload.policy_name || "-"}</div>
+                  <div>rule: {payload.rule_name || payload.reason || "-"}</div>
+                  <div>memory_type: {payload.memory_type || "-"}</div>
+                  <div>evidence: {(payload.evidence_event_ids || []).join(", ") || "-"}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       ) : (
         <div className="flex-1 p-4 flex flex-col items-center justify-center bg-zinc-950 text-zinc-600">
            {/* CP8-8: Simple Node Graph Visualization */}
