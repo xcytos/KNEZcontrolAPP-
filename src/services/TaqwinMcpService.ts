@@ -14,6 +14,9 @@ class TaqwinMcpService {
   private toolsCacheTtlMs = 30000;
   private initPromise: Promise<import("./McpStdioClient").McpStdioClient> | null = null;
   private consecutiveFailures = 0;
+  private lastRawError: string | null = null;
+  private lastNormalizedError: string | null = null;
+  private lastDebugState: any | null = null;
 
   private async backoffDelay(): Promise<void> {
     const n = Math.min(6, this.consecutiveFailures);
@@ -41,8 +44,15 @@ class TaqwinMcpService {
           this.initialized = true;
         }
         this.consecutiveFailures = 0;
+        this.lastRawError = null;
+        this.lastNormalizedError = null;
+        this.lastDebugState = this.client.getDebugState?.() ?? null;
         return this.client;
       } catch (err) {
+        const raw = String((err as any)?.message ?? err);
+        this.lastRawError = raw;
+        this.lastDebugState = this.client?.getDebugState?.() ?? null;
+        this.lastNormalizedError = this.normalizeError(err).message;
         this.client = null;
         this.initialized = false;
         this.toolsCache = null;
@@ -91,6 +101,36 @@ class TaqwinMcpService {
     return err instanceof Error ? err : new Error(raw);
   }
 
+  getStatus() {
+    return {
+      running: !!this.client && this.initialized,
+      initialized: this.initialized,
+      consecutiveFailures: this.consecutiveFailures,
+      lastRawError: this.lastRawError,
+      lastNormalizedError: this.lastNormalizedError,
+      debug: this.lastDebugState ?? this.client?.getDebugState?.() ?? null,
+    };
+  }
+
+  async start(restart = false) {
+    if (!isTauriRuntime()) throw new Error("mcp_unavailable_non_tauri");
+    if (restart) {
+      await this.stop();
+    }
+    await this.getClient();
+    return this.getStatus();
+  }
+
+  async stop() {
+    try {
+      await this.client?.stop();
+    } catch {}
+    this.client = null;
+    this.initialized = false;
+    this.toolsCache = null;
+    this.toolsCacheAt = null;
+  }
+
   async listTools(forceRefresh = false): Promise<McpToolDefinition[]> {
     if (!isTauriRuntime()) throw new Error("mcp_unavailable_non_tauri");
     if (this.toolsCache && !forceRefresh && this.toolsCacheAt && Date.now() - this.toolsCacheAt < this.toolsCacheTtlMs) {
@@ -125,7 +165,11 @@ class TaqwinMcpService {
         const durationMs = Math.round(performance.now() - startedAt);
         logger.error("mcp", "TAQWIN MCP listTools failed after retry", { error: String((err2 as any)?.message ?? err2) });
         logger.error("mcp", "TAQWIN MCP tools/list audit", { durationMs, ok: false });
-        throw this.normalizeError(err2);
+        const normalized = this.normalizeError(err2);
+        this.lastRawError = String((err2 as any)?.message ?? err2);
+        this.lastNormalizedError = normalized.message;
+        this.lastDebugState = (this.client as any)?.getDebugState?.() ?? this.lastDebugState;
+        throw normalized;
       }
     }
   }
@@ -169,7 +213,11 @@ class TaqwinMcpService {
           error: String((err2 as any)?.message ?? err2)
         });
         logger.error("mcp", "TAQWIN MCP tools/call audit", { tool: name, durationMs, ok: false });
-        throw this.normalizeError(err2);
+        const normalized = this.normalizeError(err2);
+        this.lastRawError = String((err2 as any)?.message ?? err2);
+        this.lastNormalizedError = normalized.message;
+        this.lastDebugState = (this.client as any)?.getDebugState?.() ?? this.lastDebugState;
+        throw normalized;
       }
     }
   }

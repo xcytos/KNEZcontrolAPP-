@@ -42,6 +42,46 @@ fn set_ui_preferences(app: tauri::AppHandle, prefs: UiPreferences) -> Result<(),
     fs::write(path, content).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn open_test_window(app: tauri::AppHandle) -> Result<String, String> {
+    let label = format!("e2e-{}", uuid::Uuid::new_v4());
+    let url = format!("index.html?e2e=1&label={}", label);
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        label.clone(),
+        tauri::WebviewUrl::App(url.into()),
+    )
+    .title("knez-control-app (E2E)")
+    .inner_size(1280.0, 800.0)
+    .min_inner_size(1024.0, 640.0)
+    .resizable(true)
+    .visible(true)
+    .build()
+    .map_err(|e| e.to_string())?;
+    Ok(label)
+}
+
+#[tauri::command]
+fn close_window(app: tauri::AppHandle, label: String) -> Result<bool, String> {
+    if let Some(w) = app.get_webview_window(&label) {
+        w.close().map_err(|e| e.to_string())?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+#[tauri::command]
+fn close_all_test_windows(app: tauri::AppHandle) -> Result<u32, String> {
+    let mut closed = 0u32;
+    for (label, w) in app.webview_windows() {
+        if label.starts_with("e2e-") {
+            let _ = w.close();
+            closed += 1;
+        }
+    }
+    Ok(closed)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -54,29 +94,22 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 use tauri::Manager;
-                let automation_for_cb = automation;
-                app.handle().plugin(tauri_plugin_single_instance::init(
-                    move |app, _args, _cwd| {
-                        if !automation_for_cb {
-                            let _ = app
-                                .get_webview_window("main")
-                                .expect("no main window")
-                                .set_focus();
-                        }
-                    },
-                ))?;
+                if !automation {
+                    app.handle().plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+                        let _ = app
+                            .get_webview_window("main")
+                            .expect("no main window")
+                            .set_focus();
+                    }))?;
+                }
             }
 
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_fullscreen(false);
                 let _ = window.unmaximize();
                 let _ = window.center();
-                if automation {
-                    let _ = window.set_skip_taskbar(true);
-                    let _ = window.show();
-                } else {
-                    let _ = window.show();
-                }
+                let _ = window.set_skip_taskbar(false);
+                let _ = window.show();
             }
 
             app.handle().plugin(tauri_plugin_shell::init())?;
@@ -86,7 +119,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_ui_preferences,
-            set_ui_preferences
+            set_ui_preferences,
+            open_test_window,
+            close_window,
+            close_all_test_windows
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -48,9 +48,9 @@ export const FloatingConsole: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    setLogs(logger.getLogs().slice(0, 200));
+    setLogs(logger.getLogs().slice(0, 500));
     const unsub = logger.subscribe((entry) => {
-      setLogs((prev) => [entry, ...prev].slice(0, 200));
+      setLogs((prev) => [entry, ...prev].slice(0, 500));
       if (entry.level === "ERROR" && (!open || tab !== "logs")) {
         setBadges((prev) => ({ ...prev, logs: prev.logs + 1 }));
       }
