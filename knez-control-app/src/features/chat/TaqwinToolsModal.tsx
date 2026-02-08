@@ -41,6 +41,8 @@ export const TaqwinToolsModal: React.FC<{
   const [argsText, setArgsText] = useState<string>("{}");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>("");
+  const [errorRaw, setErrorRaw] = useState<string>("");
+  const [mcpStatus, setMcpStatus] = useState(() => taqwinMcpService.getStatus());
   const [permissions, setPermissions] = useState<Record<string, boolean>>(() => getTaqwinToolPermissions());
   const [query, setQuery] = useState<string>("");
   const [favorites, setFavorites] = useState<Set<string>>(() => {
@@ -123,6 +125,7 @@ export const TaqwinToolsModal: React.FC<{
     let cancelled = false;
     const load = async (force = false) => {
       try {
+        setMcpStatus(taqwinMcpService.getStatus());
         const list = await taqwinMcpService.listTools(force);
         if (!cancelled) {
           setTools(list);
@@ -137,11 +140,13 @@ export const TaqwinToolsModal: React.FC<{
           const raw = String(e?.message ?? e);
           logger.error("mcp", "Failed to load TAQWIN tools", { error: raw });
           setError(formatMcpUiError(raw));
+          setErrorRaw(raw);
+          setMcpStatus(taqwinMcpService.getStatus());
         }
       }
     };
     void load(true);
-    const t = window.setInterval(() => void load(true), 5000);
+    const t = window.setInterval(() => void load(false), 20000);
     return () => {
       cancelled = true;
       clearInterval(t);
@@ -166,6 +171,7 @@ export const TaqwinToolsModal: React.FC<{
 
   const runTool = async () => {
     setError("");
+    setErrorRaw("");
     const sessionId = sessionController.getSessionId();
     const tool = selectedTool;
     if (!tool) {
@@ -221,12 +227,15 @@ export const TaqwinToolsModal: React.FC<{
       const raw = String(e?.message ?? e);
       logger.error("mcp", "TAQWIN tool call failed", { tool, error: raw });
       markRecent(tool);
+      setError(formatMcpUiError(raw));
+      setErrorRaw(raw);
       await sessionDatabase.updateMessage(messageId, {
         toolCall: { ...toolCall, status: "failed", error: formatMcpUiError(raw), finishedAt }
       });
       await chatService.load(sessionId);
     } finally {
       setBusy(false);
+      setMcpStatus(taqwinMcpService.getStatus());
     }
   };
 
@@ -236,7 +245,55 @@ export const TaqwinToolsModal: React.FC<{
         <div className="p-6 pb-4 flex-none border-b border-zinc-800/50">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-light text-zinc-200">TAQWIN Tools</h2>
-            <button onClick={onClose} className="text-xs text-zinc-400 hover:text-white">Close</button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
+                }}
+                className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+              >
+                Open MCP Logs
+              </button>
+              <button
+                onClick={() => {
+                  void (async () => {
+                    setError("");
+                    setErrorRaw("");
+                    try {
+                      const status = await taqwinMcpService.start(true);
+                      setMcpStatus(status);
+                      const list = await taqwinMcpService.listTools(true);
+                      setTools(list);
+                      setSelectedTool((prev) => {
+                        const next = prev && list.some((t) => t.name === prev) ? prev : (list[0]?.name ?? "");
+                        if (next && next !== prev) setArgsText(JSON.stringify(defaultArgsForTool(next), null, 2));
+                        return next;
+                      });
+                    } catch (e: any) {
+                      const raw = String(e?.message ?? e);
+                      setError(formatMcpUiError(raw));
+                      setErrorRaw(raw);
+                      setMcpStatus(taqwinMcpService.getStatus());
+                      window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
+                    }
+                  })();
+                }}
+                className="text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+              >
+                {mcpStatus.running ? "Restart TAQWIN MCP" : "Start TAQWIN MCP"}
+              </button>
+              <button onClick={onClose} className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors">
+                Close
+              </button>
+            </div>
+          </div>
+          <div className="mt-2 text-[10px] text-zinc-500 font-mono flex items-center justify-between gap-3">
+            <div>
+              mcp={mcpStatus.running ? "running" : "down"} failures={mcpStatus.consecutiveFailures}
+            </div>
+            {mcpStatus.lastRawError && (
+              <div className="truncate text-red-300 max-w-[520px]">{mcpStatus.lastRawError}</div>
+            )}
           </div>
         </div>
         <div className="p-6 overflow-y-auto flex-1 grid grid-cols-3 gap-4">
@@ -334,6 +391,11 @@ export const TaqwinToolsModal: React.FC<{
                 />
               </div>
               {error && <div className="mt-3 text-xs text-red-300">{error}</div>}
+              {errorRaw && (
+                <div className="mt-2 border border-zinc-800 bg-zinc-950/40 rounded p-3 text-[10px] font-mono text-zinc-300 whitespace-pre-wrap break-words">
+                  {errorRaw}
+                </div>
+              )}
             </div>
           </div>
         </div>
