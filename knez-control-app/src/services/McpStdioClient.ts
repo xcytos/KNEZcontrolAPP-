@@ -17,14 +17,21 @@ export class McpStdioClient {
   private buffer = "";
   private nextId = 1;
   private pending = new Map<string, { resolve: (v: any) => void; reject: (e: any) => void }>();
+  private stderrLines: string[] = [];
 
   async start(programName: string): Promise<void> {
     if (this.child) return;
+    this.buffer = "";
+    this.stderrLines = [];
+    this.nextId = 1;
     const cmd = Command.create(programName);
     cmd.stdout.on("data", (chunk) => this.onStdout(String(chunk)));
     cmd.stderr.on("data", (chunk) => this.onStderr(String(chunk)));
     cmd.on("close", (evt) => {
-      const err = new Error(`mcp_process_closed_${evt.code ?? "null"}`);
+      const stderrTail = this.stderrLines.slice(-12).join("");
+      const err = new Error(
+        `mcp_process_closed_${evt.code ?? "null"}${stderrTail ? `: ${stderrTail.trim()}` : ""}`
+      );
       for (const p of this.pending.values()) p.reject(err);
       this.pending.clear();
       this.child = null;
@@ -33,6 +40,7 @@ export class McpStdioClient {
       const e = this.asMcpError(err);
       for (const p of this.pending.values()) p.reject(e);
       this.pending.clear();
+      this.child = null;
     });
     try {
       this.child = await cmd.spawn();
@@ -74,7 +82,10 @@ export class McpStdioClient {
     }
   }
 
-  private onStderr(_chunk: string) {}
+  private onStderr(chunk: string) {
+    this.stderrLines.push(chunk);
+    if (this.stderrLines.length > 200) this.stderrLines.splice(0, this.stderrLines.length - 200);
+  }
 
   private onMessage(msg: McpResponse) {
     const slot = this.pending.get(msg.id);
@@ -95,15 +106,24 @@ export class McpStdioClient {
     return new Error(msg);
   }
 
-  private async request<T = any>(method: string, params?: any): Promise<T> {
+  private async request<T = any>(method: string, params?: any, timeoutMs = 30000): Promise<T> {
     if (!this.child) throw new Error("mcp_not_started");
     const id = String(this.nextId++);
     const req: McpRequest = { jsonrpc: "2.0", id, method, params };
     const body = JSON.stringify(req);
     const header = `Content-Length: ${new TextEncoder().encode(body).length}\r\n\r\n`;
     const payload = header + body;
+    let timeoutId: number | undefined;
     const p = new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
+      timeoutId = window.setTimeout(() => {
+        if (!this.pending.has(id)) return;
+        this.pending.delete(id);
+        this.stop().catch(() => {});
+        reject(new Error("mcp_request_timeout"));
+      }, Math.max(1, timeoutMs));
+    }).finally(() => {
+      if (typeof timeoutId === "number") clearTimeout(timeoutId);
     });
     try {
       await this.child.write(payload);
@@ -118,15 +138,15 @@ export class McpStdioClient {
   }
 
   async initialize(): Promise<any> {
-    return await this.request("initialize", {});
+    return await this.request("initialize", {}, 15000);
   }
 
   async listTools(): Promise<McpToolDefinition[]> {
-    const res = await this.request<{ tools?: McpToolDefinition[] }>("tools/list", {});
+    const res = await this.request<{ tools?: McpToolDefinition[] }>("tools/list", {}, 20000);
     return Array.isArray(res?.tools) ? res.tools : [];
   }
 
   async callTool(name: string, args: any): Promise<any> {
-    return await this.request("tools/call", { name, arguments: args ?? {} });
+    return await this.request("tools/call", { name, arguments: args ?? {} }, 120000);
   }
 }

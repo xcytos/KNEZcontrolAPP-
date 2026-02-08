@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Command, Child } from "@tauri-apps/plugin-shell";
 import { TerminalSquare } from "lucide-react";
 import { logger, LogEntry } from "../../services/LogService";
+import { exportDiagnosticsBundle } from "../../services/DiagnosticsService";
 
-type Tab = "logs" | "terminal";
+type Tab = "logs" | "mcp" | "terminal";
 
 type TerminalCommandId =
   | "start-local-stack"
@@ -30,11 +32,20 @@ export const FloatingConsole: React.FC = () => {
   const [cmdOutput, setCmdOutput] = useState<string>("");
   const [running, setRunning] = useState(false);
   const [psCommand, setPsCommand] = useState<string>("Get-Date");
-  const [badges, setBadges] = useState<{ logs: number; terminal: number }>({ logs: 0, terminal: 0 });
+  const [badges, setBadges] = useState<{ logs: number; mcp: number; terminal: number }>({ logs: 0, mcp: 0, terminal: 0 });
 
   const childRef = useRef<Child | null>(null);
   const w = window as any;
   const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
+
+  useEffect(() => {
+    const onOpen = (e: CustomEvent) => {
+      setOpen(true);
+      if (e.detail?.tab) setTab(e.detail.tab);
+    };
+    window.addEventListener("knez-open-console", onOpen as any);
+    return () => window.removeEventListener("knez-open-console", onOpen as any);
+  }, []);
 
   useEffect(() => {
     setLogs(logger.getLogs().slice(0, 200));
@@ -43,6 +54,9 @@ export const FloatingConsole: React.FC = () => {
       if (entry.level === "ERROR" && (!open || tab !== "logs")) {
         setBadges((prev) => ({ ...prev, logs: prev.logs + 1 }));
       }
+      if (entry.category === "mcp" && (!open || tab !== "mcp")) {
+        setBadges((prev) => ({ ...prev, mcp: prev.mcp + 1 }));
+      }
     });
     return unsub;
   }, [open, tab]);
@@ -50,6 +64,7 @@ export const FloatingConsole: React.FC = () => {
   useEffect(() => {
     if (!open) return;
     if (tab === "logs") setBadges((prev) => ({ ...prev, logs: 0 }));
+    if (tab === "mcp") setBadges((prev) => ({ ...prev, mcp: 0 }));
     if (tab === "terminal") setBadges((prev) => ({ ...prev, terminal: 0 }));
   }, [open, tab]);
 
@@ -145,21 +160,25 @@ export const FloatingConsole: React.FC = () => {
     }
   };
 
-  return (
+  if (typeof document === "undefined") return null;
+
+  const filteredLogs = tab === "mcp" ? logs.filter((l) => l.category === "mcp") : logs;
+
+  return createPortal(
     <>
       <button
         onClick={() => setOpen(true)}
-        className="fixed bottom-5 right-5 w-12 h-12 rounded-full bg-zinc-900 border border-zinc-700 shadow-lg flex items-center justify-center text-zinc-200 hover:bg-zinc-800 transition-colors z-50 relative"
+        className="fixed bottom-5 right-5 w-12 h-12 rounded-full bg-zinc-900 border border-zinc-700 shadow-lg flex items-center justify-center text-zinc-200 hover:bg-zinc-800 transition-colors z-[9999] relative"
         title="System Console"
       >
         <TerminalSquare size={20} />
-        {(badges.logs + badges.terminal) > 0 && (
+        {(badges.logs + badges.mcp + badges.terminal) > 0 && (
           <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-red-500 border border-zinc-950" />
         )}
       </button>
 
       {open && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end justify-end p-5">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-end justify-end p-5">
           <div className="w-[520px] h-[420px] bg-zinc-950 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden flex flex-col">
             <div className="px-3 py-2 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/40">
               <div className="flex items-center gap-2">
@@ -173,6 +192,19 @@ export const FloatingConsole: React.FC = () => {
                   {badges.logs > 0 && (
                     <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-red-600 text-white text-[10px] flex items-center justify-center">
                       {Math.min(99, badges.logs)}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setTab("mcp")}
+                  className={`text-xs px-2 py-1 rounded relative ${
+                    tab === "mcp" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  MCP
+                  {badges.mcp > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-red-600 text-white text-[10px] flex items-center justify-center">
+                      {Math.min(99, badges.mcp)}
                     </span>
                   )}
                 </button>
@@ -191,6 +223,23 @@ export const FloatingConsole: React.FC = () => {
                 </button>
               </div>
               <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        const res = await exportDiagnosticsBundle();
+                        logger.info("diagnostics", "Exported diagnostics bundle", res);
+                        append(`[DIAGNOSTICS] exported: ${res.location}`);
+                      } catch (e) {
+                        logger.error("diagnostics", "Failed to export diagnostics bundle", { error: String(e) });
+                        append(`[ERROR] diagnostics export failed`);
+                      }
+                    })();
+                  }}
+                  className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+                >
+                  Export
+                </button>
                 {tab === "terminal" && (
                   <button
                     onClick={() => setCmdOutput("")}
@@ -211,12 +260,12 @@ export const FloatingConsole: React.FC = () => {
               </div>
             </div>
 
-            {tab === "logs" ? (
+            {tab === "logs" || tab === "mcp" ? (
               <div className="flex-1 overflow-auto p-3 space-y-2 text-xs font-mono text-zinc-200">
-                {logs.length === 0 ? (
+                {filteredLogs.length === 0 ? (
                   <div className="text-zinc-500">No logs yet.</div>
                 ) : (
-                  logs.map((l) => (
+                  filteredLogs.map((l) => (
                     <div key={l.id} className="border border-zinc-900 rounded p-2 bg-zinc-900/20">
                       <div className="flex items-center justify-between">
                         <div className="text-[10px] text-zinc-500">
@@ -288,6 +337,7 @@ export const FloatingConsole: React.FC = () => {
           </div>
         </div>
       )}
-    </>
+    </>,
+    document.body
   );
 };

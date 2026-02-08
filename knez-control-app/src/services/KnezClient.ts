@@ -95,6 +95,54 @@ function safeJsonParse<T>(raw: string): T | null {
   }
 }
 
+function escapePowerShellSingleQuoted(s: string): string {
+  return s.replace(/'/g, "''");
+}
+
+async function healthViaShell(url: string, timeoutMs: number): Promise<KnezHealthResponse> {
+  const { Command } = await import("@tauri-apps/plugin-shell");
+  const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
+  const script = [
+    "$ErrorActionPreference='Stop';",
+    "$ProgressPreference='SilentlyContinue';",
+    `$u='${escapePowerShellSingleQuoted(url)}';`,
+    `$r = Invoke-RestMethod -Uri $u -TimeoutSec ${timeoutSec};`,
+    "$r | ConvertTo-Json -Depth 12 -Compress",
+  ].join(" ");
+  const out = await Command.create("powershell", ["-NoProfile", "-Command", script]).execute();
+  if (out.code !== 0) {
+    throw new AppError("KNEZ_HEALTH_FAILED", `Health check failed (shell)`, { url, code: out.code, stderr: out.stderr });
+  }
+  const data = safeJsonParse<KnezHealthResponse>(out.stdout);
+  if (!data) {
+    throw new AppError("KNEZ_HEALTH_FAILED", `Health check invalid JSON (shell)`, { url, stdout: out.stdout });
+  }
+  return data;
+}
+
+async function postJsonViaShell<T>(url: string, payload: any, timeoutMs: number): Promise<T> {
+  const { Command } = await import("@tauri-apps/plugin-shell");
+  const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
+  const body = JSON.stringify(payload ?? {});
+  const script = [
+    "$ErrorActionPreference='Stop';",
+    "$ProgressPreference='SilentlyContinue';",
+    `$u='${escapePowerShellSingleQuoted(url)}';`,
+    `$b='${escapePowerShellSingleQuoted(body)}';`,
+    `$r = Invoke-RestMethod -Method Post -Uri $u -Body $b -ContentType 'application/json' -TimeoutSec ${timeoutSec};`,
+    "$r | ConvertTo-Json -Depth 20 -Compress",
+  ].join(" ");
+  const out = await Command.create("powershell", ["-NoProfile", "-Command", script]).execute();
+  if (out.code !== 0) {
+    throw new AppError("KNEZ_FETCH_FAILED", `Shell POST failed: ${url}`, { url, code: out.code, stderr: out.stderr });
+  }
+  const data = safeJsonParse<T>(out.stdout);
+  if (!data) {
+    throw new AppError("KNEZ_FETCH_FAILED", `Shell POST invalid JSON: ${url}`, { url, stdout: out.stdout });
+  }
+  return data;
+}
+
 function newSessionId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID().replace(/-/g, "");
@@ -165,20 +213,31 @@ export class KnezClient {
     const controller = new AbortController();
     const timeoutMs = options?.timeoutMs ?? 6000;
     const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    const url = `${this.baseUrl()}/health`;
     try {
-      const resp = await fetch(`${this.baseUrl()}/health`, { signal: controller.signal });
+      const resp = await fetch(url, { signal: controller.signal });
       if (!resp.ok) {
         logger.error("knez_client", "Health check failed", { status: resp.status });
         throw new AppError("KNEZ_HEALTH_FAILED", `Health check failed (${resp.status})`, { status: resp.status });
       }
       const data = (await resp.json()) as KnezHealthResponse;
-      logger.debug("knez_client", "Health check passed", { backends: data.backends.length });
+      logger.debugThrottled("knez_health_ok", 180000, "knez_client", "Health check passed", { backends: data.backends.length });
       return data;
     } catch (e: any) {
       if (e?.name === "AbortError") {
-        throw new AppError("KNEZ_TIMEOUT", "Health check timed out", { timeoutMs });
+        throw new AppError("KNEZ_TIMEOUT", `Health check timed out: ${url}`, { timeoutMs, url });
       }
-      throw new AppError("KNEZ_FETCH_FAILED", String(e?.message ?? e));
+      if (isTauriRuntime()) {
+        try {
+          const data = await healthViaShell(url, timeoutMs);
+          logger.debugThrottled("knez_health_ok_shell", 180000, "knez_client", "Health check passed (shell)", { backends: data.backends.length });
+          return data;
+        } catch (shellErr: any) {
+          if (shellErr instanceof AppError) throw shellErr;
+          throw new AppError("KNEZ_FETCH_FAILED", `Failed to fetch: ${url}`, { url, reason: String(shellErr?.message ?? shellErr) });
+        }
+      }
+      throw new AppError("KNEZ_FETCH_FAILED", `Failed to fetch: ${url}`, { url, reason: String(e?.message ?? e) });
     } finally {
       clearTimeout(timeoutId);
     }
@@ -271,9 +330,16 @@ export class KnezClient {
     }
   }
 
-  async listMemory(sessionId?: string, limit = 100): Promise<KnezMemoryRecord[]> {
+  async listMemory(sessionId?: string, options?: { limit?: number; since?: string; order?: "asc" | "desc" }): Promise<KnezMemoryRecord[]> {
     const url = new URL(`${this.baseUrl()}/memory`);
+    const limit = options?.limit ?? 100;
     url.searchParams.set("limit", String(limit));
+    if (options?.since) {
+      url.searchParams.set("since", options.since);
+    }
+    if (options?.order) {
+      url.searchParams.set("order", options.order);
+    }
     if (sessionId) {
       url.searchParams.set("session_id", sessionId);
     }
@@ -385,6 +451,12 @@ export class KnezClient {
     }
   }
 
+  async getSessionLineageChain(sessionId: string): Promise<{ head: string; chain: any[] } | null> {
+    const resp = await fetch(`${this.baseUrl()}/sessions/${sessionId}/lineage`);
+    if (!resp.ok) return null;
+    return await resp.json();
+  }
+
   async getOperatorControls(): Promise<{ enabled: boolean, policies: any[] }> {
     const resp = await fetch(`${this.baseUrl()}/operator/influence/global`);
     if (!resp.ok) return { enabled: false, policies: [] };
@@ -407,6 +479,32 @@ export class KnezClient {
     const resp = await fetch(`${this.baseUrl()}/sessions/${sessionId}/replay`);
     if (!resp.ok) return null;
     return await resp.json();
+  }
+
+  async listCheckpoints(sessionId: string, limit = 200): Promise<{ session_id: string; items: { token_index: number; sha: string; created_at: number }[] }> {
+    const url = new URL(`${this.baseUrl()}/sessions/${sessionId}/checkpoints`);
+    url.searchParams.set("limit", String(limit));
+    const resp = await fetch(url.toString());
+    if (!resp.ok) throw new Error(`checkpoints_failed_${resp.status}`);
+    return await resp.json();
+  }
+
+  async emitEvent(args: {
+    session_id?: string;
+    task_id?: string;
+    event_type: string;
+    event_name: string;
+    source?: string;
+    severity?: string;
+    payload?: Record<string, any>;
+    tags?: string[];
+  }): Promise<void> {
+    const resp = await fetch(`${this.baseUrl()}/events`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(args),
+    });
+    if (!resp.ok) throw new Error(`event_emit_failed_${resp.status}`);
   }
 
   async getMemoryDetail(memoryId: string): Promise<KnezMemoryRecord> {
@@ -455,15 +553,6 @@ export class KnezClient {
 
   async toggleMcpItem(itemId: string, enabled: boolean): Promise<void> {
     const url = `${this.baseUrl()}/mcp/registry/${itemId}/toggle`;
-    await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled }), // Adjust based on API expectation, query param vs body
-    });
-    // Note: Python API defined as query param? Let's check. 
-    // Python code: async def toggle_mcp_item(item_id: str, enabled: bool)
-    // FastAPI defaults to query params for scalar types unless Body() is used.
-    // So actually: /mcp/registry/{id}/toggle?enabled=true
     const urlWithQuery = new URL(url);
     urlWithQuery.searchParams.set("enabled", String(enabled));
     const resp = await fetch(urlWithQuery.toString(), { method: "POST" });
@@ -541,15 +630,24 @@ export class KnezClient {
       stream: false,
       session_id: sessionId,
     };
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!resp.ok) {
-      throw new AppError("KNEZ_COMPLETION_FAILED", `Completions request failed (${resp.status})`, { status: resp.status });
+    let raw: any;
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!resp.ok) {
+        throw new AppError("KNEZ_COMPLETION_FAILED", `Completions request failed (${resp.status})`, { status: resp.status, url });
+      }
+      raw = (await resp.json()) as any;
+    } catch (e: any) {
+      if (isTauriRuntime()) {
+        raw = await postJsonViaShell<any>(url, payload, 30000);
+      } else {
+        throw e;
+      }
     }
-    const raw = (await resp.json()) as any;
     if (raw && typeof raw.error === "string") {
       const err = raw as KnezErrorResponse;
       throw new AppError("KNEZ_COMPLETION_FAILED", `${err.error}${err.reason ? `:${err.reason}` : ""}`);
@@ -619,12 +717,15 @@ export class KnezClient {
     // CP3-C: Retry Logic
     let attempts = 0;
     const maxAttempts = 2;
+    const externalSignal = options?.signal;
 
     while (attempts < maxAttempts) {
+      if (externalSignal?.aborted) {
+        throw new DOMException("Request cancelled", "AbortError");
+      }
       try {
         let yieldedAny = false;
         const controller = new AbortController();
-        const externalSignal = options?.signal;
         if (externalSignal) {
           if (externalSignal.aborted) controller.abort();
           else externalSignal.addEventListener("abort", () => controller.abort(), { once: true });
@@ -671,11 +772,19 @@ export class KnezClient {
           clearTimeout(inactivityTimeoutId);
           inactivityTimeoutId = window.setTimeout(() => controller.abort(), 25000);
           buffer += decoder.decode(value, { stream: true });
-          let idx: number;
-          while ((idx = buffer.indexOf("\n\n")) >= 0) {
-            const frame = buffer.slice(0, idx);
-            buffer = buffer.slice(idx + 2);
-            const lines = frame.split("\n");
+          const findFrameBoundary = (raw: string): { idx: number; len: number } | null => {
+            const n = raw.indexOf("\n\n");
+            const r = raw.indexOf("\r\n\r\n");
+            if (n < 0 && r < 0) return null;
+            if (n >= 0 && (r < 0 || n < r)) return { idx: n, len: 2 };
+            return { idx: r, len: 4 };
+          };
+          while (true) {
+            const boundary = findFrameBoundary(buffer);
+            if (!boundary) break;
+            const frame = buffer.slice(0, boundary.idx);
+            buffer = buffer.slice(boundary.idx + boundary.len);
+            const lines = frame.split(/\r?\n/);
             for (const line of lines) {
               const trimmed = line.trim();
               if (!trimmed.startsWith("data:")) continue;
@@ -715,7 +824,12 @@ export class KnezClient {
         }
         return; // Success, exit generator
 
-      } catch (err) {
+      } catch (err: any) {
+        if (externalSignal?.aborted) {
+          const abortErr =
+            err?.name === "AbortError" ? err : new DOMException("Request cancelled", "AbortError");
+          throw abortErr;
+        }
         attempts++;
         if (attempts < maxAttempts) {
           logger.warn("knez_client", `Stream attempt ${attempts} failed, retrying...`, { error: err });

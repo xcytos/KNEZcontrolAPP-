@@ -269,6 +269,10 @@ export interface McpRegistryItem {
   provider?: string;
   status?: string;
   capabilities?: string[];
+  enabled?: boolean;
+  last_error?: string;
+  last_ok?: number;
+  updated_at?: number;
 }
 
 export type McpRegistrySnapshot =

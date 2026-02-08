@@ -1,3 +1,0 @@
-import { test } from '@playwright/test';
-
-test.skip('Chat verification is covered by journey-live.', async () => {});

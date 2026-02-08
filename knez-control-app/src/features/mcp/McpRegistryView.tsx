@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { McpRegistrySnapshot } from '../../domain/DataContracts';
 import { knezClient } from '../../services/KnezClient';
 import { useToast } from '../../components/ui/Toast';
+import { taqwinMcpService } from '../../services/TaqwinMcpService';
+import { logger } from '../../services/LogService';
 
 export const McpRegistryView: React.FC<{ 
   snapshot: McpRegistrySnapshot | null;
@@ -9,6 +11,8 @@ export const McpRegistryView: React.FC<{
 }> = ({ snapshot, onRefresh }) => {
   const { showToast } = useToast();
   const [toggling, setToggling] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [testing, setTesting] = useState<string | null>(null);
 
   if (!snapshot) return <div className="p-8 text-center text-zinc-500">Loading MCP Registry...</div>;
   if (!snapshot.supported) {
@@ -31,6 +35,26 @@ export const McpRegistryView: React.FC<{
       showToast("Failed to toggle MCP server", 'error');
     } finally {
       setToggling(null);
+    }
+  };
+  
+  const handleTest = async (id: string) => {
+    setTesting(id);
+    try {
+      const w = window as any;
+      const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
+      if (!isTauri) throw new Error("MCP test requires the desktop app (Tauri).");
+      const tools = await taqwinMcpService.listTools(true);
+      logger.info("mcp", "MCP connectivity test ok", { id, tools: tools.length });
+      showToast(`MCP test OK (${tools.length} tools)`, "success");
+      window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      logger.error("mcp", "MCP connectivity test failed", { id, error: msg });
+      showToast(`MCP test failed: ${msg}`, "error");
+      window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
+    } finally {
+      setTesting(null);
     }
   };
 
@@ -75,18 +99,55 @@ export const McpRegistryView: React.FC<{
                 <div className="text-[10px] text-zinc-600">
                    Health: {item.status === 'active' ? 'Operational' : 'Offline'}
                 </div>
-                <button
-                  onClick={() => handleToggle(item.id, item.status || 'inactive')}
-                  disabled={toggling === item.id}
-                  className={`text-xs px-3 py-1.5 rounded transition-colors ${
-                     item.status === 'active' 
-                     ? 'bg-zinc-800 text-zinc-400 hover:text-red-400 hover:bg-zinc-700' 
-                     : 'bg-blue-600 text-white hover:bg-blue-500'
-                  }`}
-                >
-                  {toggling === item.id ? '...' : item.status === 'active' ? 'Disable' : 'Enable'}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleTest(item.id)}
+                    disabled={testing === item.id}
+                    className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors disabled:opacity-50"
+                  >
+                    {testing === item.id ? "..." : "Test"}
+                  </button>
+                  <button
+                    onClick={() => setExpanded((prev) => (prev === item.id ? null : item.id))}
+                    className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
+                  >
+                    {expanded === item.id ? "Hide" : "Details"}
+                  </button>
+                  <button
+                    onClick={() => handleToggle(item.id, item.status || 'inactive')}
+                    disabled={toggling === item.id}
+                    className={`text-xs px-3 py-1.5 rounded transition-colors ${
+                       item.status === 'active' 
+                       ? 'bg-zinc-800 text-zinc-400 hover:text-red-400 hover:bg-zinc-700' 
+                       : 'bg-blue-600 text-white hover:bg-blue-500'
+                    }`}
+                  >
+                    {toggling === item.id ? '...' : item.status === 'active' ? 'Disable' : 'Enable'}
+                  </button>
+                </div>
               </div>
+
+              {expanded === item.id && (
+                <div className="mt-3 text-xs text-zinc-400 space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">enabled</span>
+                    <span className="font-mono text-zinc-200">{String((item as any).enabled ?? (item.status === "active"))}</span>
+                  </div>
+                  {!!(item as any).updated_at && (
+                    <div className="flex justify-between">
+                      <span className="text-zinc-500">updated_at</span>
+                      <span className="font-mono text-zinc-200">
+                        {new Date(Number((item as any).updated_at) * 1000).toLocaleString()}
+                      </span>
+                    </div>
+                  )}
+                  {!!(item as any).last_error && (
+                    <div className="border border-red-900/40 bg-red-900/10 rounded p-2 text-red-300 whitespace-pre-wrap break-words">
+                      {String((item as any).last_error)}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         ))}

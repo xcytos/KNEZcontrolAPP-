@@ -10,20 +10,25 @@ import { VoiceInput } from "../voice/VoiceInput";
 import { chatService } from "../../services/ChatService";
 import { sessionDatabase } from "../../services/SessionDatabase";
 import { sessionController } from "../../services/SessionController";
-import { History, MessageSquarePlus, Search, Square, Trash2 } from "lucide-react";
+import { History, MessageSquarePlus, Search, Square, Trash2, TerminalSquare, Puzzle, Sparkles, Zap } from "lucide-react";
 import { TaqwinToolsModal } from "./TaqwinToolsModal";
+import { SessionInspectorModal } from "./SessionInspectorModal";
 import { useStatus } from "../../contexts/useStatus";
+import { backendHasLiveMetrics, isBackendHealthyStatus, selectPrimaryBackend } from "../../utils/health";
+import { features } from "../../config/features";
 
 // CP17: History Modal
 const HistoryModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
   currentSessionId: string | null;
-}> = ({ isOpen, onClose, currentSessionId }) => {
+  onInspect: (sid: string) => void;
+}> = ({ isOpen, onClose, currentSessionId, onInspect }) => {
   const { showToast } = useToast();
-  const [sessions, setSessions] = useState<{id: string, name: string, updatedAt: string}[]>([]);
+  const [sessions, setSessions] = useState<{id: string, name: string, updatedAt: string, tags?: string[], outcome?: string}[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -54,12 +59,22 @@ const HistoryModal: React.FC<{
         </div>
         
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          <div className="p-2">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search sessions..."
+              className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-200 outline-none focus:border-blue-700"
+            />
+          </div>
           {loading ? (
              <div className="p-8 text-center text-zinc-500 text-xs">Loading sessions...</div>
-          ) : sessions.length === 0 ? (
+          ) : sessions.filter(s => (`${s.name} ${s.id}`.toLowerCase()).includes(query.trim().toLowerCase())).length === 0 ? (
              <div className="p-8 text-center text-zinc-500 text-xs">No history found.</div>
           ) : (
-            sessions.map(s => (
+            sessions
+              .filter(s => (`${s.name} ${s.id}`.toLowerCase()).includes(query.trim().toLowerCase()))
+              .map(s => (
               <div
                 key={s.id}
                 className={`w-full text-left p-3 rounded-lg text-sm transition-all border ${
@@ -82,8 +97,33 @@ const HistoryModal: React.FC<{
                       <span className="text-[10px] text-zinc-500 font-mono">ID: {s.id.substring(0,8)}</span>
                       <span className="text-[10px] text-zinc-600">{new Date(s.updatedAt).toLocaleDateString()}</span>
                     </div>
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <div className="flex flex-wrap gap-1">
+                        {(Array.isArray((s as any).tags) ? ((s as any).tags as any[]) : []).slice(0, 4).map((t: any) => (
+                          <span key={String(t)} className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-950/40 border border-zinc-800 text-zinc-400">
+                            {String(t)}
+                          </span>
+                        ))}
+                      </div>
+                      {String((s as any).outcome || "") && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-950/40 border border-zinc-800 text-zinc-400">
+                          {String((s as any).outcome).slice(0, 16)}
+                        </span>
+                      )}
+                    </div>
                   </button>
                   <div className="flex items-center gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onInspect(s.id);
+                      }}
+                      className="px-2 py-1 rounded bg-zinc-950/40 border border-zinc-800 hover:bg-zinc-950/70 text-zinc-400 hover:text-zinc-200 transition-colors text-[10px] font-mono"
+                      title="Inspect session"
+                    >
+                      inspect
+                    </button>
                     <button
                       onClick={async (e) => {
                         e.preventDefault();
@@ -295,12 +335,12 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   // const [showPerception, setShowPerception] = useState(false);
   // Use ChatService state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [showAllMessages, setShowAllMessages] = useState(false);
   const [sending, setSending] = useState(false);
   const [activeTools, setActiveTools] = useState<{ search: boolean }>({ search: false });
   const [searchProvider, setSearchProvider] = useState<"off" | "taqwin" | "proxy">("off");
   
   const [inputValue, setInputValue] = useState("");
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [validating, setValidating] = useState(false);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [forkingMsgId, setForkingMsgId] = useState<string | null>(null);
@@ -311,17 +351,66 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [historyOpen, setHistoryOpen] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [inspectSessionId, setInspectSessionId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
   const { online, health } = useStatus();
-  const backend = health?.backends?.[0];
+  const backend = selectPrimaryBackend(health?.backends);
+  const backendLabel = backend
+    ? isBackendHealthyStatus(backend.status)
+      ? backendHasLiveMetrics(backend)
+        ? "healthy"
+        : "stale"
+      : String(backend.status ?? "down")
+    : "status:n/a";
   const lastAssistant = [...messages].reverse().find((m) => m.from === "knez");
   const canContinue = !readOnly && !sending && (lastAssistant?.metrics as any)?.finishReason === "stopped";
-  const maxMessages = 250;
-  const hiddenCount = Math.max(0, messages.length - maxMessages);
-  const visibleMessages = showAllMessages || hiddenCount === 0 ? messages : messages.slice(-maxMessages);
+  const [visibleCount, setVisibleCount] = useState(50);
+  
+  // Reset visible count when session changes
+  useEffect(() => {
+    setVisibleCount(50);
+  }, [sessionId]);
+
+  const hiddenCount = Math.max(0, messages.length - visibleCount);
+  const visibleMessages = messages.slice(-visibleCount);
+
+  useEffect(() => {
+    if (!features.taqwinTools) return;
+    const onOpen = () => setToolsOpen(true);
+    window.addEventListener("taqwin-tools-open", onOpen as any);
+    return () => window.removeEventListener("taqwin-tools-open", onOpen as any);
+  }, []);
+
+  useEffect(() => {
+    const onFocus = (e: any) => {
+      const id = String(e?.detail?.messageId ?? "");
+      if (!id) return;
+      window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "chat" } }));
+      window.setTimeout(() => {
+        const el = document.querySelector(`[data-message-id="${CSS.escape(id)}"]`) as HTMLElement | null;
+        if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
+      }, 50);
+    };
+    window.addEventListener("chat-focus-message", onFocus as any);
+    return () => window.removeEventListener("chat-focus-message", onFocus as any);
+  }, []);
+
+  // Accessibility: Escape to close modals
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (historyOpen) setHistoryOpen(false);
+        else if (auditOpen) setAuditOpen(false);
+        else if (toolsOpen) setToolsOpen(false);
+        else if (renameOpen) setRenameOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [historyOpen, auditOpen, toolsOpen, renameOpen]);
 
   // Sync with Service
   useEffect(() => {
@@ -345,13 +434,40 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!inputValue.trim()) return;
+
+    if (editingMessageId) {
+      void chatService.editUserMessageAndResend(editingMessageId, inputValue);
+      setEditingMessageId(null);
+    } else {
+      void chatService.sendMessage(inputValue);
+    }
     
     // UI clears immediately, service handles logic
     setInputValue("");
     setIsAtBottom(true);
-    
-    await chatService.sendMessage(inputValue);
+    setValidating(true);
+    setTimeout(() => setValidating(false), 2000);
   };
+
+  const handleEdit = (id: string) => {
+    const msg = messages.find(m => m.id === id);
+    if (msg) {
+      setEditingMessageId(id);
+      setInputValue(msg.text);
+      if (containerRef.current) {
+        // Focus logic could go here
+      }
+    }
+  };
+
+  const handleStop = (id: string) => {
+    chatService.stopByAssistantMessageId(id);
+  };
+
+  const handleRetry = (id: string) => {
+    void chatService.retryByAssistantMessageId(id);
+  };
+
   
   const handleRename = async (newName: string) => {
      if (sessionId) {
@@ -411,13 +527,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   //   setIsAtBottom(true);
   // };
 
-  const handleVote = (messageId: string, vote: "upvote" | "downvote") => {
-    if (readOnly) return;
-    if (sessionId) {
-      knezClient.submitVote(sessionId, messageId, vote);
-    }
-  };
-
   const handleVoiceTranscript = (text: string) => {
     setInputValue(prev => prev + (prev ? " " : "") + text);
   };
@@ -463,7 +572,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
               <span>•</span>
               <span>{(lastAssistant?.metrics as any)?.modelId ?? backend?.model_id ?? "model:n/a"}</span>
               <span>•</span>
-              <span>{backend?.status ?? "status:n/a"}</span>
+              <span>{backendLabel}</span>
             </div>
             <button
                onClick={() => setHistoryOpen(true)}
@@ -472,6 +581,40 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
             >
                <History size={18} />
             </button>
+            {features.floatingConsole && (
+              <button
+                 onClick={() => window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "logs" } }))}
+                 className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
+                 title="Open Console"
+              >
+                 <TerminalSquare size={18} />
+              </button>
+            )}
+            {features.mcpViews && (
+              <button
+                 onClick={() => window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "mcp" } }))}
+                 className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
+                 title="MCP Registry"
+              >
+                 <Puzzle size={18} />
+              </button>
+            )}
+            <button
+               onClick={() => window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "reflection" } }))}
+               className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
+               title="Analyze"
+            >
+               <Sparkles size={18} />
+            </button>
+            {features.taqwinTools && (
+              <button
+                 onClick={() => window.dispatchEvent(new CustomEvent("taqwin-activate"))}
+                 className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
+                 title="TAQWIN ACTIVATE"
+              >
+                 <Zap size={18} />
+              </button>
+            )}
             <button
                 onClick={() => {
                    sessionController.createNewSession();
@@ -497,13 +640,13 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
       >
         {renderOfflineOverlay()}
 
-        {hiddenCount > 0 && !showAllMessages && (
+        {hiddenCount > 0 && (
           <button
             type="button"
-            onClick={() => setShowAllMessages(true)}
+            onClick={() => setVisibleCount(prev => Math.min(messages.length, prev + 50))}
             className="text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-900/40 border border-zinc-800 hover:border-zinc-700 rounded-lg px-3 py-2 w-full"
           >
-            Load earlier messages ({hiddenCount})
+            Load earlier messages ({hiddenCount} remaining)
           </button>
         )}
         
@@ -511,8 +654,9 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
           <MessageItem 
             key={msg.id || idx} 
             msg={msg} 
-            onVote={handleVote}
-            // onFork={(mid: string) => setForkingMsgId(mid)} // Temporarily removed to fix type error if MessageItem doesn't support it
+            onEdit={handleEdit}
+            onStop={handleStop}
+            onRetry={handleRetry}
             readOnly={readOnly}
           />
         ))}
@@ -545,18 +689,22 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
            >
              <span>Audit</span>
            </button>
-           <button
-             type="button"
-             onClick={() => setToolsOpen(true)}
-             className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300 transition-all"
-             title="TAQWIN Tools"
-           >
-             <span>Tools</span>
-           </button>
+           {features.taqwinTools && (
+             <button
+               type="button"
+               onClick={() => setToolsOpen(true)}
+               className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300 transition-all"
+               title="TAQWIN Tools"
+             >
+               <span>Tools</span>
+             </button>
+           )}
         </div>
-        <div className="px-1 mb-2 text-[10px] text-zinc-500 font-mono">
-          search_provider={activeTools.search ? searchProvider : "off"}
-        </div>
+        {features.logViews && (
+          <div className="px-1 mb-2 text-[10px] text-zinc-500 font-mono">
+            search_provider={activeTools.search ? searchProvider : "off"}
+          </div>
+        )}
         {canContinue && (
           <div className="px-1 mb-2">
             <button
@@ -639,6 +787,15 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         isOpen={historyOpen}
         onClose={() => setHistoryOpen(false)}
         currentSessionId={sessionId}
+        onInspect={(sid) => {
+          setInspectSessionId(sid);
+          setHistoryOpen(false);
+        }}
+      />
+      <SessionInspectorModal
+        isOpen={!!inspectSessionId}
+        onClose={() => setInspectSessionId(null)}
+        sessionId={inspectSessionId}
       />
     </div>
   );

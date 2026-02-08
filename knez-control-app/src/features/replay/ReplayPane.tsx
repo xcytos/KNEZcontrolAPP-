@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { knezClient } from '../../services/KnezClient';
 
 export const ReplayPane: React.FC<{ sessionId: string | null }> = ({ sessionId }) => {
@@ -7,6 +7,7 @@ export const ReplayPane: React.FC<{ sessionId: string | null }> = ({ sessionId }
   const [phaseIndex, setPhaseIndex] = useState(0);
   const [eventIndex, setEventIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [focusEventId, setFocusEventId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -19,6 +20,16 @@ export const ReplayPane: React.FC<{ sessionId: string | null }> = ({ sessionId }
       })
       .finally(() => setLoading(false));
   }, [sessionId]);
+
+  useEffect(() => {
+    const onFocus = (e: any) => {
+      const id = String(e?.detail?.eventId ?? "");
+      if (!id) return;
+      setFocusEventId(id);
+    };
+    window.addEventListener("replay-focus-event", onFocus as any);
+    return () => window.removeEventListener("replay-focus-event", onFocus as any);
+  }, []);
 
   if (loading) return <div className="p-8 text-center text-zinc-500">Loading replay data...</div>;
   if (!replay) return <div className="p-8 text-center text-zinc-500">No replay data available.</div>;
@@ -35,6 +46,26 @@ export const ReplayPane: React.FC<{ sessionId: string | null }> = ({ sessionId }
   const currentPhase = phases[Math.min(Math.max(phaseIndex, 0), Math.max(phases.length - 1, 0))];
   const phaseEvents: any[] = currentPhase?.events || [];
   const currentEvent = phaseEvents[Math.min(Math.max(eventIndex, 0), Math.max(phaseEvents.length - 1, 0))];
+
+  const focusIndex = useMemo(() => {
+    if (!focusEventId) return null;
+    for (let pi = 0; pi < phases.length; pi++) {
+      const evs: any[] = Array.isArray(phases[pi]?.events) ? phases[pi].events : [];
+      for (let ei = 0; ei < evs.length; ei++) {
+        if (String(evs[ei]?.event_id ?? "") === focusEventId) {
+          return { phaseIndex: pi, eventIndex: ei };
+        }
+      }
+    }
+    return null;
+  }, [focusEventId, phases]);
+
+  useEffect(() => {
+    if (!focusIndex) return;
+    setPlaying(false);
+    setPhaseIndex(focusIndex.phaseIndex);
+    setEventIndex(focusIndex.eventIndex);
+  }, [focusIndex]);
 
   useEffect(() => {
     if (!playing) return;
@@ -53,7 +84,29 @@ export const ReplayPane: React.FC<{ sessionId: string | null }> = ({ sessionId }
 
   return (
     <div className="p-6 h-full flex flex-col">
-      <h2 className="text-xl font-bold text-zinc-100 mb-6">Session Replay</h2>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-xl font-bold text-zinc-100">Session Replay</h2>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "chat" } }))}
+            className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+          >
+            Chat
+          </button>
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "memory" } }))}
+            className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+          >
+            Memory
+          </button>
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "reflection" } }))}
+            className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+          >
+            Analyze
+          </button>
+        </div>
+      </div>
       
       <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-lg mb-6">
         <div className="flex gap-8 text-sm text-zinc-400">
@@ -144,7 +197,21 @@ export const ReplayPane: React.FC<{ sessionId: string | null }> = ({ sessionId }
             <div className="bg-zinc-900 border border-zinc-800 rounded p-3 max-h-[40vh] overflow-y-auto">
               <div className="text-[10px] text-zinc-500 mb-2">Selected event</div>
               {currentEvent ? (
-                <pre className="text-[10px] text-zinc-300 whitespace-pre-wrap">{JSON.stringify(currentEvent, null, 2)}</pre>
+                <div className="space-y-3">
+                  {String(currentEvent?.payload?.message_id ?? "") && (
+                    <button
+                      onClick={() => {
+                        const msgId = String(currentEvent.payload.message_id);
+                        window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "chat" } }));
+                        window.dispatchEvent(new CustomEvent("chat-focus-message", { detail: { messageId: msgId } }));
+                      }}
+                      className="w-full text-xs px-3 py-2 rounded bg-blue-900/20 border border-blue-900/40 text-blue-200 hover:border-blue-700"
+                    >
+                      Jump to Chat Message
+                    </button>
+                  )}
+                  <pre className="text-[10px] text-zinc-300 whitespace-pre-wrap">{JSON.stringify(currentEvent, null, 2)}</pre>
+                </div>
               ) : (
                 <div className="text-xs text-zinc-500">No event selected.</div>
               )}

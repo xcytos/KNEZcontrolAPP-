@@ -7,5 +7,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    include: ['tests/unit/**/*.test.ts', 'tests/unit/**/*.test.tsx', 'src/**/*.test.ts', 'src/**/*.test.tsx'],
+    exclude: ['tests/tauri-playwright/**', 'node_modules/**', 'dist/**'],
   },
 });

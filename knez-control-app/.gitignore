@@ -26,3 +26,12 @@ playwright-report/
 *.njsproj
 *.sln
 *.sw?
+ 
+coverage/
+.eslintcache
+.cache/
+.vite/
+src-tauri/target/
+tests/tauri-e2e/.webview2-user-data/
+tests/tauri-e2e/.webview2-user-data*/
+tests/tauri-e2e/.tauri-dev-state.json

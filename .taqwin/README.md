@@ -1,28 +1,19 @@
-TAQWIN (Child) — Repo-Embedded Cognition Layer
+# .TAQWIN Library Index
 
-This directory activates TAQWIN (child) inside the TrendyToys repository.
+## 1. Core State
+- 1.1 [.TAQWIN.md](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/.TAQWIN.md)
+- 1.2 [ROADMAP.md](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/.TAQWIN/ROADMAP.md)
+- 1.3 [ARCHITECTURE.md](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/.TAQWIN/ARCHITECTURE.md)
+- 1.4 [MEMORY_MESH.md](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/.TAQWIN/MEMORY_MESH.md)
+- 1.5 [LOGBOOK.md](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/.TAQWIN/LOGBOOK.md)
 
-TAQWIN (child) is a persistent cognitive substrate that allows an AI
-to operate with continuity, memory, task awareness, and historical context
-that live inside the repo rather than the model.
+## 2. Checkpoints
+- 2.1 [CP00_STABILIZE](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/.TAQWIN/checkpoints/CP00_STABILIZE/TICKETS.md)
+- 2.2 [CP01_MCP_REGISTRY](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/.TAQWIN/checkpoints/CP01_MCP_REGISTRY/TICKETS.md)
+- 2.3 [CP02_SESSION_MEMORY_ANALYSIS](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/.TAQWIN/checkpoints/CP02_SESSION_MEMORY_ANALYSIS/TICKETS.md)
 
-TAQWIN (child):
-- does not execute tools
-- does not own authority
-- does not override humans
-- does remember, reason, synthesize, and continue work from what is written here
-
-If .taqwin/ exists, any AI operating in this repository must read it fully
-before responding or proposing changes that rely on prior context.
-
-TAQWIN (parent) — an MCP server — may later attach to this directory
-to provide tools and execution capabilities. Until then, this layer is
-pure cognition and memory.
-
-Scope for TrendyToys:
-- centralize AI-facing context in this directory
-- avoid duplicating long-form explanations in scattered comments
-- treat everything outside .taqwin/ as ground truth about the product and code
-
-This file should be updated only when the role of TAQWIN (child)
-inside this repo materially changes.
+## 3. Cross-References
+- A.1 MCP spawn config used by desktop app: [mcp.config.json](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/knez-control-app/src-tauri/mcp/mcp.config.json)
+- A.2 TAQWIN MCP handshake test: [mcp_handshake_test.py](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/TAQWIN_V1/tools/mcp_handshake_test.py)
+- A.3 Identity index (machine): [IDENTITY_INDEX.json](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/.TAQWIN/IDENTITY_INDEX.json)
+- A.4 Identity index (human): [IDENTITY_INDEX.md](file:///c:/Users/syedm/Downloads/ASSETS/controlAPP/.TAQWIN/IDENTITY_INDEX.md)

@@ -18,3 +18,13 @@ Thumbs.db
 # User requested exclusion
 knez
 !KNEZ/
+ 
+.cache/
+coverage/
+.eslintcache
+.mypy_cache/
+.ruff_cache/
+.venv/
+.python-version
+.vite/
+knez-control-app/src-tauri/target/

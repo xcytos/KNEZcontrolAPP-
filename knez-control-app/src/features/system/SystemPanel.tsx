@@ -1,11 +1,12 @@
 import React, { useEffect, useRef } from "react";
-import { SystemStatus } from "./useSystemOrchestrator";
+import { HealthProbeStatus, SystemStatus } from "./useSystemOrchestrator";
 
 export const SystemPanel: React.FC<{ 
   status: SystemStatus;
   output: string;
+  healthProbe?: HealthProbeStatus;
   onStop?: () => void;
-}> = ({ status, output, onStop }) => {
+}> = ({ status, output, healthProbe, onStop }) => {
   const outputRef = useRef<HTMLDivElement>(null);
   const fallback =
     status === "idle"
@@ -45,6 +46,23 @@ export const SystemPanel: React.FC<{
            </div>
         </div>
       </div>
+
+      {healthProbe && (status === "starting" || healthProbe.active || healthProbe.lastCheckedAt) && (
+        <div className="mb-2 flex items-center justify-between gap-2 text-[10px] text-zinc-500 font-mono">
+          <span>
+            health_probe {healthProbe.attempts}/{healthProbe.maxAttempts || "-"}
+          </span>
+          <span className="truncate">
+            {healthProbe.active
+              ? healthProbe.lastError
+                ? `last_error=${healthProbe.lastError}`
+                : "checking..."
+              : healthProbe.lastError
+                ? `stopped last_error=${healthProbe.lastError}`
+                : "idle"}
+          </span>
+        </div>
+      )}
 
       <div 
         ref={outputRef}

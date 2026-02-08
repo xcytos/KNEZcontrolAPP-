@@ -16,6 +16,7 @@ import {
   Zap
 } from 'lucide-react';
 import { tabErrorStore } from '../../services/TabErrorStore';
+import { features } from '../../config/features';
 
 export type View = 'chat' | 'memory' | 'timeline' | 'reflection' | 'infrastructure' | 'mcp' | 'governance' | 'agent' | 'logs' | 'replay' | 'updates' | 'extraction' | 'diagnostics' | 'skills';
 
@@ -41,8 +42,8 @@ export const Sidebar: FC<SidebarProps> = ({ activeView, onViewChange, tabErrors 
     { id: 'reflection', label: 'Reflection', icon: BookOpen, locked: false },
     { id: 'governance', label: 'Governance', icon: Shield },
     { id: 'infrastructure', label: 'Observatory', icon: Server },
-    { id: 'mcp', label: 'MCP Registry', icon: Puzzle },
-    { id: 'logs', label: 'System Logs', icon: TerminalSquare },
+    ...(features.mcpViews ? [{ id: 'mcp' as const, label: 'MCP Registry', icon: Puzzle }] : []),
+    ...(features.logViews ? [{ id: 'logs' as const, label: 'System Logs', icon: TerminalSquare }] : []),
     { id: 'updates', label: 'Updates', icon: Zap },
   ];
 

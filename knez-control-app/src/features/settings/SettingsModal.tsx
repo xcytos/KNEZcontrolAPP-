@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Cpu, Database, Link2, Settings, WifiOff } from "lucide-react";
 import { ConnectionPage } from "./ConnectionPage";
-import { SystemStatus } from "../system/useSystemOrchestrator";
+import { HealthProbeStatus, SystemStatus } from "../system/useSystemOrchestrator";
 import { useStatus } from "../../contexts/useStatus";
 import { sessionDatabase } from "../../services/SessionDatabase";
 import { getKeepAliveEnabled, setKeepAliveEnabled } from "../../services/Preferences";
+import { backendHasLiveMetrics, isBackendHealthyStatus, selectPrimaryBackend } from "../../utils/health";
 
 type PageId = "overview" | "connection";
 
@@ -20,8 +21,9 @@ export const SettingsModal: React.FC<{
   onClose: () => void;
   systemStatus: SystemStatus;
   systemOutput: string;
+  systemHealthProbe: HealthProbeStatus;
   onForceStart?: (force?: boolean) => void;
-}> = ({ onClose, systemStatus, systemOutput, onForceStart }) => {
+}> = ({ onClose, systemStatus, systemOutput, systemHealthProbe, onForceStart }) => {
   const { online, isConnected, isDegraded, health, healthFresh, cognitiveState } = useStatus();
   const [page, setPage] = useState<PageId>("overview");
   const [dbOk, setDbOk] = useState<boolean | null>(null);
@@ -35,8 +37,8 @@ export const SettingsModal: React.FC<{
   }, []);
 
   const tone = useMemo(() => statusTone({ systemStatus, isConnected, isDegraded }), [systemStatus, isConnected, isDegraded]);
-  const backend = health?.backends?.[0];
-  const modelOk = backend ? String(backend.status).toLowerCase() === "ok" : false;
+  const backend = selectPrimaryBackend(health?.backends);
+  const modelOk = backend ? isBackendHealthyStatus(backend.status) && backendHasLiveMetrics(backend) : false;
 
   const pages: { id: PageId; label: string; icon: React.FC<any> }[] = [
     { id: "overview", label: "Overview", icon: Settings },
@@ -178,7 +180,7 @@ export const SettingsModal: React.FC<{
                         backend ? (modelOk ? "bg-emerald-900/30 text-emerald-400" : "bg-red-900/30 text-red-400") : "bg-zinc-800 text-zinc-400"
                       }`}
                     >
-                      {online ? (backend ? backend.status : "n/a") : "stale"}
+                      {online ? (backend ? (modelOk ? "healthy" : "stale") : "n/a") : "stale"}
                     </div>
                   </div>
                   <div className="mt-3 text-xs text-zinc-500">
@@ -214,7 +216,7 @@ export const SettingsModal: React.FC<{
                 </div>
               </div>
             ) : (
-              <ConnectionPage systemStatus={systemStatus} systemOutput={systemOutput} onForceStart={onForceStart} />
+              <ConnectionPage systemStatus={systemStatus} systemOutput={systemOutput} systemHealthProbe={systemHealthProbe} onForceStart={onForceStart} />
             )}
           </div>
         </div>

@@ -7,13 +7,15 @@ import {
   McpRegistrySnapshot,
 } from "../../domain/DataContracts";
 import { SystemPanel } from "../system/SystemPanel";
-import { SystemStatus } from "../system/useSystemOrchestrator";
+import { HealthProbeStatus, SystemStatus } from "../system/useSystemOrchestrator";
+import { isOverallHealthyStatus } from "../../utils/health";
 
 export const ConnectionPage: React.FC<{
   systemStatus: SystemStatus;
   systemOutput: string;
+  systemHealthProbe: HealthProbeStatus;
   onForceStart?: (force?: boolean) => void;
-}> = ({ systemStatus, systemOutput, onForceStart }) => {
+}> = ({ systemStatus, systemOutput, systemHealthProbe, onForceStart }) => {
   const [endpoint, setEndpoint] = useState("http://localhost:8000");
   const [status, setStatus] = useState<"idle" | "checking" | "healthy" | "failed">("idle");
   const [health, setHealth] = useState<KnezHealthResponse | null>(null);
@@ -55,10 +57,15 @@ export const ConnectionPage: React.FC<{
 
       const h = await knezClient.health({ timeoutMs: 2000 });
       setHealth(h);
-      setStatus("healthy");
+      setStatus(isOverallHealthyStatus(h.status) ? "healthy" : "failed");
 
-      knezClient.setTrusted(true);
-      setMessage("KNEZ is healthy and trusted.");
+      if (isOverallHealthyStatus(h.status)) {
+        knezClient.setTrusted(true);
+        setMessage("KNEZ is healthy and trusted.");
+      } else {
+        knezClient.setTrusted(false);
+        setMessage(`KNEZ responded but is not healthy (status=${String(h.status)}).`);
+      }
 
       try {
         const recent = await knezClient.listEvents("", 50);
@@ -129,7 +136,7 @@ export const ConnectionPage: React.FC<{
         </div>
       </div>
 
-      <SystemPanel status={systemStatus} output={systemOutput} />
+      <SystemPanel status={systemStatus} output={systemOutput} healthProbe={systemHealthProbe} />
 
       {health && (
         <div className="text-xs text-zinc-400 border border-zinc-800 rounded p-3 bg-zinc-950/40">

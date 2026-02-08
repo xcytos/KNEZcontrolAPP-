@@ -1,14 +1,20 @@
 
 import React, { useEffect, useState } from "react";
 import { View } from "../layout/Sidebar";
+import { exportDiagnosticsBundle } from "../../services/DiagnosticsService";
+import { logger } from "../../services/LogService";
+import { features } from "../../config/features";
 
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
   onNavigate: (view: View) => void;
+  onOpenSettings?: () => void;
+  onOpenTaqwinTools?: () => void;
+  onTaqwinActivate?: () => void;
 }
 
-export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose, onNavigate }) => {
+export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose, onNavigate, onOpenSettings, onOpenTaqwinTools, onTaqwinActivate }) => {
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
 
@@ -17,11 +23,29 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
     { id: 'extractor', label: 'Open Web Extractor', icon: 'EXT', action: () => onNavigate('extraction') },
     { id: 'memory', label: 'View Memory Graph', icon: 'MEM', action: () => onNavigate('memory') },
     { id: 'replay', label: 'Session Replay', icon: 'RPL', action: () => onNavigate('replay') },
-    { id: 'logs', label: 'System Logs', icon: 'LOG', action: () => onNavigate('logs') },
+    ...(features.logViews ? [{ id: 'logs', label: 'System Logs', icon: 'LOG', action: () => onNavigate('logs' as View) }] : []),
     { id: 'skills', label: 'Skills', icon: 'SKL', action: () => onNavigate('skills') },
     { id: 'governance', label: 'Governance Settings', icon: 'GOV', action: () => onNavigate('governance') },
     { id: 'diagnostics', label: 'Run Diagnostics (Test Suite)', icon: 'DIAG', action: () => onNavigate('diagnostics') },
     { id: 'updates', label: 'Check Updates', icon: 'UPD', action: () => onNavigate('updates') },
+    ...(onOpenSettings ? [{ id: 'settings', label: 'Open Settings', icon: 'SET', action: () => onOpenSettings() }] : []),
+    ...(features.taqwinTools && onOpenTaqwinTools ? [{ id: 'taqwin-tools', label: 'Open TAQWIN Tools', icon: 'TAQ', action: () => onOpenTaqwinTools() }] : []),
+    ...(features.taqwinTools && onTaqwinActivate ? [{ id: 'taqwin-activate', label: 'TAQWIN ACTIVATE', icon: 'ACT', action: () => onTaqwinActivate() }] : []),
+    {
+      id: "export-diag",
+      label: "Export Diagnostics Bundle",
+      icon: "EXP",
+      action: () => {
+        void (async () => {
+          try {
+            const res = await exportDiagnosticsBundle();
+            logger.info("diagnostics", "Exported diagnostics bundle (command palette)", res);
+          } catch (e) {
+            logger.error("diagnostics", "Failed to export diagnostics bundle (command palette)", { error: String(e) });
+          }
+        })();
+      }
+    }
   ];
 
   const filtered = commands.filter(c => c.label.toLowerCase().includes(query.toLowerCase()));

@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { knezClient, KnezInsight } from "../../services/KnezClient";
 import { Sparkles } from "lucide-react";
+import { persistenceService } from "../../services/PersistenceService";
+import { sessionController } from "../../services/SessionController";
 
 type Props = {
   sessionId: string | null;
@@ -12,21 +14,38 @@ export const ReflectionPane: React.FC<Props> = ({ sessionId, readOnly }) => {
   const [insights, setInsights] = useState<KnezInsight[]>([]);
   const [summary, setSummary] = useState<Record<string, any> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    persistenceService.listSessions().then((ids) => {
+      setSessions(ids);
+      if (!selected && sessionId) setSelected(sessionId);
+    });
+  }, [sessionId]);
 
   const handleAnalyze = async () => {
     if (readOnly) return;
-    if (!sessionId) return;
+    const sid = selected || sessionId;
+    if (!sid) return;
     setAnalyzing(true);
     setError(null);
     try {
       const [ins, sum] = await Promise.all([
-        knezClient.getInsights(sessionId),
-        knezClient.getSummary(sessionId),
+        knezClient.getInsights(sid),
+        knezClient.getSummary(sid),
       ]);
       setInsights(ins);
       setSummary(sum);
-    } catch {
-      setError("KNEZ reflection unavailable for this session.");
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      if (msg.includes("Failed to fetch")) {
+        setError("KNEZ is unreachable. Start KNEZ and retry.");
+      } else if (msg.includes("404")) {
+        setError("Session not found on KNEZ. Switch to a session that has events.");
+      } else {
+        setError("KNEZ reflection unavailable for this session.");
+      }
       setInsights([]);
       setSummary(null);
     } finally {
@@ -43,19 +62,59 @@ export const ReflectionPane: React.FC<Props> = ({ sessionId, readOnly }) => {
             Delegated to KNEZ replay and insights.
           </p>
         </div>
-        
-        <button
-          onClick={handleAnalyze}
-          disabled={analyzing || readOnly || !sessionId}
-          className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-            analyzing
-              ? 'bg-zinc-800 text-zinc-500 cursor-wait'
-              : 'bg-purple-900/30 text-purple-300 border border-purple-800 hover:bg-purple-900/50'
-          }`}
-        >
-          {analyzing ? 'Analyzing...' : 'Analyze Session'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "chat" } }))}
+            className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+          >
+            Chat
+          </button>
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "memory" } }))}
+            className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+          >
+            Memory
+          </button>
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "replay" } }))}
+            className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+          >
+            Replay
+          </button>
+        </div>
       </div>
+
+      {!readOnly && sessions.length > 0 && (
+        <div className="flex items-center gap-2 mb-6">
+          <select
+            value={selected ?? ""}
+            onChange={(e) => {
+              const sid = e.target.value;
+              setSelected(sid);
+              sessionController.useSession(sid);
+            }}
+            className="bg-zinc-950 border border-zinc-800 rounded px-2 py-2 text-xs text-zinc-200 outline-none focus:border-purple-700"
+          >
+            {sessions.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </select>
+
+          <button
+            onClick={handleAnalyze}
+            disabled={analyzing || readOnly || !(selected || sessionId)}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
+              analyzing
+                ? "bg-zinc-800 text-zinc-500 cursor-wait"
+                : "bg-purple-900/30 text-purple-300 border border-purple-800 hover:bg-purple-900/50"
+            }`}
+          >
+            {analyzing ? "Analyzing..." : "Analyze Session"}
+          </button>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto space-y-4">
         {readOnly && (

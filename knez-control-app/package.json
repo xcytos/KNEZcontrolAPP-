@@ -8,6 +8,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "dev:all": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-all.ps1",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "e2e:tauri": "node tests/tauri-e2e/spawn-and-run.js",
     "e2e:tauri:attach": "node tests/tauri-e2e/attach.js"
   },

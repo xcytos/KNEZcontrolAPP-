@@ -11,6 +11,7 @@ import { isTaqwinToolAllowed } from "./TaqwinToolPermissions";
 import { taqwinMcpService } from "./TaqwinMcpService";
 import { logger } from "./LogService";
 import { tabErrorStore } from "./TabErrorStore";
+import { selectPrimaryBackend } from "../utils/health";
 
 export interface ChatState {
   messages: ChatMessage[];
@@ -21,7 +22,7 @@ export interface ChatState {
 
 export type StateListener = (state: ChatState) => void;
 
-class ChatService {
+export class ChatService {
   private listeners: StateListener[] = [];
   private state: ChatState = {
     messages: [],
@@ -43,6 +44,23 @@ class ChatService {
   private maxOutgoingAttempts = 6;
   private maxOutgoingAgeMs = 10 * 60 * 1000;
   private firstTokenTimeoutMs = 12000;
+  private maxOutgoingPerSession = 5;
+  private streamIdleTimeoutMs = 20000;
+  private streamTotalTimeoutMs = 180000;
+  
+  private async tryEmit(event_name: string, payload: Record<string, any>, sessionId: string) {
+    try {
+      await knezClient.emitEvent({
+        session_id: sessionId,
+        event_type: "PERSISTENCE",
+        event_name,
+        source: "tool",
+        severity: "INFO",
+        payload,
+        tags: ["chat"],
+      });
+    } catch {}
+  }
 
   constructor() {
     this.sessionId = sessionController.getSessionId();
@@ -125,9 +143,14 @@ class ChatService {
     observe("chat_send_attempt", { sessionId: this.sessionId, message: text });
     await this.ensureSessionExists(this.sessionId);
     await sessionDatabase.saveMessages(this.sessionId, [userMsg, assistantMsg]);
+    void this.tryEmit(
+      "chat_user_message",
+      { message_id: userId, from: "user", correlation_id: userId },
+      this.sessionId
+    );
     const existing = (await sessionDatabase.listOutgoing()).filter((x) => x.sessionId === this.sessionId);
-    if (existing.length > 0) {
-      const errorMsg = "Queue limit reached (1). Wait for the current response to finish.";
+    if (existing.length >= this.maxOutgoingPerSession) {
+      const errorMsg = `Queue limit reached (${this.maxOutgoingPerSession}). Wait for the current responses to finish.`;
       logger.warn("chat", "Queue limit reached", { sessionId: this.sessionId });
       tabErrorStore.mark("chat");
       tabErrorStore.mark("logs");
@@ -186,9 +209,14 @@ class ChatService {
 
     await this.ensureSessionExists(sessionId);
     await sessionDatabase.saveMessages(sessionId, [userMsg, assistantMsg]);
+    void this.tryEmit(
+      "chat_user_message",
+      { message_id: userId, from: "user", correlation_id: userId },
+      sessionId
+    );
     const existing = (await sessionDatabase.listOutgoing()).filter((x) => x.sessionId === sessionId);
-    if (existing.length > 0) {
-      const errorMsg = "Queue limit reached (1). Wait for the current response to finish.";
+    if (existing.length >= this.maxOutgoingPerSession) {
+      const errorMsg = `Queue limit reached (${this.maxOutgoingPerSession}). Wait for the current responses to finish.`;
       logger.warn("chat", "Queue limit reached", { sessionId });
       tabErrorStore.mark("chat");
       tabErrorStore.mark("logs");
@@ -214,17 +242,172 @@ class ChatService {
   getMessages() { return this.state.messages; }
   clear() { this.state.messages = []; this.notify(); }
   stopCurrentResponse() {
-    if (!this.activeDelivery) return;
-    if (this.activeDelivery.sessionId !== this.sessionId) return;
-    this.activeDelivery.stopRequested = true;
-    this.activeDelivery.controller.abort();
+    void this.forceStopForSession(this.sessionId);
   }
 
   stopResponseForSession(sessionId: string) {
-    if (!this.activeDelivery) return;
-    if (this.activeDelivery.sessionId !== sessionId) return;
-    this.activeDelivery.stopRequested = true;
-    this.activeDelivery.controller.abort();
+    void this.forceStopForSession(sessionId);
+  }
+
+  stopByAssistantMessageId(assistantId: string) {
+    if (!assistantId) return;
+    const msg = this.state.messages.find(m => m.id === assistantId);
+    if (!msg) return;
+    // If it's the active delivery, use controller
+    if (this.activeDelivery && this.activeDelivery.assistantId === assistantId) {
+      this.activeDelivery.stopRequested = true;
+      this.activeDelivery.controller.abort();
+      return;
+    }
+    // Otherwise force cleanup
+    void this.forceStopForSession(msg.sessionId);
+  }
+
+  async retryByAssistantMessageId(assistantId: string) {
+    const assistant = await sessionDatabase.getMessage(assistantId);
+    if (!assistant || assistant.from !== "knez") return;
+    const userId = assistant.replyToMessageId || assistant.correlationId;
+    if (!userId) return;
+    
+    // Reset assistant message
+    await sessionDatabase.updateMessage(assistantId, {
+      deliveryStatus: "queued",
+      deliveryError: undefined,
+      text: "",
+      isPartial: true,
+      refusal: false,
+      metrics: undefined
+    });
+
+    // Re-enqueue user message
+    const userMsg = await sessionDatabase.getMessage(userId);
+    if (!userMsg) return;
+
+    // Remove any existing queue item first
+    await sessionDatabase.removeOutgoing(userId);
+    
+    await sessionDatabase.enqueueOutgoing({
+      id: userId,
+      sessionId: assistant.sessionId,
+      text: userMsg.text,
+      searchEnabled: this.state.activeTools.search,
+      createdAt: new Date().toISOString()
+    });
+
+    // Update state if current session
+    if (this.sessionId === assistant.sessionId) {
+      const messages = await persistenceService.loadChat(assistant.sessionId);
+      if (messages) {
+        this.state.messages = messages;
+        this.notify();
+      }
+    }
+    
+    void this.flushOutgoingQueue();
+  }
+
+  async editUserMessageAndResend(userId: string, newText: string) {
+    const userMsg = await sessionDatabase.getMessage(userId);
+    if (!userMsg) return;
+
+    const assistantId = `${userId}-assistant`;
+    
+    // Update user message
+    await sessionDatabase.updateMessage(userId, { text: newText });
+    
+    // Reset assistant message
+    await sessionDatabase.updateMessage(assistantId, {
+      deliveryStatus: "queued",
+      deliveryError: undefined,
+      text: "",
+      isPartial: true,
+      refusal: false,
+      metrics: undefined
+    });
+
+    // Remove any existing queue item
+    await sessionDatabase.removeOutgoing(userId);
+
+    // Re-enqueue
+    await sessionDatabase.enqueueOutgoing({
+      id: userId,
+      sessionId: userMsg.sessionId,
+      text: newText,
+      searchEnabled: this.state.activeTools.search,
+      createdAt: new Date().toISOString()
+    });
+
+    // Update state
+    if (this.sessionId === userMsg.sessionId) {
+      const messages = await persistenceService.loadChat(userMsg.sessionId);
+      if (messages) {
+        this.state.messages = messages;
+        this.notify();
+      }
+    }
+
+    void this.flushOutgoingQueue();
+  }
+
+  async forceStopForSession(sessionId: string) {
+    let outgoingId: string | null = null;
+    let assistantId: string | null = null;
+
+    if (this.activeDelivery && this.activeDelivery.sessionId === sessionId) {
+      outgoingId = this.activeDelivery.outgoingId;
+      assistantId = this.activeDelivery.assistantId;
+      this.activeDelivery.stopRequested = true;
+      this.activeDelivery.controller.abort();
+    } else {
+      const all = await sessionDatabase.listOutgoing();
+      const scoped = all.filter((x) => x.sessionId === sessionId);
+      const inFlight = scoped.find((x) => x.status === "in_flight");
+      const pending = scoped.find((x) => x.status === "pending");
+      const failed = scoped.find((x) => x.status === "failed");
+      const pick = inFlight ?? pending ?? failed ?? null;
+      if (pick) {
+        outgoingId = pick.id;
+        assistantId = `${pick.id}-assistant`;
+      }
+    }
+
+    if (!outgoingId || !assistantId) return;
+
+    await sessionDatabase.removeOutgoing(outgoingId);
+
+    const inState = this.state.messages.find((m) => m.id === assistantId);
+    const persisted = await sessionDatabase.getMessage(assistantId);
+    const text = (inState?.text ?? persisted?.text ?? "").toString();
+    const totalTokens =
+      (inState?.metrics as any)?.totalTokens ??
+      (persisted?.metrics as any)?.totalTokens ??
+      0;
+    const modelId = (inState?.metrics as any)?.modelId ?? (persisted?.metrics as any)?.modelId;
+    const backendStatus = (inState?.metrics as any)?.backendStatus ?? (persisted?.metrics as any)?.backendStatus;
+
+    const metrics = { finishReason: "stopped", totalTokens, modelId, backendStatus };
+
+    await sessionDatabase.updateMessage(outgoingId, { deliveryStatus: "delivered", deliveryError: undefined });
+    await sessionDatabase.updateMessage(assistantId, {
+      deliveryStatus: "delivered",
+      deliveryError: undefined,
+      isPartial: false,
+      refusal: false,
+      text,
+      metrics
+    });
+
+    if (this.sessionId === sessionId) {
+      this.state.messages = this.state.messages.map((m) => {
+        if (m.id === outgoingId) return { ...m, deliveryStatus: "delivered", deliveryError: undefined };
+        if (m.id === assistantId) {
+          return { ...m, deliveryStatus: "delivered", deliveryError: undefined, isPartial: false, refusal: false, text, metrics };
+        }
+        return m;
+      });
+      this.state.sending = false;
+      this.notify();
+    }
   }
 
   private async ensureSessionExists(sessionId: string) {
@@ -366,7 +549,7 @@ class ChatService {
     let backendStatus: string | undefined;
     try {
       const health = await knezClient.health({ timeoutMs: 1500 });
-      const b = (health as any)?.backends?.[0];
+      const b = selectPrimaryBackend((health as any)?.backends);
       modelId = b?.model_id;
       backendStatus = b?.status;
     } catch {}
@@ -386,6 +569,7 @@ class ChatService {
     }
 
     let firstTokenTimer: number | undefined;
+    let watchdogId: number | undefined;
     try {
       let collected = "";
       let firstTokenTime: number | undefined;
@@ -399,6 +583,18 @@ class ChatService {
       firstTokenTimer = window.setTimeout(() => {
         if (!firstTokenTime) controller.abort();
       }, this.firstTokenTimeoutMs);
+      let lastTokenAt = Date.now();
+      watchdogId = window.setInterval(() => {
+        const now = Date.now();
+        if (now - startTime > this.streamTotalTimeoutMs) {
+          controller.abort();
+          return;
+        }
+        if (!firstTokenTime) return;
+        if (now - lastTokenAt > this.streamIdleTimeoutMs) {
+          controller.abort();
+        }
+      }, 500);
 
       const applyAssistantMetrics = async (patch: Partial<NonNullable<ChatMessage["metrics"]>>) => {
         const currentInState = this.state.messages.find((m) => m.id === assistantId);
@@ -422,6 +618,7 @@ class ChatService {
         }
       })) {
         if (!firstTokenTime) firstTokenTime = Date.now();
+        lastTokenAt = Date.now();
         collected += token;
         tokenCount++;
         const patch: Partial<ChatMessage> = {
@@ -467,6 +664,18 @@ class ChatService {
           return m;
         });
       }
+      void this.tryEmit(
+        "chat_assistant_message",
+        {
+          message_id: assistantId,
+          from: "knez",
+          reply_to_message_id: id,
+          correlation_id: id,
+          finish_reason: "completed",
+          total_tokens: tokenCount,
+        },
+        sessionId
+      );
 
       await this.maybeAutoNameSession(sessionId, (await persistenceService.loadChat(sessionId)) ?? []);
     } catch (err: any) {
@@ -514,6 +723,18 @@ class ChatService {
             return m;
           });
         }
+        void this.tryEmit(
+          "chat_assistant_message",
+          {
+            message_id: assistantId,
+            from: "knez",
+            reply_to_message_id: id,
+            correlation_id: id,
+            finish_reason: "stopped",
+            total_tokens: persistedTokens,
+          },
+          sessionId
+        );
         return;
       }
 
@@ -559,6 +780,9 @@ class ChatService {
       }
       if (typeof firstTokenTimer === "number") {
         clearTimeout(firstTokenTimer);
+      }
+      if (typeof watchdogId === "number") {
+        clearInterval(watchdogId);
       }
       if (this.sessionId === sessionId) {
         this.state.sending = false;
