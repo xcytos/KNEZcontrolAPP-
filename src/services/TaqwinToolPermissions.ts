@@ -9,6 +9,7 @@ const SAFE_TOOLS_UNTRUSTED = new Set<string>([
   "connection_info",
   "debug_test",
   "web_intelligence",
+  "taqwin_activate",
   "session",
   "session_v2"
 ]);

@@ -36,6 +36,9 @@ import './App.css';
 
 import { CommandPalette } from './components/ui/CommandPalette';
 import { FloatingConsole } from './components/ui/FloatingConsole';
+import { taqwinMcpService } from './services/TaqwinMcpService';
+import { logger } from './services/LogService';
+import { features } from './config/features';
 
 // ...
 
@@ -96,7 +99,7 @@ function AppContent() {
   }, [online]);
 
   // Orchestrator
-  const { status: systemStatus, output: systemOutput, launchAndConnect, stopKnez } = useSystemOrchestrator(() => {
+  const { status: systemStatus, output: systemOutput, healthProbe: systemHealthProbe, launchAndConnect, stopKnez } = useSystemOrchestrator(() => {
     forceCheck();
   });
 
@@ -119,7 +122,7 @@ function AppContent() {
 
   useEffect(() => {
     setObserverState({
-      connected: online && (isConnected || isDegraded),
+      connected: online,
       endpoint: knezClient.getProfile().endpoint,
       sessionId,
       readOnly,
@@ -207,6 +210,7 @@ function AppContent() {
              status={health} 
              systemStatus={systemStatus}
              systemOutput={systemOutput}
+             systemHealthProbe={systemHealthProbe}
              onStopSystem={stopKnez}
           />
         );
@@ -238,6 +242,40 @@ function AppContent() {
     tabErrorStore.clear(view);
   };
 
+  const runTaqwinActivate = async () => {
+    try {
+      const w = window as any;
+      const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
+      if (!isTauri) throw new Error("TAQWIN ACTIVATE requires the desktop app (Tauri).");
+      const sid = sessionController.getSessionId() ?? sessionId ?? "";
+      const endpoint = knezClient.getProfile().endpoint;
+      const cp = "CP01_MCP_REGISTRY";
+      const result = await taqwinMcpService.callTool("taqwin_activate", { session_id: sid, knez_endpoint: endpoint, checkpoint: cp });
+      logger.info("mcp", "TAQWIN ACTIVATE completed", result);
+      window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
+    } catch (e: any) {
+      logger.error("mcp", "TAQWIN ACTIVATE failed", { error: String(e?.message ?? e) });
+      window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
+    }
+  };
+  
+  useEffect(() => {
+    const onNavigate = (e: any) => {
+      const view = e?.detail?.view as View | undefined;
+      if (!view) return;
+      setActiveView(view);
+      tabErrorStore.clear(view);
+    };
+    window.addEventListener("knez-navigate", onNavigate);
+    return () => window.removeEventListener("knez-navigate", onNavigate);
+  }, []);
+
+  useEffect(() => {
+    const onActivate = () => { void runTaqwinActivate(); };
+    window.addEventListener("taqwin-activate", onActivate as any);
+    return () => window.removeEventListener("taqwin-activate", onActivate as any);
+  }, [sessionId]);
+
   return (
     <MainLayout
       activeView={activeView}
@@ -255,7 +293,7 @@ function AppContent() {
                 : isConnected
                   ? "running"
                   : "down",
-        connected: isConnected || isDegraded,
+        connected: online,
         endpoint: knezClient.getProfile().endpoint,
         lastCheck: lastCheck
       }}
@@ -288,10 +326,18 @@ function AppContent() {
         isOpen={commandPaletteOpen} 
         onClose={() => setCommandPaletteOpen(false)}
         onNavigate={(view) => { handleViewChange(view); setCommandPaletteOpen(false); }}
+        onOpenSettings={() => setShowSettings(true)}
+        onOpenTaqwinTools={features.taqwinTools ? () => {
+          handleViewChange("chat");
+          window.dispatchEvent(new CustomEvent("taqwin-tools-open"));
+        } : undefined}
+        onTaqwinActivate={features.taqwinTools ? () => void runTaqwinActivate() : undefined}
       />
-      <FloatingConsole />
+      {features.floatingConsole ? <FloatingConsole /> : null}
       
-      {renderContent()}
+      <ErrorBoundary>
+        {renderContent()}
+      </ErrorBoundary>
       
        {showSettings && <SettingsModal 
          onClose={() => {
@@ -300,6 +346,7 @@ function AppContent() {
          }}
          systemStatus={systemStatus}
          systemOutput={systemOutput}
+         systemHealthProbe={systemHealthProbe}
          onForceStart={launchAndConnect}
        />}
     </MainLayout>
@@ -322,6 +369,7 @@ function App() {
   // Track open session
   useEffect(() => {
     analytics.trackSession();
+    document.getElementById("boot-splash")?.remove();
   }, []);
 
   return (

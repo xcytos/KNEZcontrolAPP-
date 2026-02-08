@@ -1,22 +1,30 @@
 import React, { useEffect, useState } from 'react';
 import { knezClient } from '../../services/KnezClient';
 import { ResumeSnapshot } from '../../domain/DataContracts';
+import { sessionController } from '../../services/SessionController';
 
 export const LineagePanel: React.FC<{ sessionId: string; onResume: (sid: string) => void }> = ({ sessionId, onResume }) => {
   const [snapshot, setSnapshot] = useState<ResumeSnapshot | null>(null);
+  const [chain, setChain] = useState<any[] | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!sessionId) return;
     setLoading(true);
-    knezClient.getResumeSnapshot(sessionId)
-      .then(setSnapshot)
+    Promise.allSettled([
+      knezClient.getResumeSnapshot(sessionId),
+      knezClient.getSessionLineageChain(sessionId),
+    ])
+      .then(([snap, lin]) => {
+        setSnapshot(snap.status === "fulfilled" ? snap.value : null);
+        setChain(lin.status === "fulfilled" ? (lin.value?.chain ?? null) : null);
+      })
       .finally(() => setLoading(false));
   }, [sessionId]);
 
   if (loading) return <div className="p-4 text-xs text-zinc-500">Tracing lineage...</div>;
-  if (!snapshot) return <div className="p-4 text-xs text-zinc-500">No lineage data available for this session.</div>;
-  const headId = typeof (snapshot as any).session_id === "string" ? (snapshot as any).session_id : sessionId;
+  if (!snapshot && !chain) return <div className="p-4 text-xs text-zinc-500">No lineage data available for this session.</div>;
+  const headId = sessionId;
   const acceptedFacts = Array.isArray((snapshot as any).accepted_facts) ? (snapshot as any).accepted_facts : [];
 
   return (
@@ -30,6 +38,28 @@ export const LineagePanel: React.FC<{ sessionId: string; onResume: (sid: string)
            {headId.substring(0, 8)}...
          </div>
       </div>
+
+      {Array.isArray(chain) && chain.length > 0 && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded p-3">
+          <div className="text-[10px] uppercase text-zinc-500 mb-2">Chain</div>
+          <div className="space-y-2">
+            {chain.map((c: any, idx: number) => (
+              <div key={idx} className="text-[10px] font-mono text-zinc-300 flex items-center justify-between">
+                <button
+                  onClick={() => {
+                    const sid = String(c.session_id ?? "");
+                    if (sid) sessionController.useSession(sid);
+                  }}
+                  className="hover:text-blue-300"
+                >
+                  {String(c.session_id ?? "").slice(0, 8)}...
+                </button>
+                <span className="text-zinc-500">{String(c.resume_mode ?? "fresh")}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="bg-zinc-900 border border-zinc-800 rounded p-3">
         <div className="text-[10px] uppercase text-zinc-500 mb-2">Resume Snapshot State</div>

@@ -2,14 +2,16 @@ import React, { useEffect, useState } from "react";
 import { AuditResult, KnezHealthResponse } from "../../domain/DataContracts";
 import { knezClient } from "../../services/KnezClient";
 import { SystemPanel } from "../system/SystemPanel";
-import { SystemStatus } from "../system/useSystemOrchestrator";
+import { HealthProbeStatus, SystemStatus } from "../system/useSystemOrchestrator";
 import { PerformancePanel } from "../performance/PerformancePanel";
+import { backendHasLiveMetrics, isBackendHealthyStatus } from "../../utils/health";
 
 type Props = {
   isConnected: boolean;
   status: KnezHealthResponse | null;
   systemStatus: SystemStatus;
   systemOutput: string;
+  systemHealthProbe: HealthProbeStatus;
   onStopSystem?: () => void;
 };
 
@@ -18,6 +20,7 @@ export const InfrastructurePanel: React.FC<Props> = ({
   status,
   systemStatus,
   systemOutput,
+  systemHealthProbe,
   onStopSystem,
 }) => {
   const [audits, setAudits] = useState<AuditResult[]>([]);
@@ -45,7 +48,7 @@ export const InfrastructurePanel: React.FC<Props> = ({
       </div>
       
       {/* System Control Panel (Orchestration) */}
-      <SystemPanel status={systemStatus} output={systemOutput} onStop={onStopSystem} />
+      <SystemPanel status={systemStatus} output={systemOutput} healthProbe={systemHealthProbe} onStop={onStopSystem} />
       
       <div className="h-6"></div>
 
@@ -61,6 +64,17 @@ export const InfrastructurePanel: React.FC<Props> = ({
             </div>
           ) : (
             backends.map((be) => (
+              (() => {
+                const hasLive = backendHasLiveMetrics(be);
+                const healthy = isBackendHealthyStatus(be.status);
+                const state = healthy && hasLive ? "healthy" : healthy ? "stale" : "down";
+                const tone =
+                  state === "healthy"
+                    ? "bg-emerald-900/30 text-emerald-400"
+                    : state === "stale"
+                      ? "bg-orange-900/30 text-orange-300"
+                      : "bg-red-900/30 text-red-400";
+                return (
               <div
                 key={be.model_id}
                 className="bg-zinc-900 border border-zinc-800 rounded p-4"
@@ -68,13 +82,9 @@ export const InfrastructurePanel: React.FC<Props> = ({
                 <div className="flex justify-between items-start mb-2">
                   <div className="font-bold text-zinc-200">{be.model_id}</div>
                   <div
-                    className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
-                      be.status === "ok"
-                        ? "bg-green-900/30 text-green-400"
-                        : "bg-red-900/30 text-red-400"
-                    }`}
+                    className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${tone}`}
                   >
-                    {be.status}
+                    {state}
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-xs text-zinc-500">
@@ -84,6 +94,8 @@ export const InfrastructurePanel: React.FC<Props> = ({
                   <div>Score: {be.rolling_score ?? "-"}</div>
                 </div>
               </div>
+                );
+              })()
             ))
           )}
         </div>

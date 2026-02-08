@@ -1,5 +1,6 @@
 
 import { writeTextFile, BaseDirectory, readTextFile } from '@tauri-apps/plugin-fs';
+import { redactAny, redactString } from "../utils/redact";
 
 export enum LogLevel {
   DEBUG = "DEBUG",
@@ -22,6 +23,7 @@ class LogService {
   private listeners: ((log: LogEntry) => void)[] = [];
   private maxLogs = 1000;
   private logFile = "app-runtime.log";
+  private lastLogByKey = new Map<string, number>();
 
   constructor() {
     // Capture unhandled errors
@@ -112,13 +114,16 @@ class LogService {
       id = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     }
 
+    const safeMessage = redactString(message);
+    const safeDetails = details === undefined ? undefined : redactAny(details);
+
     const entry: LogEntry = {
       id,
       timestamp: new Date().toISOString(),
       level,
       category,
-      message,
-      details,
+      message: safeMessage,
+      details: safeDetails,
     };
 
     this.logs.unshift(entry);
@@ -133,7 +138,7 @@ class LogService {
         : level === LogLevel.WARN
         ? "color: orange"
         : "color: cyan";
-    console.log(`%c[${category}] ${message}`, style, details || "");
+    console.log(`%c[${category}] ${safeMessage}`, style, safeDetails || "");
 
     this.notify(entry);
     this.persistLog(entry);
@@ -143,16 +148,32 @@ class LogService {
     this.add(LogLevel.DEBUG, category, message, details);
   }
 
+  debugThrottled(key: string, throttleMs: number, category: string, message: string, details?: any) {
+    this.addThrottled(key, throttleMs, LogLevel.DEBUG, category, message, details);
+  }
+
   info(category: string, message: string, details?: any) {
     this.add(LogLevel.INFO, category, message, details);
+  }
+
+  infoThrottled(key: string, throttleMs: number, category: string, message: string, details?: any) {
+    this.addThrottled(key, throttleMs, LogLevel.INFO, category, message, details);
   }
 
   warn(category: string, message: string, details?: any) {
     this.add(LogLevel.WARN, category, message, details);
   }
 
+  warnThrottled(key: string, throttleMs: number, category: string, message: string, details?: any) {
+    this.addThrottled(key, throttleMs, LogLevel.WARN, category, message, details);
+  }
+
   error(category: string, message: string, details?: any) {
     this.add(LogLevel.ERROR, category, message, details);
+  }
+
+  errorThrottled(key: string, throttleMs: number, category: string, message: string, details?: any) {
+    this.addThrottled(key, throttleMs, LogLevel.ERROR, category, message, details);
   }
 
   getLogs(): LogEntry[] {
@@ -168,6 +189,21 @@ class LogService {
 
   private notify(log: LogEntry) {
     this.listeners.forEach((l) => l(log));
+  }
+
+  private addThrottled(
+    key: string,
+    throttleMs: number,
+    level: LogLevel,
+    category: string,
+    message: string,
+    details?: any
+  ) {
+    const now = Date.now();
+    const last = this.lastLogByKey.get(key) ?? 0;
+    if (now - last < Math.max(0, throttleMs)) return;
+    this.lastLogByKey.set(key, now);
+    this.add(level, category, message, details);
   }
 }
 

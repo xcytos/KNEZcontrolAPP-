@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { knezClient } from "../../services/KnezClient";
 import { KnezConnectionProfile, KnezEvent, KnezHealthResponse, McpRegistrySnapshot } from "../../domain/DataContracts";
+import { deleteProfile, listProfiles, saveProfile, setActiveProfile } from "../../services/KnezProfiles";
 
 import { SystemPanel } from "../system/SystemPanel";
 import { SystemStatus } from "../system/useSystemOrchestrator";
+import { isOverallHealthyStatus } from "../../utils/health";
 
 export const ConnectionSettings: React.FC<{ 
   onClose: () => void;
@@ -17,14 +19,27 @@ export const ConnectionSettings: React.FC<{
   const [events, setEvents] = useState<KnezEvent[] | null>(null);
   const [mcp, setMcp] = useState<McpRegistrySnapshot | null>(null);
   const [message, setMessage] = useState("");
+  const [profiles, setProfiles] = useState<KnezConnectionProfile[]>(() => listProfiles());
+  const [selectedProfileId, setSelectedProfileId] = useState<string>(() => knezClient.getProfile().id);
+  const [saveId, setSaveId] = useState<string>(() => `profile-${Date.now().toString(16)}`);
   const w = window as any;
   const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
 
   useEffect(() => {
     const profile = knezClient.getProfile();
     setEndpoint(profile.endpoint);
+    setSelectedProfileId(profile.id);
+    setProfiles(listProfiles());
     if (profile.trustLevel === "verified") setMessage("Trusted KNEZ instance configured.");
   }, []);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
 
 
   const profile = useMemo(() => {
@@ -54,11 +69,10 @@ export const ConnectionSettings: React.FC<{
       
       const h = await knezClient.health({ timeoutMs: 2000 });
       setHealth(h);
-      setStatus("healthy");
-      
-      // CP2-C: Remove Manual Trust Ceremony - Auto-trust on success
-      knezClient.setTrusted(true);
-      setMessage("KNEZ is healthy and trusted.");
+      const ok = isOverallHealthyStatus(h.status);
+      setStatus(ok ? "healthy" : "failed");
+      knezClient.setTrusted(ok);
+      setMessage(ok ? "KNEZ is healthy and trusted." : `KNEZ responded but is not healthy (status=${String(h.status)}).`);
       
       try {
         const recent = await knezClient.listEvents("", 50);
@@ -102,6 +116,44 @@ export const ConnectionSettings: React.FC<{
         
         {/* Scrollable Body */}
         <div className="p-6 overflow-y-auto flex-1 space-y-4">
+
+          <div className="grid grid-cols-3 gap-2 items-end">
+            <div className="col-span-2">
+              <label className="block text-xs font-mono text-zinc-500 mb-1">PROFILE</label>
+              <select
+                value={selectedProfileId}
+                onChange={(e) => {
+                  const nextId = e.target.value;
+                  setSelectedProfileId(nextId);
+                  setActiveProfile(nextId);
+                  const p = knezClient.getProfile();
+                  setEndpoint(p.endpoint);
+                  setMessage(`Profile selected: ${p.id}`);
+                  setStatus("idle");
+                }}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded p-2 text-zinc-300 text-sm focus:border-blue-500 outline-none"
+              >
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.id}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              onClick={() => {
+                deleteProfile(selectedProfileId);
+                const next = listProfiles();
+                setProfiles(next);
+                const current = knezClient.getProfile();
+                setSelectedProfileId(current.id);
+                setMessage("Profile deleted.");
+              }}
+              className="px-3 py-2 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded transition-colors"
+            >
+              Delete
+            </button>
+          </div>
           
           {/* Endpoint Input */}
           <div>
@@ -113,6 +165,38 @@ export const ConnectionSettings: React.FC<{
               className="w-full bg-zinc-950 border border-zinc-800 rounded p-2 text-zinc-300 text-sm focus:border-blue-500 outline-none"
               placeholder="http://127.0.0.1:8000"
             />
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 items-end">
+            <div className="col-span-2">
+              <label className="block text-xs font-mono text-zinc-500 mb-1">SAVE AS</label>
+              <input
+                type="text"
+                value={saveId}
+                onChange={(e) => setSaveId(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded p-2 text-zinc-300 text-sm focus:border-blue-500 outline-none"
+                placeholder="profile name"
+              />
+            </div>
+            <button
+              onClick={() => {
+                const profile: KnezConnectionProfile = {
+                  id: saveId.trim() || `profile-${Date.now().toString(16)}`,
+                  type: endpoint.includes("localhost") || endpoint.includes("127.0.0.1") ? "local" : "remote",
+                  transport: "http",
+                  endpoint,
+                  trustLevel: "untrusted",
+                };
+                saveProfile(profile);
+                setProfiles(listProfiles());
+                setSelectedProfileId(profile.id);
+                knezClient.setProfile(profile);
+                setMessage(`Saved profile: ${profile.id}`);
+              }}
+              className="px-3 py-2 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
+            >
+              Save
+            </button>
           </div>
 
           {/* Status Message */}

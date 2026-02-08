@@ -67,8 +67,10 @@ const FormattedContent: React.FC<{ text: string }> = ({ text }) => {
 const MessageItemInner: React.FC<{ 
   msg: ChatMessage; 
   readOnly: boolean;
-  onVote: (id: string, vote: "upvote" | "downvote") => void;
-}> = ({ msg, readOnly, onVote }) => {
+  onStop?: (id: string) => void;
+  onRetry?: (id: string) => void;
+  onEdit?: (id: string) => void;
+}> = ({ msg, readOnly, onStop, onRetry, onEdit }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [copied, setCopied] = useState(false);
   const [thoughtsOpen, setThoughtsOpen] = useState(false);
@@ -98,6 +100,7 @@ const MessageItemInner: React.FC<{
       <div
       data-testid="message-bubble"
       data-role={msg.from}
+      data-message-id={msg.id}
       className={`max-w-[85%] rounded-2xl p-4 shadow-sm ${
           msg.from === "user"
             ? "bg-zinc-800 text-zinc-100 rounded-tr-sm"
@@ -192,27 +195,27 @@ const MessageItemInner: React.FC<{
           })
         )}
         
-        {msg.isPartial && <span className="inline-block w-2 h-4 ml-1 bg-indigo-500 animate-pulse align-middle" />}
+        {msg.isPartial && <span data-testid="partial-cursor" className="inline-block w-2 h-4 ml-1 bg-indigo-500 animate-pulse align-middle" />}
 
         {/* Metadata Footer */}
         <div className={`flex items-center gap-3 mt-2 ${msg.from === "user" ? "justify-end opacity-50 text-zinc-400" : "justify-start text-zinc-500"}`}>
            {msg.deliveryStatus === "queued" && (
-             <span className="text-[10px] font-mono bg-zinc-900/50 text-zinc-300 px-1.5 py-0.5 rounded border border-zinc-800" title={msg.deliveryError || "queued"}>
+             <span data-testid="delivery-status" data-status="queued" className="text-[10px] font-mono bg-zinc-900/50 text-zinc-300 px-1.5 py-0.5 rounded border border-zinc-800" title={msg.deliveryError || "queued"}>
                queued
              </span>
            )}
            {msg.deliveryStatus === "pending" && (
-             <span className="text-[10px] font-mono bg-blue-900/20 text-blue-200 px-1.5 py-0.5 rounded border border-blue-900/40">
+             <span data-testid="delivery-status" data-status="pending" className="text-[10px] font-mono bg-blue-900/20 text-blue-200 px-1.5 py-0.5 rounded border border-blue-900/40">
                pending
              </span>
            )}
            {msg.deliveryStatus === "failed" && (
-             <span className="text-[10px] font-mono bg-red-900/20 text-red-200 px-1.5 py-0.5 rounded border border-red-900/40" title={msg.deliveryError || "delivery failed"}>
+             <span data-testid="delivery-status" data-status="failed" className="text-[10px] font-mono bg-red-900/20 text-red-200 px-1.5 py-0.5 rounded border border-red-900/40" title={msg.deliveryError || "delivery failed"}>
                failed
              </span>
            )}
            {msg.metrics?.finishReason === "stopped" && (
-             <span className="text-[10px] font-mono bg-amber-900/20 text-amber-200 px-1.5 py-0.5 rounded border border-amber-900/40">
+             <span data-testid="finish-reason" data-reason="stopped" className="text-[10px] font-mono bg-amber-900/20 text-amber-200 px-1.5 py-0.5 rounded border border-amber-900/40">
                stopped
              </span>
            )}
@@ -240,8 +243,34 @@ const MessageItemInner: React.FC<{
                  </button>
                  {!readOnly && (
                     <>
-                      <button onClick={() => onVote(msg.id, "upvote")} className="text-[10px] hover:text-green-400 px-1.5 py-0.5 rounded hover:bg-zinc-800 transition-colors" title="Good">Upvote</button>
-                      <button onClick={() => onVote(msg.id, "downvote")} className="text-[10px] hover:text-red-400 px-1.5 py-0.5 rounded hover:bg-zinc-800 transition-colors" title="Bad">Downvote</button>
+                      {msg.from === "user" && onEdit && (
+                        <button 
+                          onClick={() => onEdit(msg.id)} 
+                          className="text-[10px] hover:text-blue-400 px-1.5 py-0.5 rounded hover:bg-zinc-800 transition-colors"
+                        >
+                          Edit
+                        </button>
+                      )}
+                      {msg.from !== "user" && (
+                        <>
+                          {(msg.isPartial || msg.deliveryStatus === "pending" || msg.deliveryStatus === "queued") && onStop && (
+                            <button 
+                              onClick={() => onStop(msg.id)} 
+                              className="text-[10px] hover:text-red-400 px-1.5 py-0.5 rounded hover:bg-zinc-800 transition-colors"
+                            >
+                              Stop
+                            </button>
+                          )}
+                          {(msg.deliveryStatus === "failed" || msg.metrics?.finishReason === "stopped") && onRetry && (
+                            <button 
+                              onClick={() => onRetry(msg.id)} 
+                              className="text-[10px] hover:text-blue-400 px-1.5 py-0.5 rounded hover:bg-zinc-800 transition-colors"
+                            >
+                              Retry
+                            </button>
+                          )}
+                        </>
+                      )}
                     </>
                  )}
               </div>

@@ -35,8 +35,24 @@ const MemoryDetailModal: React.FC<{
              </div>
              <div>
                <label className="text-xs text-zinc-500 uppercase">Evidence</label>
-               <div className="bg-zinc-950 p-2 rounded text-xs font-mono text-zinc-400">
-                 {detail.evidence_event_ids?.join(", ") || "None"}
+               <div className="bg-zinc-950 p-2 rounded text-xs font-mono text-zinc-400 space-y-1">
+                 {Array.isArray(detail.evidence_event_ids) && detail.evidence_event_ids.length > 0 ? (
+                   detail.evidence_event_ids.map((ev: any) => (
+                     <button
+                       key={String(ev)}
+                       onClick={() => {
+                         const id = String(ev);
+                         window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "replay" } }));
+                         window.dispatchEvent(new CustomEvent("replay-focus-event", { detail: { eventId: id } }));
+                       }}
+                       className="block w-full text-left hover:text-blue-300 transition-colors"
+                     >
+                       {String(ev)}
+                     </button>
+                   ))
+                 ) : (
+                   <div>None</div>
+                 )}
                </div>
              </div>
              <div>
@@ -69,6 +85,7 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [gateEvents, setGateEvents] = useState<any[]>([]);
+  const [since, setSince] = useState<string | null>(null);
 
   useEffect(() => {
     let interval: any;
@@ -77,33 +94,52 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
     if (!sessionId) {
       setMemories([]);
       setError("No session selected.");
+      setSince(null);
       return;
     }
     if (!online) {
       setMemories([]);
       setError("Offline. Start KNEZ to load memories.");
+      setSince(null);
       return;
     }
     setError(null);
 
     const fetchMemories = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
       try {
-        const recs = await knezClient.listMemory(sessionId);
-        const newMemories = knezClient.mapMemoryToUi(recs);
-        if (newMemories.length > lastCount && lastCount > 0) {
+        const recs = await knezClient.listMemory(sessionId, since ? { since, order: "asc", limit: 200 } : { order: "desc", limit: 200 });
+        const mapped = knezClient.mapMemoryToUi(recs);
+        const incoming = since ? mapped.slice().reverse() : mapped;
+        const newSince = recs.reduce((acc: string | null, r: any) => {
+          const t = String(r?.created_at ?? "");
+          if (!t) return acc;
+          if (!acc) return t;
+          return t > acc ? t : acc;
+        }, since);
+        if (incoming.length > 0 && lastCount > 0) {
           setIsRecording(true);
           setTimeout(() => setIsRecording(false), 2000);
         }
-        lastCount = newMemories.length;
-        setMemories(newMemories);
+        setSince(newSince);
+        setMemories((prev) => {
+          const byId = new Map<string, any>();
+          for (const m of prev) byId.set(String(m.id), m);
+          for (const m of incoming) byId.set(String(m.id), m);
+          const merged = Array.from(byId.values());
+          merged.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+          lastCount = merged.length;
+          return merged;
+        });
       } catch (e: any) {
         setError(String(e?.message ?? e));
         setMemories([]);
+        setSince(null);
       }
     };
 
     void fetchMemories();
-    interval = setInterval(fetchMemories, 3000);
+    interval = setInterval(fetchMemories, 30000);
     return () => clearInterval(interval);
   }, [sessionId, online]);
 
@@ -162,7 +198,26 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
            )}
         </div>
         
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2">
+           <button
+             onClick={() => window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "chat" } }))}
+             className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+           >
+             Chat
+           </button>
+           <button
+             onClick={() => window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "replay" } }))}
+             className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+           >
+             Replay
+           </button>
+           <button
+             onClick={() => window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "reflection" } }))}
+             className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+           >
+             Analyze
+           </button>
+           <div className="w-px h-6 bg-zinc-800 mx-1" />
            {/* CP8-9 Search Input */}
            <div className="relative">
              <input 
@@ -258,7 +313,26 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
         <KnowledgeBaseView />
       ) : activeTab === 'gate' ? (
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
+            <button
+              disabled={!sessionId || readOnly}
+              onClick={async () => {
+                if (!sessionId) return;
+                await knezClient.emitEvent({
+                  session_id: sessionId,
+                  event_type: "REFLECTION",
+                  event_name: "reflection_flag_memory_candidate",
+                  source: "tool",
+                  severity: "INFO",
+                  payload: { session_id: sessionId, source: "ui" },
+                  tags: ["reflection", "memory_gate"]
+                });
+                await loadGate();
+              }}
+              className="text-xs bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 px-3 py-1 rounded"
+            >
+              Flag for Gate
+            </button>
             <button
               disabled={!sessionId || readOnly}
               onClick={async () => {
@@ -293,7 +367,26 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
                   <div>policy: {payload.policy_name || "-"}</div>
                   <div>rule: {payload.rule_name || payload.reason || "-"}</div>
                   <div>memory_type: {payload.memory_type || "-"}</div>
-                  <div>evidence: {(payload.evidence_event_ids || []).join(", ") || "-"}</div>
+                  <div className="col-span-2">
+                    evidence:&nbsp;
+                    {Array.isArray(payload.evidence_event_ids) && payload.evidence_event_ids.length > 0 ? (
+                      payload.evidence_event_ids.map((ev: any) => (
+                        <button
+                          key={String(ev)}
+                          onClick={() => {
+                            const id = String(ev);
+                            window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "replay" } }));
+                            window.dispatchEvent(new CustomEvent("replay-focus-event", { detail: { eventId: id } }));
+                          }}
+                          className="text-[10px] font-mono text-blue-300 hover:text-blue-200 mr-2"
+                        >
+                          {String(ev).slice(0, 8)}…
+                        </button>
+                      ))
+                    ) : (
+                      <span>-</span>
+                    )}
+                  </div>
                 </div>
               </div>
             );

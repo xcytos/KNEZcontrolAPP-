@@ -7,12 +7,29 @@ import { chatService } from "../../services/ChatService";
 import { sessionDatabase } from "../../services/SessionDatabase";
 import { ChatMessage, ToolCallMessage } from "../../domain/DataContracts";
 import { knezClient } from "../../services/KnezClient";
+import { logger } from "../../services/LogService";
 
 function newLocalId(prefix: string): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return `${prefix}-${crypto.randomUUID().replace(/-/g, "")}`;
   }
   return `${prefix}-${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+}
+
+function formatMcpUiError(raw: string): string {
+  if (/mcp_stdin_write_denied/i.test(raw)) {
+    return "MCP blocked: stdin_write permission denied. Enable shell:allow-stdin-write in Tauri capabilities.";
+  }
+  if (/ModuleNotFoundError:\s*No module named 'config'|No module named 'config'/i.test(raw)) {
+    return "TAQWIN MCP failed to start (Python module path/config issue).";
+  }
+  if (/mcp_request_timeout/i.test(raw)) {
+    return "TAQWIN MCP request timed out. Please retry.";
+  }
+  if (/mcp_process_closed_/i.test(raw)) {
+    return "TAQWIN MCP closed unexpectedly. Please retry.";
+  }
+  return raw;
 }
 
 export const TaqwinToolsModal: React.FC<{
@@ -25,13 +42,63 @@ export const TaqwinToolsModal: React.FC<{
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>("");
   const [permissions, setPermissions] = useState<Record<string, boolean>>(() => getTaqwinToolPermissions());
+  const [query, setQuery] = useState<string>("");
+  const [favorites, setFavorites] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem("taqwin_favorite_tools");
+      const arr = raw ? (JSON.parse(raw) as string[]) : [];
+      return new Set(Array.isArray(arr) ? arr : []);
+    } catch {
+      return new Set();
+    }
+  });
+  const [recent, setRecent] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem("taqwin_recent_tools");
+      const arr = raw ? (JSON.parse(raw) as string[]) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch {
+      return [];
+    }
+  });
 
   const toolByName = useMemo(() => new Map(tools.map(t => [t.name, t])), [tools]);
+  const visibleTools = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const filtered = q
+      ? tools.filter((t) => `${t.name} ${t.description ?? ""}`.toLowerCase().includes(q))
+      : tools.slice();
+    filtered.sort((a, b) => {
+      const af = favorites.has(a.name) ? 0 : 1;
+      const bf = favorites.has(b.name) ? 0 : 1;
+      if (af !== bf) return af - bf;
+      return a.name.localeCompare(b.name);
+    });
+    return filtered;
+  }, [tools, query, favorites]);
+
+  const persistFavorites = (next: Set<string>) => {
+    setFavorites(next);
+    try {
+      localStorage.setItem("taqwin_favorite_tools", JSON.stringify(Array.from(next)));
+    } catch {}
+  };
+
+  const markRecent = (tool: string) => {
+    const next = [tool, ...recent.filter((t) => t !== tool)].slice(0, 10);
+    setRecent(next);
+    try {
+      localStorage.setItem("taqwin_recent_tools", JSON.stringify(next));
+    } catch {}
+  };
 
   const defaultArgsForTool = (tool: string) => {
     const sessionId = sessionController.getSessionId();
     if (tool === "activate_taqwin_unified_consciousness") {
       return { level: "superintelligence", query: "Hello TAQWIN.", context: { session_id: sessionId } };
+    }
+    if (tool === "taqwin_activate") {
+      return { session_id: sessionId, knez_endpoint: knezClient.getProfile().endpoint, checkpoint: "CP01_MCP_REGISTRY" };
     }
     if (tool === "get_server_status") {
       return { force_refresh: true, include_db_analysis: true };
@@ -67,12 +134,9 @@ export const TaqwinToolsModal: React.FC<{
         }
       } catch (e: any) {
         if (!cancelled) {
-          const msg = String(e?.message ?? e);
-          if (/mcp_stdin_write_denied/i.test(msg)) {
-            setError(`MCP blocked: stdin_write permission denied. Enable shell:allow-stdin-write in Tauri capabilities.\n${msg}`);
-          } else {
-            setError(msg);
-          }
+          const raw = String(e?.message ?? e);
+          logger.error("mcp", "Failed to load TAQWIN tools", { error: raw });
+          setError(formatMcpUiError(raw));
         }
       }
     };
@@ -88,6 +152,15 @@ export const TaqwinToolsModal: React.FC<{
     if (!isOpen) return;
     setPermissions(getTaqwinToolPermissions());
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -137,6 +210,7 @@ export const TaqwinToolsModal: React.FC<{
 
     try {
       const result = await taqwinMcpService.callTool(tool, args);
+      markRecent(tool);
       const finishedAt = new Date().toISOString();
       await sessionDatabase.updateMessage(messageId, {
         toolCall: { ...toolCall, status: "succeeded", result, finishedAt }
@@ -144,8 +218,11 @@ export const TaqwinToolsModal: React.FC<{
       await chatService.load(sessionId);
     } catch (e: any) {
       const finishedAt = new Date().toISOString();
+      const raw = String(e?.message ?? e);
+      logger.error("mcp", "TAQWIN tool call failed", { tool, error: raw });
+      markRecent(tool);
       await sessionDatabase.updateMessage(messageId, {
-        toolCall: { ...toolCall, status: "failed", error: String(e?.message ?? e), finishedAt }
+        toolCall: { ...toolCall, status: "failed", error: formatMcpUiError(raw), finishedAt }
       });
       await chatService.load(sessionId);
     } finally {
@@ -165,11 +242,22 @@ export const TaqwinToolsModal: React.FC<{
         <div className="p-6 overflow-y-auto flex-1 grid grid-cols-3 gap-4">
           <div className="col-span-1 space-y-2">
             <div className="text-xs font-mono text-zinc-500 mb-2">registry</div>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="search tools..."
+              className="w-full bg-zinc-950 border border-zinc-800 rounded p-2 text-zinc-300 text-xs font-mono focus:border-blue-500 outline-none"
+            />
+            {recent.length > 0 && (
+              <div className="text-[10px] text-zinc-500 font-mono">
+                recent: {recent.join(", ")}
+              </div>
+            )}
             <div className="border border-zinc-800 rounded bg-zinc-950/40 overflow-hidden">
               {tools.length === 0 ? (
                 <div className="p-3 text-xs text-zinc-500">No tools loaded.</div>
               ) : (
-                tools.map((t) => {
+                visibleTools.map((t) => {
                   const enabled = permissions[t.name] !== false;
                   const allowed = isTaqwinToolAllowed(t.name);
                   return (
@@ -188,6 +276,18 @@ export const TaqwinToolsModal: React.FC<{
                       >
                         <div className="text-xs font-mono text-zinc-200">{t.name}</div>
                         {t.description && <div className="text-[10px] text-zinc-500 mt-0.5 line-clamp-2">{t.description}</div>}
+                      </button>
+                      <button
+                        onClick={() => {
+                          const next = new Set(favorites);
+                          if (next.has(t.name)) next.delete(t.name);
+                          else next.add(t.name);
+                          persistFavorites(next);
+                        }}
+                        className="text-[10px] font-mono px-2 py-1 rounded border bg-zinc-950/50 text-zinc-400 border-zinc-800 hover:border-zinc-700"
+                        title="favorite"
+                      >
+                        {favorites.has(t.name) ? "★" : "☆"}
                       </button>
                       <button
                         onClick={() => {

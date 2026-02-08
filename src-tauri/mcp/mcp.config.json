@@ -1,0 +1,18 @@
+{
+  "schema_version": "1",
+  "servers": {
+    "taqwin-v1-ultimate-session": {
+      "command": "python",
+      "args": ["main.py"],
+      "env": {
+        "TAQWIN_LOG_LEVEL": "INFO",
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONUTF8": "1",
+        "TAQWIN_SESSION_RECORDING": "ENABLED",
+        "PYTHONIOENCODING": "utf-8",
+        "TAQWIN_STORAGE_TYPE": "HYBRID_SQLITE_JSON"
+      },
+      "working_directory": "TAQWIN_V1"
+    }
+  }
+}

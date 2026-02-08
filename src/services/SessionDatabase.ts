@@ -7,6 +7,8 @@ export interface Session {
   name: string;
   createdAt: string;
   updatedAt: string;
+  tags?: string[];
+  outcome?: string;
 }
 
 export interface StoredMessage {
@@ -58,6 +60,17 @@ export class KnezDatabase extends Dexie {
         if (!m.deliveryStatus) m.deliveryStatus = "delivered";
       });
     });
+    this.version(3).stores({
+      sessions: 'id, name, createdAt, updatedAt, outcome',
+      messages: 'id, sessionId, from, createdAt, deliveryStatus',
+      outgoingQueue: 'id, sessionId, createdAt, status, nextRetryAt'
+    }).upgrade(async (tx) => {
+      const sessions = tx.table<Session, string>("sessions");
+      await sessions.toCollection().modify((s) => {
+        if (!Array.isArray((s as any).tags)) (s as any).tags = [];
+        if (typeof (s as any).outcome !== "string") (s as any).outcome = "";
+      });
+    });
   }
 }
 
@@ -67,7 +80,7 @@ export const db = new KnezDatabase();
 export class SessionDatabase {
   async saveSession(id: string, name: string): Promise<void> {
      const now = new Date().toISOString();
-     await db.sessions.put({ id, name, createdAt: now, updatedAt: now }, id);
+     await db.sessions.put({ id, name, createdAt: now, updatedAt: now, tags: [], outcome: "" }, id);
   }
 
   async getSessions(): Promise<Session[]> {
@@ -80,6 +93,14 @@ export class SessionDatabase {
 
   async updateSessionName(id: string, name: string): Promise<void> {
     await db.sessions.update(id, { name, updatedAt: new Date().toISOString() });
+  }
+
+  async updateSessionTags(id: string, tags: string[]): Promise<void> {
+    await db.sessions.update(id, { tags, updatedAt: new Date().toISOString() });
+  }
+
+  async updateSessionOutcome(id: string, outcome: string): Promise<void> {
+    await db.sessions.update(id, { outcome, updatedAt: new Date().toISOString() });
   }
 
   async saveMessages(sessionId: string, messages: ChatMessage[]): Promise<void> {
