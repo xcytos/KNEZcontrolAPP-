@@ -51,6 +51,7 @@ type ChatCompletionsRequest = {
 export type ChatCompletionsFinal = {
   id: string;
   object: string;
+  model?: string;
   choices: Array<{
     message?: { role: string; content: string };
     finish_reason?: string;
@@ -349,7 +350,6 @@ export class KnezClient {
     const data = await resp.json();
     const next = String(data.new_session_id || "");
     if (!next) throw new Error("fork_failed_invalid_response");
-    this.setSessionId(next);
     return next;
   }
   
@@ -364,7 +364,6 @@ export class KnezClient {
     const data = await resp.json();
     const next = String(data.new_session_id || "");
     if (!next) throw new Error("resume_failed_invalid_response");
-    this.setSessionId(next);
     return next;
   }
   
@@ -531,7 +530,11 @@ export class KnezClient {
     }
   }
 
-  async chatCompletionsNonStream(messages: CompletionMessage[], sessionId: string): Promise<string> {
+  async chatCompletionsNonStream(
+    messages: CompletionMessage[],
+    sessionId: string,
+    options?: { onMeta?: (meta: { model?: string }) => void }
+  ): Promise<string> {
     const url = `${this.baseUrl()}/v1/chat/completions`;
     const payload: ChatCompletionsRequest = {
       messages,
@@ -552,6 +555,9 @@ export class KnezClient {
       throw new AppError("KNEZ_COMPLETION_FAILED", `${err.error}${err.reason ? `:${err.reason}` : ""}`);
     }
     const data = raw as ChatCompletionsFinal;
+    if (data?.model && options?.onMeta) {
+      try { options.onMeta({ model: data.model }); } catch {}
+    }
     return data.choices?.[0]?.message?.content ?? "";
   }
 
@@ -587,7 +593,11 @@ export class KnezClient {
     }
   }
 
-  async *chatCompletionsStream(messages: CompletionMessage[], sessionId: string): AsyncGenerator<string, void, void> {
+  async *chatCompletionsStream(
+    messages: CompletionMessage[],
+    sessionId: string,
+    options?: { signal?: AbortSignal; onMeta?: (meta: { model?: string }) => void }
+  ): AsyncGenerator<string, void, void> {
     if (sessionId.startsWith("test-session-")) {
       const lastUser = [...messages].reverse().find(m => m.role === "user")?.content ?? "";
       if (lastUser.includes("[FAIL_ONCE]")) {
@@ -597,13 +607,6 @@ export class KnezClient {
           throw new Error("forced_fail_once");
         }
       }
-      const mockResponse = `[TEST MODE] Echo: Mock response for testing. (Backend unavailable)`;
-      const chunks = mockResponse.split(" ");
-      for (const chunk of chunks) {
-        await new Promise(r => setTimeout(r, 30));
-        yield chunk + " ";
-      }
-      return;
     }
 
     const url = `${this.baseUrl()}/v1/chat/completions`;
@@ -621,6 +624,11 @@ export class KnezClient {
       try {
         let yieldedAny = false;
         const controller = new AbortController();
+        const externalSignal = options?.signal;
+        if (externalSignal) {
+          if (externalSignal.aborted) controller.abort();
+          else externalSignal.addEventListener("abort", () => controller.abort(), { once: true });
+        }
         const connectTimeoutId = window.setTimeout(() => controller.abort(), 12000);
         const resp = await fetch(url, {
           method: "POST",
@@ -642,6 +650,14 @@ export class KnezClient {
         }
         
         if (!resp.body) throw new Error("No response body");
+        const hdrModel =
+          resp.headers.get("x-model-id") ??
+          resp.headers.get("x-model") ??
+          resp.headers.get("openai-model") ??
+          resp.headers.get("x-openai-model");
+        if (hdrModel && options?.onMeta) {
+          try { options.onMeta({ model: hdrModel }); } catch {}
+        }
 
         const reader = resp.body.getReader();
         const decoder = new TextDecoder("utf-8");
@@ -667,7 +683,7 @@ export class KnezClient {
               if (data === "[DONE]") {
                 clearTimeout(inactivityTimeoutId);
                 if (!yieldedAny) {
-                  const final = await this.chatCompletionsNonStream(messages, sessionId);
+                  const final = await this.chatCompletionsNonStream(messages, sessionId, { onMeta: options?.onMeta });
                   if (!final.trim()) throw new AppError("KNEZ_STREAM_EMPTY", "Stream ended with no content");
                   yield final;
                 }
@@ -680,6 +696,9 @@ export class KnezClient {
                 throw new AppError("KNEZ_STREAM_FAILED", `${err.error}${err.reason ? `:${err.reason}` : ""}`);
               }
               const parsed = parsedAny as ChatCompletionsFinal | null;
+              if (parsed?.model && options?.onMeta) {
+                try { options.onMeta({ model: parsed.model }); } catch {}
+              }
               const delta = parsed?.choices?.[0]?.delta?.content;
               if (delta) {
                 yieldedAny = true;
@@ -690,24 +709,13 @@ export class KnezClient {
         }
         clearTimeout(inactivityTimeoutId);
         if (!yieldedAny) {
-          const final = await this.chatCompletionsNonStream(messages, sessionId);
+          const final = await this.chatCompletionsNonStream(messages, sessionId, { onMeta: options?.onMeta });
           if (!final.trim()) throw new AppError("KNEZ_STREAM_EMPTY", "Stream ended with no content");
           yield final;
         }
         return; // Success, exit generator
 
       } catch (err) {
-        // CP11: Test Mode Fallback
-        if (sessionId.startsWith("test-session-")) {
-           const mockResponse = `[TEST MODE] Echo: Mock response for testing. (Backend unavailable)`;
-           const chunks = mockResponse.split(" ");
-           for (const chunk of chunks) {
-              await new Promise(r => setTimeout(r, 100)); // Simulate latency
-              yield chunk + " ";
-           }
-           return;
-        }
-
         attempts++;
         if (attempts < maxAttempts) {
           logger.warn("knez_client", `Stream attempt ${attempts} failed, retrying...`, { error: err });
@@ -718,7 +726,7 @@ export class KnezClient {
     
     // If we exhausted retries
     try {
-      const final = await this.chatCompletionsNonStream(messages, sessionId);
+      const final = await this.chatCompletionsNonStream(messages, sessionId, { onMeta: options?.onMeta });
       if (!final.trim()) throw new AppError("KNEZ_STREAM_EMPTY", "Stream failed and fallback returned empty");
       yield final;
       return;

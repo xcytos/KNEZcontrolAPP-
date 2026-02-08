@@ -14,3 +14,8 @@
   - Cause: Trusted code implementation without validating runtime behavior via observation
   - Impact: Potential false confidence and hallucinated integrations
   - Correction: Introduced Playwright-based truth layer (CP6.1)
+
+- 2026-02-08 — Mistake: Declaring “real Tauri E2E” readiness without running it
+  - Cause: Implemented harness code but only ran non-Tauri Playwright checks
+  - Impact: False confidence; could ship broken desktop automation and miss regressions
+  - Correction: Require a passing `npm run e2e:tauri` run before any VERIFIED claim

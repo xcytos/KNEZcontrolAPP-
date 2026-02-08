@@ -1,32 +1,62 @@
 export const parseMessageContent = (text: string) => {
-  // 1. Extract <think> blocks
   const thinkRegex = /<think>([\s\S]*?)<\/think>/g;
-  const parts = [];
+  const parts: Array<{ type: string; content: string; title?: string }> = [];
   let lastIndex = 0;
   let match;
 
   while ((match = thinkRegex.exec(text)) !== null) {
-    // Content before think
     if (match.index > lastIndex) {
       const contentBefore = text.substring(lastIndex, match.index);
       if (contentBefore) {
-          parts.push({ type: 'text', content: contentBefore });
+        parts.push({ type: 'text', content: contentBefore });
       }
     }
-    // Think content
     parts.push({ type: 'think', content: match[1] });
     lastIndex = thinkRegex.lastIndex;
   }
   
-  // Remaining content
   if (lastIndex < text.length) {
     const remaining = text.substring(lastIndex);
     if (remaining) {
-        parts.push({ type: 'text', content: remaining });
+      parts.push({ type: 'text', content: remaining });
     }
   }
 
-  return parts;
+  const systemRegex = /\[SYSTEM:\s*([^\]]+)\]\n/g;
+  const exploded: Array<{ type: string; content: string; title?: string }> = [];
+  for (const p of parts) {
+    if (p.type !== "text") {
+      exploded.push(p);
+      continue;
+    }
+    const raw = p.content;
+    const matches = [...raw.matchAll(systemRegex)];
+    if (matches.length === 0) {
+      exploded.push(p);
+      continue;
+    }
+    let cursor = 0;
+    for (let i = 0; i < matches.length; i++) {
+      const m = matches[i];
+      const start = m.index ?? 0;
+      const headerEnd = start + m[0].length;
+      const nextStart = i + 1 < matches.length ? (matches[i + 1].index ?? raw.length) : raw.length;
+      if (start > cursor) {
+        const before = raw.slice(cursor, start);
+        if (before) exploded.push({ type: "text", content: before });
+      }
+      const title = (m[1] ?? "").trim();
+      const body = raw.slice(headerEnd, nextStart).replace(/^\n+/, "");
+      exploded.push({ type: "system", title, content: body.trimEnd() });
+      cursor = nextStart;
+    }
+    if (cursor < raw.length) {
+      const tail = raw.slice(cursor);
+      if (tail) exploded.push({ type: "text", content: tail });
+    }
+  }
+
+  return exploded;
 };
 
 export const formatMarkdown = (text: string) => {

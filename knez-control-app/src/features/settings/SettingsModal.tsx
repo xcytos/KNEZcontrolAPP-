@@ -22,7 +22,7 @@ export const SettingsModal: React.FC<{
   systemOutput: string;
   onForceStart?: (force?: boolean) => void;
 }> = ({ onClose, systemStatus, systemOutput, onForceStart }) => {
-  const { isConnected, isDegraded, health, cognitiveState } = useStatus();
+  const { online, isConnected, isDegraded, health, healthFresh, cognitiveState } = useStatus();
   const [page, setPage] = useState<PageId>("overview");
   const [dbOk, setDbOk] = useState<boolean | null>(null);
   const [keepAlive, setKeepAlive] = useState(getKeepAliveEnabled());
@@ -60,7 +60,7 @@ export const SettingsModal: React.FC<{
               <span>{tone.label}</span>
             </div>
             <div className="text-[10px] text-zinc-500 mt-1">
-              {health ? "Connected to KNEZ endpoint" : "Not connected"}
+              {online ? "Connected to KNEZ endpoint" : health ? "Disconnected (stale snapshot)" : "Not connected"}
             </div>
           </div>
 
@@ -106,11 +106,11 @@ export const SettingsModal: React.FC<{
                 <div className="border border-zinc-800 rounded-lg p-4 bg-zinc-950/30">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 text-sm text-zinc-200">
-                      {health ? <Cpu size={16} /> : <WifiOff size={16} />}
+                      {online ? <Cpu size={16} /> : <WifiOff size={16} />}
                       <span>KNEZ</span>
                     </div>
-                    <div className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${health ? "bg-emerald-900/30 text-emerald-400" : "bg-zinc-800 text-zinc-400"}`}>
-                      {health ? "connected" : "disconnected"}
+                    <div className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${online ? "bg-emerald-900/30 text-emerald-400" : "bg-zinc-800 text-zinc-400"}`}>
+                      {online ? "connected" : health ? "stale" : "disconnected"}
                     </div>
                   </div>
                   <div className="mt-3 text-xs text-zinc-500">
@@ -118,6 +118,9 @@ export const SettingsModal: React.FC<{
                   </div>
                   <div className="text-xs text-zinc-500">
                     Health: <span className="font-mono">{health?.status ?? "n/a"}</span>
+                  </div>
+                  <div className="text-xs text-zinc-500">
+                    Fresh: <span className="font-mono">{healthFresh ? "yes" : "no"}</span>
                   </div>
                 </div>
 
@@ -175,7 +178,7 @@ export const SettingsModal: React.FC<{
                         backend ? (modelOk ? "bg-emerald-900/30 text-emerald-400" : "bg-red-900/30 text-red-400") : "bg-zinc-800 text-zinc-400"
                       }`}
                     >
-                      {backend ? backend.status : "n/a"}
+                      {online ? (backend ? backend.status : "n/a") : "stale"}
                     </div>
                   </div>
                   <div className="mt-3 text-xs text-zinc-500">
@@ -186,6 +189,9 @@ export const SettingsModal: React.FC<{
                     ) : (
                       "No backend reported"
                     )}
+                  </div>
+                  <div className="text-xs text-zinc-500">
+                    backends: <span className="font-mono">{health?.backends?.length ?? 0}</span>
                   </div>
                 </div>
 

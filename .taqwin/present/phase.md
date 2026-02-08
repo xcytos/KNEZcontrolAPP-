@@ -18,5 +18,5 @@ not to slow progress.
 Phase update:
 - Phase name: CHECKPOINT 1.5 — Runtime Discovery & Observability
 - Phase goal: Surface runtime truth (backends, connectivity, MCP inspection) without adding execution authority.
-- Allowed work: Read-only /health discovery, endpoint/status visibility, event-derived local-backend signals, honest "not exposed" rendering for unimplemented registry endpoints.
-- Disallowed work: Starting/stopping KNEZ, choosing backends/models, downloading/loading models, executing MCPs, writing memory.
+- Allowed work: Read-only /health discovery, endpoint/status visibility, event-derived local-backend signals, honest "not exposed" rendering for unimplemented registry endpoints, read-only MCP web_intelligence (search_web, get_content).
+- Disallowed work: Starting/stopping KNEZ, choosing backends/models, downloading/loading models, executing non-read-only MCP tools, writing memory.

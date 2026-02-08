@@ -10,7 +10,7 @@ export const TestPanel: React.FC = () => {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [busyFixId, setBusyFixId] = useState<string | null>(null);
 
-  const { forceCheck, health } = useStatus();
+  const { forceCheck, online } = useStatus();
   const { launchAndConnect } = useSystemOrchestrator(async () => {
     await forceCheck();
   });
@@ -21,7 +21,7 @@ export const TestPanel: React.FC = () => {
   }, []);
 
   const runAll = async () => {
-    if (!health) {
+    if (!online) {
       await launchAndConnect(true);
       await new Promise((r) => setTimeout(r, 250));
       await forceCheck();
@@ -84,7 +84,7 @@ export const TestPanel: React.FC = () => {
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => { void (async () => {
-                          if (!health) {
+                          if (!online) {
                             await launchAndConnect(true);
                             await new Promise((x) => setTimeout(x, 250));
                             await forceCheck();

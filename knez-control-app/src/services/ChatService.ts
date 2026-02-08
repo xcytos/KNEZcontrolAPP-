@@ -7,11 +7,14 @@ import { asErrorMessage } from "../domain/Errors";
 import { observe } from "../utils/observer";
 import { sessionDatabase } from "./SessionDatabase";
 import { sessionController } from "./SessionController";
+import { isTaqwinToolAllowed } from "./TaqwinToolPermissions";
+import { taqwinMcpService } from "./TaqwinMcpService";
 
 export interface ChatState {
   messages: ChatMessage[];
   sending: boolean;
   activeTools: { search: boolean };
+  searchProvider: "off" | "taqwin" | "proxy";
 }
 
 export type StateListener = (state: ChatState) => void;
@@ -21,16 +24,30 @@ class ChatService {
   private state: ChatState = {
     messages: [],
     sending: false,
-    activeTools: { search: false }
+    activeTools: { search: false },
+    searchProvider: "off"
   };
   private sessionId: string;
   private queueFlushInFlight = false;
+  private activeDelivery:
+    | {
+        sessionId: string;
+        outgoingId: string;
+        assistantId: string;
+        controller: AbortController;
+        stopRequested: boolean;
+      }
+    | null = null;
 
   constructor() {
     this.sessionId = sessionController.getSessionId();
     void this.load(this.sessionId);
     sessionController.subscribe(({ sessionId }) => {
       this.sessionId = sessionId;
+      const stored = localStorage.getItem(`chat_search_enabled:${sessionId}`);
+      const enabled = stored === "1";
+      this.state.activeTools = { search: enabled };
+      this.state.searchProvider = this.resolveSearchProvider(enabled);
       void this.load(sessionId);
       void this.flushOutgoingQueue();
     });
@@ -63,6 +80,8 @@ class ChatService {
 
   setActiveTools(tools: { search: boolean }) {
     this.state.activeTools = tools;
+    this.state.searchProvider = this.resolveSearchProvider(tools.search);
+    localStorage.setItem(`chat_search_enabled:${this.sessionId}`, tools.search ? "1" : "0");
     this.notify();
   }
 
@@ -111,9 +130,73 @@ class ChatService {
     void this.flushOutgoingQueue(forceContext ? { [userId]: forceContext } : undefined);
   }
 
+  async sendMessageForSession(
+    sessionId: string,
+    text: string,
+    options?: { searchEnabled?: boolean; forceContext?: string }
+  ): Promise<string> {
+    if (!text.trim()) return "";
+    const now = new Date().toISOString();
+    const userId = newMessageId();
+    const assistantId = `${userId}-assistant`;
+
+    const userMsg: ChatMessage = {
+      id: userId,
+      sessionId,
+      from: "user",
+      text,
+      createdAt: now,
+      deliveryStatus: "pending",
+      correlationId: userId
+    };
+
+    const assistantMsg: ChatMessage = {
+      id: assistantId,
+      sessionId,
+      from: "knez",
+      text: "",
+      createdAt: now,
+      isPartial: true,
+      metrics: { totalTokens: 0 },
+      deliveryStatus: "pending",
+      replyToMessageId: userId,
+      correlationId: userId
+    };
+
+    if (this.sessionId === sessionId) {
+      this.state.messages = [...this.state.messages, userMsg, assistantMsg];
+      this.notify();
+    }
+
+    await this.ensureSessionExists(sessionId);
+    await sessionDatabase.saveMessages(sessionId, [userMsg, assistantMsg]);
+    await sessionDatabase.enqueueOutgoing({
+      id: userId,
+      sessionId,
+      text,
+      searchEnabled: options?.searchEnabled ?? false,
+      createdAt: now
+    });
+    void this.flushOutgoingQueue(options?.forceContext ? { [userId]: options.forceContext } : undefined);
+    return userId;
+  }
+
   // Exposed for Tests
   getMessages() { return this.state.messages; }
   clear() { this.state.messages = []; this.notify(); }
+  stopCurrentResponse() {
+    if (!this.activeDelivery) return;
+    if (this.activeDelivery.sessionId !== this.sessionId) return;
+    this.activeDelivery.stopRequested = true;
+    this.activeDelivery.controller.abort();
+  }
+
+  stopResponseForSession(sessionId: string) {
+    if (!this.activeDelivery) return;
+    if (this.activeDelivery.sessionId !== sessionId) return;
+    this.activeDelivery.stopRequested = true;
+    this.activeDelivery.controller.abort();
+  }
 
   private async ensureSessionExists(sessionId: string) {
     const existing = await sessionDatabase.getSession(sessionId);
@@ -131,12 +214,59 @@ class ChatService {
         .filter((x) => x.status !== "in_flight" && Date.parse(x.nextRetryAt) <= now)
         .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
 
-      for (const item of eligible) {
+      const currentSessionId = this.sessionId;
+      const current = currentSessionId ? eligible.filter((x) => x.sessionId === currentSessionId) : [];
+      const others = currentSessionId ? eligible.filter((x) => x.sessionId !== currentSessionId) : eligible;
+
+      const othersBySession = new Map<string, typeof eligible>();
+      for (const x of others) {
+        const arr = othersBySession.get(x.sessionId) ?? [];
+        arr.push(x);
+        othersBySession.set(x.sessionId, arr);
+      }
+
+      const pickOthers: typeof eligible = [];
+      for (const arr of othersBySession.values()) {
+        arr.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+        pickOthers.push(arr[0]);
+      }
+      pickOthers.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+
+      const toProcess = [...current, ...pickOthers].slice(0, 3);
+      for (const item of toProcess) {
         await this.deliverQueueItem(item.id, forceContexts?.[item.id]);
       }
     } finally {
       this.queueFlushInFlight = false;
     }
+  }
+
+  private buildCompletionMessages(
+    messages: ChatMessage[],
+    currentUserMessageId: string,
+    assistantPlaceholderId: string,
+    searchContext: string
+  ) {
+    const base = messages.filter((m) => m.id !== assistantPlaceholderId);
+    const userMessages = base.filter((m) => m.from === "user");
+    const currentUserIdx = userMessages.findIndex((m) => m.id === currentUserMessageId);
+    const sliceStart = Math.max(0, (currentUserIdx >= 0 ? currentUserIdx : userMessages.length) - 3);
+    const selectedUsers = userMessages.slice(sliceStart, currentUserIdx >= 0 ? currentUserIdx + 1 : userMessages.length);
+
+    const selected: ChatMessage[] = [];
+    for (const u of selectedUsers) {
+      selected.push(u);
+      const a =
+        base.find((m) => m.from === "knez" && m.replyToMessageId === u.id) ??
+        base.find((m) => m.from === "knez" && m.correlationId && m.correlationId === u.id);
+      if (a) selected.push(a);
+    }
+
+    return selected.map((m) => {
+      let content = m.text;
+      if (m.id === currentUserMessageId && searchContext) content += searchContext;
+      return { role: m.from === "user" ? "user" : "assistant", content } as const;
+    });
   }
 
   private async deliverQueueItem(id: string, forceContext?: string) {
@@ -173,13 +303,30 @@ class ChatService {
     });
 
     const assistantId = `${id}-assistant`;
-    const completionMessages = messages
-      .filter((m) => m.id !== assistantId)
-      .map((m) => {
-        let content = m.text;
-        if (m.id === id && searchContext) content += searchContext;
-        return { role: m.from === "user" ? "user" : "assistant", content } as const;
-      });
+    const completionMessages = this.buildCompletionMessages(messages, id, assistantId, searchContext);
+
+    let modelId: string | undefined;
+    let backendStatus: string | undefined;
+    try {
+      const health = await knezClient.health({ timeoutMs: 1500 });
+      const b = (health as any)?.backends?.[0];
+      modelId = b?.model_id;
+      backendStatus = b?.status;
+    } catch {}
+    if (modelId || backendStatus) {
+      const idx = messages.findIndex((m) => m.id === assistantId);
+      if (idx >= 0) {
+        messages[idx] = {
+          ...messages[idx],
+          metrics: { ...(messages[idx].metrics ?? {}), modelId, backendStatus }
+        };
+      }
+      await sessionDatabase.updateMessage(assistantId, { metrics: { modelId, backendStatus } });
+      if (this.sessionId === sessionId) {
+        this.state.messages = messages;
+        this.notify();
+      }
+    }
 
     try {
       let collected = "";
@@ -187,8 +334,32 @@ class ChatService {
       const startTime = Date.now();
       let tokenCount = 0;
       let lastPersistAt = 0;
+      let lastUiAt = 0;
+      const controller = new AbortController();
+      this.activeDelivery = { sessionId, outgoingId: id, assistantId, controller, stopRequested: false };
+      let metaModelSet = false;
 
-      for await (const token of knezClient.chatCompletionsStream(completionMessages, sessionId)) {
+      const applyAssistantMetrics = async (patch: Partial<NonNullable<ChatMessage["metrics"]>>) => {
+        const currentInState = this.state.messages.find((m) => m.id === assistantId);
+        const merged = { ...(currentInState?.metrics ?? {}), ...(patch ?? {}) };
+        await sessionDatabase.updateMessage(assistantId, { metrics: merged });
+        if (this.sessionId === sessionId) {
+          this.state.messages = this.state.messages.map((m) => m.id === assistantId ? { ...m, metrics: merged } : m);
+          this.notify();
+        }
+      };
+
+      for await (const token of knezClient.chatCompletionsStream(completionMessages, sessionId, {
+        signal: controller.signal,
+        onMeta: (meta) => {
+          const nextModel = meta?.model?.trim();
+          if (!nextModel) return;
+          if (metaModelSet && nextModel === modelId) return;
+          modelId = nextModel;
+          metaModelSet = true;
+          void applyAssistantMetrics({ modelId });
+        }
+      })) {
         if (!firstTokenTime) firstTokenTime = Date.now();
         collected += token;
         tokenCount++;
@@ -196,14 +367,17 @@ class ChatService {
           text: collected,
           metrics: {
             timeToFirstTokenMs: firstTokenTime - startTime,
-            totalTokens: tokenCount
+            totalTokens: tokenCount,
+            modelId,
+            backendStatus
           }
         };
-        if (this.sessionId === sessionId) {
+        const now = Date.now();
+        if (this.sessionId === sessionId && now - lastUiAt > 50) {
+          lastUiAt = now;
           this.state.messages = this.state.messages.map((m) => m.id === assistantId ? { ...m, ...patch } : m);
           this.notify();
         }
-        const now = Date.now();
         if (now - lastPersistAt > 650) {
           lastPersistAt = now;
           await sessionDatabase.updateMessage(assistantId, { text: collected, metrics: patch.metrics, isPartial: true });
@@ -218,7 +392,7 @@ class ChatService {
         isPartial: false,
         text: collected,
         deliveryStatus: "delivered",
-        metrics: { finishReason: "stop", totalTokens: tokenCount }
+        metrics: { finishReason: "completed", totalTokens: tokenCount, modelId, backendStatus }
       };
 
       await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered" });
@@ -235,20 +409,90 @@ class ChatService {
 
       await this.maybeAutoNameSession(sessionId, (await persistenceService.loadChat(sessionId)) ?? []);
     } catch (err: any) {
-      const errorMsg = asErrorMessage(err);
+      const stopRequested =
+        this.activeDelivery?.sessionId === sessionId &&
+        this.activeDelivery?.outgoingId === id &&
+        this.activeDelivery.stopRequested === true;
+
+      const abortName = String(err?.name ?? "");
+      const abortMsg = asErrorMessage(err);
+      if (stopRequested && (abortName === "AbortError" || abortMsg === "Request cancelled")) {
+        const finalAssistant: Partial<ChatMessage> = {
+          isPartial: false,
+          text: this.state.messages.find((m) => m.id === assistantId)?.text ?? "",
+          deliveryStatus: "delivered",
+          metrics: {
+            finishReason: "stopped",
+            totalTokens: (this.state.messages.find((m) => m.id === assistantId)?.metrics as any)?.totalTokens ?? 0,
+            modelId,
+            backendStatus
+          }
+        };
+
+        const persisted = await sessionDatabase.getMessage(assistantId);
+        const persistedText = persisted?.text ?? "";
+        const persistedTokens = (persisted?.metrics as any)?.totalTokens ?? 0;
+
+        await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered", deliveryError: undefined });
+        await sessionDatabase.updateMessage(assistantId, {
+          deliveryStatus: "delivered",
+          deliveryError: undefined,
+          isPartial: false,
+          refusal: false,
+          text: persistedText,
+          metrics: { finishReason: "stopped", totalTokens: persistedTokens, modelId, backendStatus }
+        });
+        await sessionDatabase.removeOutgoing(id);
+
+        if (this.sessionId === sessionId) {
+          this.state.messages = this.state.messages.map((m) => {
+            if (m.id === id) return { ...m, deliveryStatus: "delivered", deliveryError: undefined };
+            if (m.id === assistantId) {
+              return { ...m, ...finalAssistant, text: persistedText, metrics: { finishReason: "stopped", totalTokens: persistedTokens, modelId, backendStatus } };
+            }
+            return m;
+          });
+        }
+        return;
+      }
+
+      const errorMsg = abortMsg;
+      const isTransient =
+        err?.name === "AbortError" ||
+        /^\[(KNEZ_TIMEOUT|KNEZ_FETCH_FAILED|KNEZ_HEALTH_FAILED|KNEZ_STREAM_FAILED)\]/.test(errorMsg) ||
+        /failed to fetch|networkerror|econnrefused|enotfound/i.test(errorMsg);
       const nextRetryAt = new Date(Date.now() + Math.min(60000, 1000 * Math.pow(2, Math.min(6, attempt)))).toISOString();
       await sessionDatabase.updateOutgoing(id, { status: "failed", nextRetryAt, lastError: errorMsg });
-      await sessionDatabase.updateMessage(id, { deliveryStatus: "failed", deliveryError: errorMsg });
-      await sessionDatabase.updateMessage(`${id}-assistant`, { deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: `Error: ${errorMsg}`, refusal: true });
+      if (isTransient) {
+        const existingAssistant = this.state.messages.find((m) => m.id === `${id}-assistant`);
+        await sessionDatabase.updateMessage(id, { deliveryStatus: "pending", deliveryError: errorMsg });
+        await sessionDatabase.updateMessage(`${id}-assistant`, {
+          deliveryStatus: "pending",
+          deliveryError: errorMsg,
+          isPartial: true,
+          refusal: false,
+          text: existingAssistant?.text ?? ""
+        });
+      } else {
+        await sessionDatabase.updateMessage(id, { deliveryStatus: "failed", deliveryError: errorMsg });
+        await sessionDatabase.updateMessage(`${id}-assistant`, { deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: `Error: ${errorMsg}`, refusal: true });
+      }
 
       if (this.sessionId === sessionId) {
         this.state.messages = this.state.messages.map((m) => {
-          if (m.id === id) return { ...m, deliveryStatus: "failed", deliveryError: errorMsg };
-          if (m.id === `${id}-assistant`) return { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: `Error: ${errorMsg}`, refusal: true };
+          if (m.id === id) return { ...m, deliveryStatus: isTransient ? "pending" : "failed", deliveryError: errorMsg };
+          if (m.id === `${id}-assistant`) {
+            return isTransient
+              ? { ...m, deliveryStatus: "pending", deliveryError: errorMsg, isPartial: true, refusal: false }
+              : { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: `Error: ${errorMsg}`, refusal: true };
+          }
           return m;
         });
       }
     } finally {
+      if (this.activeDelivery?.sessionId === sessionId && this.activeDelivery?.outgoingId === id) {
+        this.activeDelivery = null;
+      }
       if (this.sessionId === sessionId) {
         this.state.sending = false;
         this.notify();
@@ -262,11 +506,43 @@ class ChatService {
 
     const urlMatch = opts.text.match(/https?:\/\/[^\s]+/);
     if (urlMatch) {
+      const provider = this.resolveSearchProvider(true);
+      if (provider === "taqwin") {
+        try {
+          const res = await taqwinMcpService.callTool("web_intelligence", {
+            action: "get_content",
+            url: urlMatch[0],
+            analysis_type: "standard",
+            agent_context: "taqwin"
+          });
+          const text = extractMcpText(res);
+          const parsed = safeJsonParseLocal<any>(text);
+          const body = parsed ?? { raw: text };
+          return `\n\n[SYSTEM: Web Extraction (TAQWIN)]\nURL: ${urlMatch[0]}\n${truncateString(JSON.stringify(body), 4000)}`;
+        } catch {}
+      }
       const res = await extractionService.extract(urlMatch[0], 'raw');
       if (!res.error) {
         return `\n\n[SYSTEM: Web Extraction Result for ${urlMatch[0]}]\nSummary: ${res.summary}\nData: ${JSON.stringify(res.data)}`;
       }
       return "";
+    }
+
+    const provider = this.resolveSearchProvider(true);
+    if (provider === "taqwin") {
+      try {
+        const res = await taqwinMcpService.callTool("web_intelligence", {
+          action: "search_web",
+          query: opts.text,
+          max_results: 5,
+          analysis_type: "standard",
+          agent_context: "taqwin"
+        });
+        const text = extractMcpText(res);
+        const parsed = safeJsonParseLocal<any>(text);
+        const body = parsed ?? { raw: text };
+        return `\n\n[SYSTEM: Web Search (TAQWIN)]\nQuery: ${opts.text}\n${truncateString(JSON.stringify(body), 4000)}`;
+      } catch {}
     }
 
     const results = await extractionService.search(opts.text, 5);
@@ -307,6 +583,15 @@ class ChatService {
     if (!title) return;
     await sessionDatabase.updateSessionName(sessionId, title);
   }
+
+  private resolveSearchProvider(searchEnabled: boolean): "off" | "taqwin" | "proxy" {
+    if (!searchEnabled) return "off";
+    const w = window as any;
+    const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
+    if (!isTauri) return "proxy";
+    if (!isTaqwinToolAllowed("web_intelligence")) return "proxy";
+    return "taqwin";
+  }
 }
 
 export const chatService = new ChatService();
@@ -337,6 +622,25 @@ function deriveSessionTitle(inputs: string[]): string | null {
     return titleCase(short);
   }
   return titleCase(top.join(" "));
+}
+
+function extractMcpText(res: any): string {
+  const blocks = Array.isArray(res?.content) ? res.content : [];
+  const parts = blocks.map((b: any) => (b && typeof b.text === "string" ? b.text : "")).filter(Boolean);
+  return parts.join("\n");
+}
+
+function truncateString(input: string, maxLen: number): string {
+  if (input.length <= maxLen) return input;
+  return input.slice(0, maxLen) + "…";
+}
+
+function safeJsonParseLocal<T>(raw: string): T | null {
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
 }
 
 function titleCase(s: string): string {

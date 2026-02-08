@@ -21,6 +21,8 @@ export interface ChatMessage {
     timeToFirstTokenMs?: number;
     totalTokens?: number;
     finishReason?: string;
+    modelId?: string;
+    backendStatus?: string;
   };
   influence?: {
     vote?: InfluenceVote;
@@ -363,4 +365,3 @@ export interface KnowledgeDoc {
   tags: string[];
   status: "indexing" | "indexed" | "failed";
 }
-
