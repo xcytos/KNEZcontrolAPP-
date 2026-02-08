@@ -19,7 +19,7 @@ export interface StoredMessage {
   toolCall?: any;
   refusal?: boolean;
   isPartial?: boolean;
-  deliveryStatus?: "pending" | "delivered" | "failed";
+  deliveryStatus?: "queued" | "pending" | "delivered" | "failed";
   deliveryError?: string;
   replyToMessageId?: string;
   correlationId?: string;

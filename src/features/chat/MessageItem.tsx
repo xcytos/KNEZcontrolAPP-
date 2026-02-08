@@ -196,6 +196,11 @@ const MessageItemInner: React.FC<{
 
         {/* Metadata Footer */}
         <div className={`flex items-center gap-3 mt-2 ${msg.from === "user" ? "justify-end opacity-50 text-zinc-400" : "justify-start text-zinc-500"}`}>
+           {msg.deliveryStatus === "queued" && (
+             <span className="text-[10px] font-mono bg-zinc-900/50 text-zinc-300 px-1.5 py-0.5 rounded border border-zinc-800" title={msg.deliveryError || "queued"}>
+               queued
+             </span>
+           )}
            {msg.deliveryStatus === "pending" && (
              <span className="text-[10px] font-mono bg-blue-900/20 text-blue-200 px-1.5 py-0.5 rounded border border-blue-900/40">
                pending

@@ -4,10 +4,9 @@ import { isKnezReachable, setKnezEndpoint, waitForKnezReachable } from './mocks'
 test('KNEZ User Journey: Live Runtime Verification', async ({ page }) => {
   const endpoint = process.env.KNEZ_ENDPOINT ?? 'http://localhost:8000';
   await setKnezEndpoint(page, endpoint);
-  await page.goto('/');
 
   if (!(await isKnezReachable(page, endpoint))) {
-    const launchButton = page.getByRole('button', { name: /Launch KNEZ/i });
+    const launchButton = page.getByRole('button', { name: /Launch KNEZ|Start/i });
     if (await launchButton.isVisible({ timeout: 2000 })) {
       await launchButton.click();
     }

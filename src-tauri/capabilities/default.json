@@ -7,6 +7,7 @@
     "fs:default",
     "http:default",
     "shell:allow-open",
+    "shell:allow-stdin-write",
     {
       "identifier": "shell:allow-spawn",
       "allow": [

@@ -30,11 +30,16 @@ export class McpStdioClient {
       this.child = null;
     });
     cmd.on("error", (err) => {
-      const e = new Error(String(err));
+      const e = this.asMcpError(err);
       for (const p of this.pending.values()) p.reject(e);
       this.pending.clear();
     });
-    this.child = await cmd.spawn();
+    try {
+      this.child = await cmd.spawn();
+    } catch (err) {
+      const e = this.asMcpError(err);
+      throw e;
+    }
   }
 
   async stop(): Promise<void> {
@@ -82,6 +87,14 @@ export class McpStdioClient {
     }
   }
 
+  private asMcpError(err: any): Error {
+    const msg = String(err?.message ?? err);
+    if (/stdin[_-]?write.*not allowed/i.test(msg) || /allow-stdin-write/i.test(msg)) {
+      return new Error(`mcp_stdin_write_denied: ${msg}`);
+    }
+    return new Error(msg);
+  }
+
   private async request<T = any>(method: string, params?: any): Promise<T> {
     if (!this.child) throw new Error("mcp_not_started");
     const id = String(this.nextId++);
@@ -92,7 +105,15 @@ export class McpStdioClient {
     const p = new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
     });
-    await this.child.write(payload);
+    try {
+      await this.child.write(payload);
+    } catch (err) {
+      const slot = this.pending.get(id);
+      if (slot) {
+        this.pending.delete(id);
+        slot.reject(this.asMcpError(err));
+      }
+    }
     return p;
   }
 

@@ -1,4 +1,4 @@
-import { FC } from 'react';
+import { FC, useEffect, useState } from 'react';
 import { 
   MessageSquare, 
   Activity, 
@@ -15,15 +15,20 @@ import {
   TerminalSquare, 
   Zap
 } from 'lucide-react';
+import { tabErrorStore } from '../../services/TabErrorStore';
 
 export type View = 'chat' | 'memory' | 'timeline' | 'reflection' | 'infrastructure' | 'mcp' | 'governance' | 'agent' | 'logs' | 'replay' | 'updates' | 'extraction' | 'diagnostics' | 'skills';
 
 interface SidebarProps {
   activeView: View;
   onViewChange: (view: View) => void;
+  tabErrors?: Partial<Record<View, boolean>>;
 }
 
-export const Sidebar: FC<SidebarProps> = ({ activeView, onViewChange }) => {
+export const Sidebar: FC<SidebarProps> = ({ activeView, onViewChange, tabErrors }) => {
+  const [errors, setErrors] = useState(() => tabErrorStore.get());
+  useEffect(() => tabErrorStore.subscribe(setErrors), []);
+  const mergedErrors = { ...errors, ...(tabErrors ?? {}) };
   const items: { id: View; label: string; icon: React.FC<any>; locked?: boolean }[] = [
     { id: 'chat', label: 'Chat', icon: MessageSquare },
     { id: 'agent', label: 'Agent Loop', icon: Activity },
@@ -65,6 +70,9 @@ export const Sidebar: FC<SidebarProps> = ({ activeView, onViewChange }) => {
             <span className="hidden group-hover/sidebar:block text-xs font-medium text-zinc-200 whitespace-nowrap overflow-hidden text-ellipsis">
               {item.label}
             </span>
+            {!!mergedErrors?.[item.id] && (
+              <span data-testid={`sidebar-error-${item.id}`} className="absolute right-2 top-2 w-2 h-2 rounded-full bg-red-500" />
+            )}
           </button>
         ))}
       </div>
