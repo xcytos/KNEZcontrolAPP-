@@ -4,20 +4,22 @@ const PROFILE_STORAGE_KEY = 'knez_connection_profile';
 const SESSION_STORAGE_KEY = 'knez_session_id';
 
 export async function setKnezEndpoint(page: Page, endpoint: string) {
-  await page.addInitScript(
-    ({ endpoint }) => {
-      const profile = {
-        id: 'e2e-live',
-        type: 'local',
-        transport: 'http',
-        endpoint,
-        trustLevel: 'untrusted',
-      };
-      localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
-      localStorage.removeItem(SESSION_STORAGE_KEY);
-    },
-    { endpoint }
-  );
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await page.evaluate(({ endpoint, PROFILE_STORAGE_KEY, SESSION_STORAGE_KEY }) => {
+    const profile = {
+      id: 'e2e-live',
+      type: 'local',
+      transport: 'http',
+      endpoint,
+      trustLevel: 'untrusted',
+    };
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+    try {
+      indexedDB.deleteDatabase('KnezDatabase');
+    } catch {}
+  }, { endpoint, PROFILE_STORAGE_KEY, SESSION_STORAGE_KEY });
+  await page.reload({ waitUntil: 'domcontentloaded' });
 }
 
 export async function isKnezReachable(page: Page, endpoint: string): Promise<boolean> {

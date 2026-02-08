@@ -247,6 +247,7 @@ const AuditModal: React.FC<{
 
   if (!isOpen) return null;
 
+  const queuedMessages = messages.filter((m) => m.deliveryStatus === "queued").length;
   const pendingMessages = messages.filter((m) => m.deliveryStatus === "pending").length;
   const failedMessages = messages.filter((m) => m.deliveryStatus === "failed").length;
 
@@ -267,6 +268,7 @@ const AuditModal: React.FC<{
           <div className="grid grid-cols-2 gap-3">
             <div className="text-xs text-zinc-400 border border-zinc-800 rounded p-3 bg-zinc-950/40">
               <div className="font-mono text-zinc-500 mb-2">Messages</div>
+              <div className="flex justify-between"><span className="text-zinc-500">queued</span><span className="font-mono text-zinc-200">{queuedMessages}</span></div>
               <div className="flex justify-between"><span className="text-zinc-500">pending</span><span className="font-mono text-zinc-200">{pendingMessages}</span></div>
               <div className="flex justify-between"><span className="text-zinc-500">failed</span><span className="font-mono text-zinc-200">{failedMessages}</span></div>
             </div>
@@ -580,9 +582,8 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
             placeholder={readOnly ? "System is offline..." : "Type a message..."}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
-            disabled={readOnly}
           />
-          {sending && !readOnly && (
+          {sending && (
             <button
               type="button"
               onClick={() => chatService.stopCurrentResponse()}
@@ -598,7 +599,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
           <button
             data-testid="chat-send"
             type="submit"
-            disabled={!inputValue.trim() || readOnly}
+            disabled={!inputValue.trim()}
             className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg shadow-blue-900/20"
           >
             {sending ? "Sending..." : "Send"}

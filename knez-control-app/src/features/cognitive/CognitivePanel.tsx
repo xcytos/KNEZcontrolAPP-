@@ -46,16 +46,16 @@ export const CognitivePanel: React.FC = () => {
       {/* Overview Cards (Always Visible) */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-lg">
-          <div className="text-zinc-500 text-xs uppercase tracking-wider mb-2">System Stability</div>
-          <div className="text-3xl font-bold text-blue-400">{state.stability_score ?? 'N/A'}%</div>
+          <div className="text-zinc-500 text-xs uppercase tracking-wider mb-2">Stability Drift</div>
+          <div className="text-2xl font-bold text-blue-400">{state.stability?.drift ?? "unknown"}</div>
         </div>
         <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-lg">
-          <div className="text-zinc-500 text-xs uppercase tracking-wider mb-2">Active Contexts</div>
-          <div className="text-3xl font-bold text-green-400">{state.active_contexts ?? 0}</div>
+          <div className="text-zinc-500 text-xs uppercase tracking-wider mb-2">Governance Active</div>
+          <div className="text-3xl font-bold text-green-400">{state.governance?.active_insights ?? 0}</div>
         </div>
         <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-lg">
-          <div className="text-zinc-500 text-xs uppercase tracking-wider mb-2">Focus Level</div>
-          <div className="text-3xl font-bold text-purple-400">{state.focus_level ?? 'Normal'}</div>
+          <div className="text-zinc-500 text-xs uppercase tracking-wider mb-2">Stability Confidence</div>
+          <div className="text-2xl font-bold text-purple-400">{state.stability?.confidence ?? "unknown"}</div>
         </div>
       </div>
 

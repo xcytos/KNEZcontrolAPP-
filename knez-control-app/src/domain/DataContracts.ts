@@ -12,7 +12,7 @@ export interface ChatMessage {
   hiddenLocally?: boolean;
   refusal?: boolean;
   isPartial?: boolean;
-  deliveryStatus?: "pending" | "delivered" | "failed";
+  deliveryStatus?: "queued" | "pending" | "delivered" | "failed";
   deliveryError?: string;
   replyToMessageId?: string;
   correlationId?: string;
@@ -327,12 +327,25 @@ export interface ReplayTimeline {
 }
 
 export interface CognitiveState {
-  focus_level: string;
-  stability_score: number;
-  active_contexts: number;
-  governance_state?: any;
-  influence_state?: any;
-  taqwin_state?: any;
+  governance?: {
+    active_insights?: number;
+    blocked?: number;
+    monitoring?: number;
+    eligible?: number;
+  };
+  influence?: {
+    enabled?: boolean;
+    eligible_contracts?: number;
+  };
+  stability?: {
+    drift?: string;
+    confidence?: string;
+  };
+  taqwin?: {
+    sessions_observed?: number;
+    proposals_observed?: number;
+    rejections?: number;
+  };
 }
 
 export interface AuditResult {

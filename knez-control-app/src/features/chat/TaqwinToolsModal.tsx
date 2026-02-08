@@ -66,7 +66,14 @@ export const TaqwinToolsModal: React.FC<{
           });
         }
       } catch (e: any) {
-        if (!cancelled) setError(String(e?.message ?? e));
+        if (!cancelled) {
+          const msg = String(e?.message ?? e);
+          if (/mcp_stdin_write_denied/i.test(msg)) {
+            setError(`MCP blocked: stdin_write permission denied. Enable shell:allow-stdin-write in Tauri capabilities.\n${msg}`);
+          } else {
+            setError(msg);
+          }
+        }
       }
     };
     void load(true);
@@ -191,9 +198,9 @@ export const TaqwinToolsModal: React.FC<{
                         className={`text-[10px] font-mono px-2 py-1 rounded border transition-colors ${
                           enabled ? "bg-blue-900/20 text-blue-200 border-blue-900/40" : "bg-zinc-950/50 text-zinc-500 border-zinc-800"
                         }`}
-                        title={allowed ? "enabled" : "blocked by trust policy"}
+                        title={allowed ? "enabled" : "blocked by trust policy (visible, not callable)"}
                       >
-                        {enabled ? "on" : "off"}
+                        {allowed ? (enabled ? "on" : "off") : "policy"}
                       </button>
                     </div>
                   );

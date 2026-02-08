@@ -13,6 +13,11 @@ export interface ExtractionResult {
 }
 
 export class ExtractionService {
+  private isTauriRuntime(): boolean {
+    const w = window as any;
+    return !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
+  }
+
   private proxyUrl(url: string): string {
     const trimmed = url.trim();
     if (!/^https?:\/\//i.test(trimmed)) return trimmed;
@@ -32,19 +37,22 @@ export class ExtractionService {
       }
     };
 
+    const proxied = this.proxyUrl(url);
+    if (!this.isTauriRuntime()) {
+      return { text: await attempt(proxied), finalUrl: proxied };
+    }
     try {
       return { text: await attempt(url), finalUrl: url };
     } catch {
-      const proxied = this.proxyUrl(url);
       return { text: await attempt(proxied), finalUrl: proxied };
     }
   }
 
-  async search(query: string, limit = 5): Promise<Array<{ title: string; url: string; snippet?: string }>> {
+  async search(query: string, limit = 5, timeoutMs = 3500): Promise<Array<{ title: string; url: string; snippet?: string }>> {
     const q = query.trim();
     if (!q) return [];
     const searchUrl = `https://duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
-    const { text } = await this.fetchTextWithFallback(searchUrl, 6500);
+    const { text } = await this.fetchTextWithFallback(searchUrl, timeoutMs);
 
     const results: Array<{ title: string; url: string; snippet?: string }> = [];
     const re = /result__a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
@@ -59,13 +67,13 @@ export class ExtractionService {
     return results;
   }
   
-  async extract(url: string, mode: ExtractionMode): Promise<ExtractionResult> {
+  async extract(url: string, mode: ExtractionMode, timeoutMs = 6500): Promise<ExtractionResult> {
     try {
       if (url.includes("knez-internal")) {
          await knezClient.addKnowledge({ title: "Extraction", content: url });
       }
 
-      const { text, finalUrl } = await this.fetchTextWithFallback(url, 6500);
+      const { text, finalUrl } = await this.fetchTextWithFallback(url, timeoutMs);
       
       let summary = `Extracted ${text.length} chars.`;
       let keywords: string[] = [];

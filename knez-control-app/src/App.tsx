@@ -31,6 +31,7 @@ import { ToastProvider } from './components/ui/Toast';
 import { StatusProvider } from './contexts/StatusProvider';
 import { useStatus } from './contexts/useStatus';
 import { setObserverState } from './utils/observer';
+import { tabErrorStore } from './services/TabErrorStore';
 import './App.css';
 
 import { CommandPalette } from './components/ui/CommandPalette';
@@ -46,6 +47,7 @@ function AppContent() {
   const [sessionId, setSessionId] = useState<string | null>(sessionController.getSessionId());
   const [readOnly, setReadOnly] = useState(true);
   const [chatSending, setChatSending] = useState(false);
+  const [tabErrors, setTabErrors] = useState<Partial<Record<View, boolean>>>({});
   
   const { online, isConnected, isDegraded, lastCheck, health, forceCheck } = useStatus();
 
@@ -53,6 +55,10 @@ function AppContent() {
   useEffect(() => {
     const unsub = sessionController.subscribe(({ sessionId }) => setSessionId(sessionId));
     return unsub;
+  }, []);
+
+  useEffect(() => {
+    return tabErrorStore.subscribe(setTabErrors);
   }, []);
 
   useEffect(() => {
@@ -227,11 +233,17 @@ function AppContent() {
     }
   };
 
+  const handleViewChange = (view: View) => {
+    setActiveView(view);
+    tabErrorStore.clear(view);
+  };
+
   return (
     <MainLayout
       activeView={activeView}
-      onViewChange={setActiveView}
+      onViewChange={handleViewChange}
       presenceState={presenceState}
+      tabErrors={tabErrors}
       connectionStatus={{
         state:
           systemStatus === "starting"
@@ -275,7 +287,7 @@ function AppContent() {
       <CommandPalette 
         isOpen={commandPaletteOpen} 
         onClose={() => setCommandPaletteOpen(false)}
-        onNavigate={(view) => { setActiveView(view); setCommandPaletteOpen(false); }}
+        onNavigate={(view) => { handleViewChange(view); setCommandPaletteOpen(false); }}
       />
       <FloatingConsole />
       

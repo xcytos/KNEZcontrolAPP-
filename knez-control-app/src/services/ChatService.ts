@@ -9,6 +9,8 @@ import { sessionDatabase } from "./SessionDatabase";
 import { sessionController } from "./SessionController";
 import { isTaqwinToolAllowed } from "./TaqwinToolPermissions";
 import { taqwinMcpService } from "./TaqwinMcpService";
+import { logger } from "./LogService";
+import { tabErrorStore } from "./TabErrorStore";
 
 export interface ChatState {
   messages: ChatMessage[];
@@ -38,6 +40,9 @@ class ChatService {
         stopRequested: boolean;
       }
     | null = null;
+  private maxOutgoingAttempts = 6;
+  private maxOutgoingAgeMs = 10 * 60 * 1000;
+  private firstTokenTimeoutMs = 12000;
 
   constructor() {
     this.sessionId = sessionController.getSessionId();
@@ -53,7 +58,7 @@ class ChatService {
     });
     window.setInterval(() => {
       void this.flushOutgoingQueue();
-    }, 1500);
+    }, 500);
   }
 
   subscribe(listener: StateListener) {
@@ -98,7 +103,7 @@ class ChatService {
       from: "user",
       text: text,
       createdAt: now,
-      deliveryStatus: "pending",
+      deliveryStatus: "delivered",
       correlationId: userId
     };
 
@@ -108,9 +113,9 @@ class ChatService {
       from: "knez",
       text: "",
       createdAt: now,
-      isPartial: true,
+      isPartial: false,
       metrics: { totalTokens: 0 },
-      deliveryStatus: "pending",
+      deliveryStatus: "queued",
       replyToMessageId: userId,
       correlationId: userId
     };
@@ -120,6 +125,17 @@ class ChatService {
     observe("chat_send_attempt", { sessionId: this.sessionId, message: text });
     await this.ensureSessionExists(this.sessionId);
     await sessionDatabase.saveMessages(this.sessionId, [userMsg, assistantMsg]);
+    const existing = (await sessionDatabase.listOutgoing()).filter((x) => x.sessionId === this.sessionId);
+    if (existing.length > 0) {
+      const errorMsg = "Queue limit reached (1). Wait for the current response to finish.";
+      logger.warn("chat", "Queue limit reached", { sessionId: this.sessionId });
+      tabErrorStore.mark("chat");
+      tabErrorStore.mark("logs");
+      await sessionDatabase.updateMessage(assistantId, { deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, refusal: true, text: `Error: ${errorMsg}` });
+      this.state.messages = this.state.messages.map((m) => m.id === assistantId ? { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, refusal: true, text: `Error: ${errorMsg}` } : m);
+      this.notify();
+      return;
+    }
     await sessionDatabase.enqueueOutgoing({
       id: userId,
       sessionId: this.sessionId,
@@ -146,7 +162,7 @@ class ChatService {
       from: "user",
       text,
       createdAt: now,
-      deliveryStatus: "pending",
+      deliveryStatus: "delivered",
       correlationId: userId
     };
 
@@ -156,9 +172,9 @@ class ChatService {
       from: "knez",
       text: "",
       createdAt: now,
-      isPartial: true,
+      isPartial: false,
       metrics: { totalTokens: 0 },
-      deliveryStatus: "pending",
+      deliveryStatus: "queued",
       replyToMessageId: userId,
       correlationId: userId
     };
@@ -170,6 +186,19 @@ class ChatService {
 
     await this.ensureSessionExists(sessionId);
     await sessionDatabase.saveMessages(sessionId, [userMsg, assistantMsg]);
+    const existing = (await sessionDatabase.listOutgoing()).filter((x) => x.sessionId === sessionId);
+    if (existing.length > 0) {
+      const errorMsg = "Queue limit reached (1). Wait for the current response to finish.";
+      logger.warn("chat", "Queue limit reached", { sessionId });
+      tabErrorStore.mark("chat");
+      tabErrorStore.mark("logs");
+      await sessionDatabase.updateMessage(assistantId, { deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, refusal: true, text: `Error: ${errorMsg}` });
+      if (this.sessionId === sessionId) {
+        this.state.messages = this.state.messages.map((m) => m.id === assistantId ? { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, refusal: true, text: `Error: ${errorMsg}` } : m);
+        this.notify();
+      }
+      return userId;
+    }
     await sessionDatabase.enqueueOutgoing({
       id: userId,
       sessionId,
@@ -232,7 +261,7 @@ class ChatService {
       }
       pickOthers.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
 
-      const toProcess = [...current, ...pickOthers].slice(0, 3);
+      const toProcess = [...current, ...pickOthers].slice(0, 1);
       for (const item of toProcess) {
         await this.deliverQueueItem(item.id, forceContexts?.[item.id]);
       }
@@ -273,9 +302,37 @@ class ChatService {
     const item = await sessionDatabase.getOutgoing(id);
     if (!item) return;
 
+    const ageMs = Date.now() - Date.parse(item.createdAt);
+    if (item.attempts >= this.maxOutgoingAttempts || ageMs > this.maxOutgoingAgeMs) {
+      const errorMsg =
+        item.attempts >= this.maxOutgoingAttempts
+          ? `Retry limit reached after ${item.attempts} attempts`
+          : `Delivery expired after ${Math.round(ageMs / 1000)}s`;
+      await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered", deliveryError: undefined });
+      await sessionDatabase.updateMessage(`${id}-assistant`, {
+        deliveryStatus: "failed",
+        deliveryError: errorMsg,
+        isPartial: false,
+        text: `Error: ${errorMsg}`,
+        refusal: true
+      });
+      await sessionDatabase.removeOutgoing(id);
+      if (this.sessionId === item.sessionId) {
+        this.state.messages = this.state.messages.map((m) => {
+          if (m.id === id) return { ...m, deliveryStatus: "delivered", deliveryError: undefined };
+          if (m.id === `${id}-assistant`) {
+            return { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: `Error: ${errorMsg}`, refusal: true };
+          }
+          return m;
+        });
+        this.notify();
+      }
+      return;
+    }
+
     const attempt = item.attempts + 1;
     await sessionDatabase.updateOutgoing(id, { status: "in_flight", attempts: attempt, lastError: undefined });
-    await sessionDatabase.updateMessage(id, { deliveryStatus: "pending", deliveryError: undefined });
+    await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered", deliveryError: undefined });
     await sessionDatabase.updateMessage(`${id}-assistant`, { deliveryStatus: "pending", deliveryError: undefined, isPartial: true, refusal: false });
 
     const sessionId = item.sessionId;
@@ -283,7 +340,7 @@ class ChatService {
 
     const userIdx = messages.findIndex((m) => m.id === id);
     if (userIdx >= 0) {
-      messages[userIdx] = { ...messages[userIdx], deliveryStatus: "pending", deliveryError: undefined };
+      messages[userIdx] = { ...messages[userIdx], deliveryStatus: "delivered", deliveryError: undefined };
     }
     const assistantIdx = messages.findIndex((m) => m.id === `${id}-assistant`);
     if (assistantIdx >= 0) {
@@ -328,6 +385,7 @@ class ChatService {
       }
     }
 
+    let firstTokenTimer: number | undefined;
     try {
       let collected = "";
       let firstTokenTime: number | undefined;
@@ -338,6 +396,9 @@ class ChatService {
       const controller = new AbortController();
       this.activeDelivery = { sessionId, outgoingId: id, assistantId, controller, stopRequested: false };
       let metaModelSet = false;
+      firstTokenTimer = window.setTimeout(() => {
+        if (!firstTokenTime) controller.abort();
+      }, this.firstTokenTimeoutMs);
 
       const applyAssistantMetrics = async (patch: Partial<NonNullable<ChatMessage["metrics"]>>) => {
         const currentInState = this.state.messages.find((m) => m.id === assistantId);
@@ -457,6 +518,9 @@ class ChatService {
       }
 
       const errorMsg = abortMsg;
+      logger.error("chat", "Delivery failed", { sessionId, messageId: id, error: errorMsg });
+      tabErrorStore.mark("chat");
+      tabErrorStore.mark("logs");
       const isTransient =
         err?.name === "AbortError" ||
         /^\[(KNEZ_TIMEOUT|KNEZ_FETCH_FAILED|KNEZ_HEALTH_FAILED|KNEZ_STREAM_FAILED)\]/.test(errorMsg) ||
@@ -465,25 +529,25 @@ class ChatService {
       await sessionDatabase.updateOutgoing(id, { status: "failed", nextRetryAt, lastError: errorMsg });
       if (isTransient) {
         const existingAssistant = this.state.messages.find((m) => m.id === `${id}-assistant`);
-        await sessionDatabase.updateMessage(id, { deliveryStatus: "pending", deliveryError: errorMsg });
+        await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered", deliveryError: undefined });
         await sessionDatabase.updateMessage(`${id}-assistant`, {
-          deliveryStatus: "pending",
+          deliveryStatus: "queued",
           deliveryError: errorMsg,
-          isPartial: true,
+          isPartial: false,
           refusal: false,
           text: existingAssistant?.text ?? ""
         });
       } else {
-        await sessionDatabase.updateMessage(id, { deliveryStatus: "failed", deliveryError: errorMsg });
+        await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered", deliveryError: undefined });
         await sessionDatabase.updateMessage(`${id}-assistant`, { deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: `Error: ${errorMsg}`, refusal: true });
       }
 
       if (this.sessionId === sessionId) {
         this.state.messages = this.state.messages.map((m) => {
-          if (m.id === id) return { ...m, deliveryStatus: isTransient ? "pending" : "failed", deliveryError: errorMsg };
+          if (m.id === id) return { ...m, deliveryStatus: "delivered", deliveryError: undefined };
           if (m.id === `${id}-assistant`) {
             return isTransient
-              ? { ...m, deliveryStatus: "pending", deliveryError: errorMsg, isPartial: true, refusal: false }
+              ? { ...m, deliveryStatus: "queued", deliveryError: errorMsg, isPartial: false, refusal: false }
               : { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: `Error: ${errorMsg}`, refusal: true };
           }
           return m;
@@ -492,6 +556,9 @@ class ChatService {
     } finally {
       if (this.activeDelivery?.sessionId === sessionId && this.activeDelivery?.outgoingId === id) {
         this.activeDelivery = null;
+      }
+      if (typeof firstTokenTimer === "number") {
+        clearTimeout(firstTokenTimer);
       }
       if (this.sessionId === sessionId) {
         this.state.sending = false;
@@ -503,25 +570,41 @@ class ChatService {
   private async buildSearchContext(opts: { text: string; searchEnabled: boolean; forceContext?: string }): Promise<string> {
     if (opts.forceContext) return opts.forceContext;
     if (!opts.searchEnabled) return "";
+    const deadline = Date.now() + 2000;
+    const timeLeftMs = () => deadline - Date.now();
+    const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
+      const ms = Math.max(1, timeoutMs);
+      let timeoutId: number | undefined;
+      const timeout = new Promise<T>((_resolve, reject) => {
+        timeoutId = window.setTimeout(() => reject(new Error("timeout")), ms);
+      });
+      try {
+        return await Promise.race([promise, timeout]);
+      } finally {
+        if (typeof timeoutId === "number") clearTimeout(timeoutId);
+      }
+    };
 
     const urlMatch = opts.text.match(/https?:\/\/[^\s]+/);
     if (urlMatch) {
       const provider = this.resolveSearchProvider(true);
       if (provider === "taqwin") {
         try {
-          const res = await taqwinMcpService.callTool("web_intelligence", {
+          const res = await withTimeout(taqwinMcpService.callTool("web_intelligence", {
             action: "get_content",
             url: urlMatch[0],
             analysis_type: "standard",
             agent_context: "taqwin"
-          });
+          }), Math.min(1200, timeLeftMs()));
           const text = extractMcpText(res);
           const parsed = safeJsonParseLocal<any>(text);
           const body = parsed ?? { raw: text };
           return `\n\n[SYSTEM: Web Extraction (TAQWIN)]\nURL: ${urlMatch[0]}\n${truncateString(JSON.stringify(body), 4000)}`;
         } catch {}
       }
-      const res = await extractionService.extract(urlMatch[0], 'raw');
+      const budget = Math.min(1500, timeLeftMs());
+      if (budget <= 0) return "";
+      const res = await withTimeout(extractionService.extract(urlMatch[0], "raw", budget), budget + 50).catch(() => ({ error: "timeout" } as any));
       if (!res.error) {
         return `\n\n[SYSTEM: Web Extraction Result for ${urlMatch[0]}]\nSummary: ${res.summary}\nData: ${JSON.stringify(res.data)}`;
       }
@@ -531,13 +614,13 @@ class ChatService {
     const provider = this.resolveSearchProvider(true);
     if (provider === "taqwin") {
       try {
-        const res = await taqwinMcpService.callTool("web_intelligence", {
+        const res = await withTimeout(taqwinMcpService.callTool("web_intelligence", {
           action: "search_web",
           query: opts.text,
           max_results: 5,
           analysis_type: "standard",
           agent_context: "taqwin"
-        });
+        }), Math.min(1200, timeLeftMs()));
         const text = extractMcpText(res);
         const parsed = safeJsonParseLocal<any>(text);
         const body = parsed ?? { raw: text };
@@ -545,28 +628,17 @@ class ChatService {
       } catch {}
     }
 
-    const results = await extractionService.search(opts.text, 5);
+    const budget = Math.min(1500, timeLeftMs());
+    if (budget <= 0) return "";
+    const results = await withTimeout(extractionService.search(opts.text, 5, budget), budget + 50).catch(() => []);
     if (results.length === 0) return "";
     const top = results.slice(0, 3);
-    const extracts = [];
-    for (const r of top.slice(0, 2)) {
-      const ex = await extractionService.extract(r.url, "raw");
-      if (!ex.error) {
-        extracts.push({
-          url: r.url,
-          title: r.title,
-          summary: ex.data?.description || ex.data?.title || ex.summary,
-          snippet: ex.data?.content_snippet
-        });
-      }
-    }
 
     return (
       `\n\n[SYSTEM: Web Search Enabled]\n` +
       `Query: ${opts.text}\n` +
       `Top results:\n` +
-      top.map((r, idx) => `${idx + 1}. ${r.title}\n${r.url}`).join("\n\n") +
-      (extracts.length > 0 ? `\n\n[SYSTEM: Extraction Snapshots]\n${JSON.stringify(extracts)}` : "")
+      top.map((r, idx) => `${idx + 1}. ${r.title}\n${r.url}`).join("\n\n")
     );
   }
 

@@ -30,6 +30,7 @@ export const FloatingConsole: React.FC = () => {
   const [cmdOutput, setCmdOutput] = useState<string>("");
   const [running, setRunning] = useState(false);
   const [psCommand, setPsCommand] = useState<string>("Get-Date");
+  const [badges, setBadges] = useState<{ logs: number; terminal: number }>({ logs: 0, terminal: 0 });
 
   const childRef = useRef<Child | null>(null);
   const w = window as any;
@@ -39,12 +40,24 @@ export const FloatingConsole: React.FC = () => {
     setLogs(logger.getLogs().slice(0, 200));
     const unsub = logger.subscribe((entry) => {
       setLogs((prev) => [entry, ...prev].slice(0, 200));
+      if (entry.level === "ERROR" && (!open || tab !== "logs")) {
+        setBadges((prev) => ({ ...prev, logs: prev.logs + 1 }));
+      }
     });
     return unsub;
-  }, []);
+  }, [open, tab]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (tab === "logs") setBadges((prev) => ({ ...prev, logs: 0 }));
+    if (tab === "terminal") setBadges((prev) => ({ ...prev, terminal: 0 }));
+  }, [open, tab]);
 
   const append = (line: string) => {
     setCmdOutput((prev) => (prev ? prev + "\n" + line : line));
+    if ((/^\[(ERROR|STDERR)\]/.test(line) || /\[STDERR\]/.test(line)) && (!open || tab !== "terminal")) {
+      setBadges((prev) => ({ ...prev, terminal: prev.terminal + 1 }));
+    }
   };
 
   const stop = async () => {
@@ -136,10 +149,13 @@ export const FloatingConsole: React.FC = () => {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="fixed bottom-5 right-5 w-12 h-12 rounded-full bg-zinc-900 border border-zinc-700 shadow-lg flex items-center justify-center text-zinc-200 hover:bg-zinc-800 transition-colors z-50"
+        className="fixed bottom-5 right-5 w-12 h-12 rounded-full bg-zinc-900 border border-zinc-700 shadow-lg flex items-center justify-center text-zinc-200 hover:bg-zinc-800 transition-colors z-50 relative"
         title="System Console"
       >
         <TerminalSquare size={20} />
+        {(badges.logs + badges.terminal) > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-red-500 border border-zinc-950" />
+        )}
       </button>
 
       {open && (
@@ -149,19 +165,29 @@ export const FloatingConsole: React.FC = () => {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setTab("logs")}
-                  className={`text-xs px-2 py-1 rounded ${
+                  className={`text-xs px-2 py-1 rounded relative ${
                     tab === "logs" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"
                   }`}
                 >
                   Logs
+                  {badges.logs > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-red-600 text-white text-[10px] flex items-center justify-center">
+                      {Math.min(99, badges.logs)}
+                    </span>
+                  )}
                 </button>
                 <button
                   onClick={() => setTab("terminal")}
-                  className={`text-xs px-2 py-1 rounded ${
+                  className={`text-xs px-2 py-1 rounded relative ${
                     tab === "terminal" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"
                   }`}
                 >
                   Terminal
+                  {badges.terminal > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-red-600 text-white text-[10px] flex items-center justify-center">
+                      {Math.min(99, badges.terminal)}
+                    </span>
+                  )}
                 </button>
               </div>
               <div className="flex items-center gap-2">

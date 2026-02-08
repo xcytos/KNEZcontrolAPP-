@@ -58,7 +58,7 @@ const MemoryDetailModal: React.FC<{
 };
 
 import { persistenceService } from '../../services/PersistenceService'
-export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: boolean }> = ({ sessionId }) => {
+export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: boolean }> = ({ sessionId, readOnly }) => {
   const { online } = useStatus();
   const [memories, setMemories] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -248,6 +248,11 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
                 No memories found matching "{searchQuery}"
              </div>
           )}
+          {!searchQuery && memories.length === 0 && (
+             <div className="text-center text-zinc-500 text-xs py-8">
+                No memories yet. Memory promotion requires running the Gate check and backend support.
+             </div>
+          )}
         </div>
       ) : activeTab === 'knowledge' ? (
         <KnowledgeBaseView />
@@ -255,7 +260,7 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           <div className="flex justify-end">
             <button
-              disabled={!sessionId}
+              disabled={!sessionId || readOnly}
               onClick={async () => {
                 if (!sessionId) return;
                 await knezClient.checkMemoryGate(sessionId);
@@ -266,6 +271,11 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
               Run Gate Check
             </button>
           </div>
+          {readOnly && (
+            <div className="text-zinc-500 text-xs">
+              Read-only mode: gate check disabled.
+            </div>
+          )}
           {gateEvents.length === 0 && (
             <div className="text-zinc-500 text-xs">No memory gate events found.</div>
           )}

@@ -206,10 +206,10 @@ export const SettingsModal: React.FC<{
                     </div>
                   </div>
                   <div className="mt-3 text-xs text-zinc-500">
-                    focus: <span className="font-mono">{cognitiveState?.focus_level ?? "-"}</span>
+                    confidence: <span className="font-mono">{cognitiveState?.stability?.confidence ?? "-"}</span>
                   </div>
                   <div className="text-xs text-zinc-500">
-                    stability: <span className="font-mono">{cognitiveState?.stability_score ?? "-"}</span>
+                    drift: <span className="font-mono">{cognitiveState?.stability?.drift ?? "-"}</span>
                   </div>
                 </div>
               </div>

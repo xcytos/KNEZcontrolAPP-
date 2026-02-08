@@ -12,18 +12,25 @@ class TaqwinMcpService {
 
   private async getClient(): Promise<import("./McpStdioClient").McpStdioClient> {
     if (!isTauriRuntime()) throw new Error("mcp_unavailable_non_tauri");
-    if (!this.client) {
-      const { McpStdioClient } = await import("./McpStdioClient");
-      this.client = new McpStdioClient();
-      await this.client.start("taqwin-mcp");
+    try {
+      if (!this.client) {
+        const { McpStdioClient } = await import("./McpStdioClient");
+        this.client = new McpStdioClient();
+        await this.client.start("taqwin-mcp");
+        this.initialized = false;
+        this.toolsCache = null;
+      }
+      if (!this.initialized) {
+        await this.client.initialize();
+        this.initialized = true;
+      }
+      return this.client;
+    } catch (err) {
+      this.client = null;
       this.initialized = false;
       this.toolsCache = null;
+      throw err;
     }
-    if (!this.initialized) {
-      await this.client.initialize();
-      this.initialized = true;
-    }
-    return this.client;
   }
 
   async listTools(forceRefresh = false): Promise<McpToolDefinition[]> {
