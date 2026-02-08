@@ -30,10 +30,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   headerSubtitle,
 }) => {
   return (
-    <div className="flex h-screen w-screen bg-zinc-950 text-zinc-100 overflow-hidden font-sans">
+    <div className="flex h-full w-full min-h-0 min-w-0 bg-zinc-950 text-zinc-100 overflow-hidden font-sans">
       <Sidebar activeView={activeView} onViewChange={onViewChange} tabErrors={tabErrors} />
       
-      <div className="flex-1 flex flex-col h-full overflow-hidden">
+      <div className="flex-1 flex flex-col h-full min-h-0 min-w-0 overflow-hidden">
         <header className="h-14 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900/50 backdrop-blur-sm">
           <div className="flex items-center gap-4">
             <h1 className="text-sm font-semibold text-zinc-400 tracking-wide uppercase">
@@ -69,7 +69,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           </div>
         </header>
         
-        <main className="flex-1 overflow-auto p-0 relative">
+        <main className="flex-1 min-h-0 min-w-0 overflow-auto p-0 relative">
           {children}
         </main>
       </div>

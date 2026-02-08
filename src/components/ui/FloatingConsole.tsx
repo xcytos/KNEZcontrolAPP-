@@ -179,7 +179,7 @@ export const FloatingConsole: React.FC = () => {
 
       {open && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-end justify-end p-5">
-          <div className="w-[520px] h-[420px] bg-zinc-950 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden flex flex-col">
+          <div className="w-[520px] h-[420px] max-w-[calc(100vw-2.5rem)] max-h-[calc(100vh-2.5rem)] bg-zinc-950 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden flex flex-col">
             <div className="px-3 py-2 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/40">
               <div className="flex items-center gap-2">
                 <button

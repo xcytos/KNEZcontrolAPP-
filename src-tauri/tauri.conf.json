@@ -17,9 +17,15 @@
         "title": "knez-control-app",
         "width": 1280,
         "height": 800,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "center": true,
+        "maximized": false,
         "decorations": true,
         "fullscreen": false,
-        "resizable": true
+        "resizable": true,
+        "visible": true,
+        "backgroundColor": "#242424"
       }
     ],
     "security": {

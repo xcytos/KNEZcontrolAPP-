@@ -6,7 +6,7 @@ import http from "node:http";
 import https from "node:https";
 import { fileURLToPath } from "node:url";
 
-const CDP_HOST = "localhost";
+const CDP_HOST = "127.0.0.1";
 const KNEZ_HOST = "127.0.0.1";
 const KNEZ_PORT = 8000;
 
@@ -128,14 +128,18 @@ function spawnTauriDev({ cdpPort }) {
   const args = isWin
     ? ["/d", "/s", "/c", "npm", "run", "tauri", "--", "dev"]
     : ["run", "tauri", "--", "dev"];
-  const webview2UserData = path.join(__dirname, `.webview2-user-data-${cdpPort}`);
+  const webview2UserData = path.join(__dirname, `.webview2-user-data-${cdpPort}-${process.pid}`);
   fs.mkdirSync(webview2UserData, { recursive: true });
   const env = {
     ...process.env,
     WEBVIEW2_USER_DATA_FOLDER: webview2UserData,
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${cdpPort} --remote-allow-origins=*`,
     TAURI_CDP_URL: `http://${CDP_HOST}:${cdpPort}`,
-    TAURI_CDP_PORT: String(cdpPort)
+    TAURI_CDP_PORT: String(cdpPort),
+    TAURI_E2E: "1",
+    VITE_ENABLE_FLOATING_CONSOLE: "true",
+    VITE_ENABLE_LOG_VIEWS: "true",
+    VITE_ENABLE_TAQWIN_TOOLS: "true"
   };
   const logFile = path.join(__dirname, "tauri-dev.log");
   const logStream = fs.createWriteStream(logFile, { flags: "w" });
@@ -356,9 +360,9 @@ async function main() {
       await waitForHttpOk("http://127.0.0.1:5173/", 90000);
       logLine(`TAURI E2E: waiting for CDP ${CDP_HOST}:${cdpPort}`);
       await waitForPort(CDP_HOST, cdpPort, 180000);
-      await waitForCdpReady(`http://${CDP_HOST}:${cdpPort}`, 90000);
+      await waitForCdpReady(`http://${CDP_HOST}:${cdpPort}`, 180000);
       await sleep(1000);
-      await waitForCdpReady(`http://${CDP_HOST}:${cdpPort}`, 15000);
+      await waitForCdpReady(`http://${CDP_HOST}:${cdpPort}`, 60000);
 
       try {
         await fs.promises.writeFile(

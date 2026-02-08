@@ -46,13 +46,39 @@ fn set_ui_preferences(app: tauri::AppHandle, prefs: UiPreferences) -> Result<(),
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            let automation = std::env::var("TAURI_E2E")
+                .ok()
+                .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+                .unwrap_or(false);
+
             #[cfg(desktop)]
             {
                 use tauri::Manager;
-                app.handle().plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-                    let _ = app.get_webview_window("main").expect("no main window").set_focus();
-                }))?;
+                let automation_for_cb = automation;
+                app.handle().plugin(tauri_plugin_single_instance::init(
+                    move |app, _args, _cwd| {
+                        if !automation_for_cb {
+                            let _ = app
+                                .get_webview_window("main")
+                                .expect("no main window")
+                                .set_focus();
+                        }
+                    },
+                ))?;
             }
+
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_fullscreen(false);
+                let _ = window.unmaximize();
+                let _ = window.center();
+                if automation {
+                    let _ = window.set_skip_taskbar(true);
+                    let _ = window.show();
+                } else {
+                    let _ = window.show();
+                }
+            }
+
             app.handle().plugin(tauri_plugin_shell::init())?;
             app.handle().plugin(tauri_plugin_fs::init())?;
             app.handle().plugin(tauri_plugin_http::init())?;

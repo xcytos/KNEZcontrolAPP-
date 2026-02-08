@@ -37,6 +37,9 @@ import './App.css';
 import { CommandPalette } from './components/ui/CommandPalette';
 import { FloatingConsole } from './components/ui/FloatingConsole';
 import { taqwinMcpService } from './services/TaqwinMcpService';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
+import { ThemeProvider } from './contexts/ThemeContext';
+import { analytics } from './services/AnalyticsService';
 import { logger } from './services/LogService';
 import { features } from './config/features';
 
@@ -335,9 +338,17 @@ function AppContent() {
       />
       {features.floatingConsole ? <FloatingConsole /> : null}
       
-      <ErrorBoundary>
+      <div className="h-full min-h-0 min-w-0 relative">
         {renderContent()}
-      </ErrorBoundary>
+        {lastCheck === null && (
+          <div className="absolute inset-0 bg-zinc-950 flex items-center justify-center pointer-events-none">
+            <div className="flex items-center gap-3 text-zinc-300">
+              <div className="w-4 h-4 rounded-full border-2 border-zinc-700 border-t-zinc-200 animate-spin" />
+              <div className="text-sm">Starting…</div>
+            </div>
+          </div>
+        )}
+      </div>
       
        {showSettings && <SettingsModal 
          onClose={() => {
@@ -360,16 +371,15 @@ const McpLoader = () => {
   return <McpRegistryView snapshot={snapshot} onRefresh={load} />;
 }
 
-import { ThemeProvider } from './contexts/ThemeContext';
-import { analytics } from './services/AnalyticsService';
-
-import { ErrorBoundary } from './components/ui/ErrorBoundary';
-
 function App() {
   // Track open session
   useEffect(() => {
     analytics.trackSession();
-    document.getElementById("boot-splash")?.remove();
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document.getElementById("boot-splash")?.remove();
+      });
+    });
   }, []);
 
   return (

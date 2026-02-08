@@ -2,7 +2,11 @@ import { Browser, Page, chromium } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 
+let cached: { browser: Browser; page: Page } | null = null;
+
 export async function connectTauri(): Promise<{ browser: Browser; page: Page }> {
+  if (cached) return cached;
+
   const fallbackCdpUrl = () => {
     try {
       const statePath = path.resolve(process.cwd(), "tests", "tauri-e2e", ".tauri-dev-state.json");
@@ -35,7 +39,16 @@ export async function connectTauri(): Promise<{ browser: Browser; page: Page }> 
     pages[0];
   if (!page) throw new Error("tauri_no_page");
   await page.waitForLoadState("domcontentloaded");
-  return { browser, page };
+  cached = { browser, page };
+  return cached;
+}
+
+export async function closeTauri() {
+  const current = cached;
+  cached = null;
+  try {
+    await current?.browser.close();
+  } catch {}
 }
 
 export async function setKnezEndpoint(page: Page, endpoint: string) {
