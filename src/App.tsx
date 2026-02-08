@@ -47,7 +47,7 @@ function AppContent() {
   const [readOnly, setReadOnly] = useState(true);
   const [chatSending, setChatSending] = useState(false);
   
-  const { isConnected, isDegraded, lastCheck, health, forceCheck } = useStatus();
+  const { online, isConnected, isDegraded, lastCheck, health, forceCheck } = useStatus();
 
   // CP9-6: Global Command Palette Listener
   useEffect(() => {
@@ -68,7 +68,7 @@ function AppContent() {
           const sessions = await persistenceService.listSessions()
           const last = sessions[0]
           if (last) {
-            await sessionController.resumeSession(last)
+            sessionController.useSession(last)
           }
         })
       }
@@ -79,7 +79,7 @@ function AppContent() {
 
   // Sync StatusProvider state to App logic
   useEffect(() => {
-    if (health) {
+    if (online) {
       setReadOnly(false);
       if (!sessionId) sessionController.ensureLocalSession();
       knezClient.tryGetMcpRegistry(); // Background fetch
@@ -87,7 +87,7 @@ function AppContent() {
       setReadOnly(true);
       if (!sessionId) sessionController.ensureLocalSession();
     }
-  }, [health]);
+  }, [online]);
 
   // Orchestrator
   const { status: systemStatus, output: systemOutput, launchAndConnect, stopKnez } = useSystemOrchestrator(() => {
@@ -102,24 +102,24 @@ function AppContent() {
     const w = window as any;
     const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
     const keepAlive = getKeepAliveEnabled();
-    if (health) return;
+    if (online) return;
     if (!isLocal) return;
     if (!isTauri) return;
     if (!keepAlive) return;
     if (systemStatus === "starting" || systemStatus === "running") return;
     // Removed 15s delay for immediate connection
     launchAndConnect();
-  }, [health, systemStatus, launchAndConnect]);
+  }, [online, systemStatus, launchAndConnect]);
 
   useEffect(() => {
     setObserverState({
-      connected: !!health && (isConnected || isDegraded),
+      connected: online && (isConnected || isDegraded),
       endpoint: knezClient.getProfile().endpoint,
       sessionId,
       readOnly,
       systemStatus,
     });
-  }, [health, isConnected, isDegraded, sessionId, readOnly, systemStatus]);
+  }, [online, isConnected, isDegraded, sessionId, readOnly, systemStatus]);
 
   useEffect(() => {
     const unsub = chatService.subscribe((s) => setChatSending(s.sending));
@@ -127,7 +127,7 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
-    if (!health) {
+    if (!online) {
       setPresenceState("SILENT");
       return;
     }
@@ -144,7 +144,7 @@ function AppContent() {
       return;
     }
     setPresenceState("OBSERVING");
-  }, [health, systemStatus, activeView, chatSending]);
+  }, [online, systemStatus, activeView, chatSending]);
 
   const renderContent = () => {
     switch (activeView) {

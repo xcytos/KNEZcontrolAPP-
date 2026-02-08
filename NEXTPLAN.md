@@ -17,7 +17,7 @@ This roadmap targets the exact issues observed in desktop Tauri dev:
 ## Tickets (15)
 
 ### T01 — Desktop MCP Capability Verification Gate
-- Goal: Detect Tauri correctly and block MCP UI in web mode.
+- Goal: Detect Tauri correctly and load MCP UI in web mode.
 - Work: unify runtime detection; add a single shared helper used everywhere.
 - Acceptance: “Tools” shows real tool list in Tauri; shows explicit “desktop required” outside Tauri.
 - Risk: low

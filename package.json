@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "e2e:tauri": "node tests/tauri-e2e/spawn-and-run.js",
+    "e2e:tauri:attach": "node tests/tauri-e2e/attach.js"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.0",

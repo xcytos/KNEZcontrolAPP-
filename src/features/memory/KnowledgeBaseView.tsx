@@ -8,6 +8,10 @@ export const KnowledgeBaseView: React.FC = () => {
   const [docs, setDocs] = useState<KnowledgeDoc[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [draftTitle, setDraftTitle] = useState("");
+  const [draftContent, setDraftContent] = useState("");
+  const [draftTags, setDraftTags] = useState("manual-upload");
 
   const fetchDocs = () => {
     setLoading(true);
@@ -21,20 +25,23 @@ export const KnowledgeBaseView: React.FC = () => {
   }, []);
 
   const handleUpload = async () => {
-    // Mock upload flow
-    const title = prompt("Document Title:");
-    if (!title) return;
-    const content = prompt("Document Content (Text):");
-    if (!content) return;
-
+    const title = draftTitle.trim();
+    const content = draftContent.trim();
+    if (!title || !content) {
+      showToast("Title and content are required", "warning");
+      return;
+    }
     setUploading(true);
     try {
       await knezClient.addKnowledge({
         title,
         content,
-        tags: ["manual-upload"]
+        tags: draftTags.split(",").map(t => t.trim()).filter(Boolean)
       });
       showToast("Document indexed", "success");
+      setComposerOpen(false);
+      setDraftTitle("");
+      setDraftContent("");
       fetchDocs();
     } catch (e) {
       showToast("Failed to index document", "error");
@@ -48,13 +55,68 @@ export const KnowledgeBaseView: React.FC = () => {
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider">Vector Index</h3>
         <button 
-          onClick={handleUpload}
+          onClick={() => setComposerOpen(true)}
           disabled={uploading}
           className="text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
         >
-          {uploading ? "Indexing..." : "+ Add Document"}
+          + Add Document
         </button>
       </div>
+
+      {composerOpen && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+          <div className="bg-zinc-900 border border-zinc-700 p-5 rounded-lg w-full max-w-xl">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-sm font-bold text-zinc-200">Add Knowledge Document</div>
+              <button
+                type="button"
+                onClick={() => setComposerOpen(false)}
+                className="text-zinc-500 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="space-y-3">
+              <input
+                value={draftTitle}
+                onChange={(e) => setDraftTitle(e.target.value)}
+                placeholder="Title"
+                className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 outline-none focus:border-zinc-600"
+              />
+              <textarea
+                value={draftContent}
+                onChange={(e) => setDraftContent(e.target.value)}
+                placeholder="Content"
+                rows={8}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 outline-none focus:border-zinc-600"
+              />
+              <input
+                value={draftTags}
+                onChange={(e) => setDraftTags(e.target.value)}
+                placeholder="Tags (comma-separated)"
+                className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-100 outline-none focus:border-zinc-600"
+              />
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setComposerOpen(false)}
+                className="text-xs px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleUpload}
+                disabled={uploading}
+                className="text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white rounded"
+              >
+                {uploading ? "Indexing..." : "Index"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {loading && docs.length === 0 ? (
         <div className="text-center py-8 text-zinc-500">Loading index...</div>

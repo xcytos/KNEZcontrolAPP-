@@ -3,10 +3,12 @@ import { knezClient } from '../services/KnezClient';
 import { KnezHealthResponse, CognitiveState } from '../domain/DataContracts';
 
 interface StatusContextValue {
+  online: boolean;
   isConnected: boolean;
   isDegraded: boolean;
   lastCheck: number | null;
   health: KnezHealthResponse | null;
+  healthFresh: boolean;
   cognitiveState: CognitiveState | null;
   forceCheck: () => Promise<void>;
 }
@@ -15,12 +17,14 @@ export const StatusContext = createContext<StatusContextValue | null>(null);
 
 export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [health, setHealth] = useState<KnezHealthResponse | null>(null);
+  const [healthFresh, setHealthFresh] = useState(false);
+  const [online, setOnline] = useState(false);
   const [cognitiveState, setCognitiveState] = useState<CognitiveState | null>(null);
   const [lastCheck, setLastCheck] = useState<number | null>(null);
   
   // Derived state
-  const isConnected = !!health && health.status === "ok";
-  const isDegraded = !!health && health.status !== "ok";
+  const isConnected = online && !!health && health.status === "ok";
+  const isDegraded = online && !!health && health.status !== "ok";
 
   const timeoutRef = useRef<number | null>(null);
   const inFlightRef = useRef(false);
@@ -39,8 +43,11 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       if (h.status === "fulfilled") {
         setHealth(h.value);
+        setHealthFresh(true);
+        setOnline(true);
       } else {
-        setHealth(null);
+        setHealthFresh(false);
+        setOnline(false);
       }
 
       if (c.status === "fulfilled") {
@@ -51,7 +58,8 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       
       setLastCheck(now);
     } catch (e) {
-      setHealth(null);
+      setHealthFresh(false);
+      setOnline(false);
       setCognitiveState(null);
       setLastCheck(now);
     } finally {
@@ -83,10 +91,12 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   return (
     <StatusContext.Provider value={{ 
+      online,
       isConnected, 
       isDegraded, 
       lastCheck, 
       health, 
+      healthFresh,
       cognitiveState,
       forceCheck: performCheck 
     }}>

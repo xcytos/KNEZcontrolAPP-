@@ -8,6 +8,7 @@ const SAFE_TOOLS_UNTRUSTED = new Set<string>([
   "get_server_status",
   "connection_info",
   "debug_test",
+  "web_intelligence",
   "session",
   "session_v2"
 ]);

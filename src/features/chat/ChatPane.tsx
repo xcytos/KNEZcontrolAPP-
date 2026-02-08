@@ -10,18 +10,20 @@ import { VoiceInput } from "../voice/VoiceInput";
 import { chatService } from "../../services/ChatService";
 import { sessionDatabase } from "../../services/SessionDatabase";
 import { sessionController } from "../../services/SessionController";
-import { History, MessageSquarePlus, Search, Trash2 } from "lucide-react";
+import { History, MessageSquarePlus, Search, Square, Trash2 } from "lucide-react";
 import { TaqwinToolsModal } from "./TaqwinToolsModal";
+import { useStatus } from "../../contexts/useStatus";
 
 // CP17: History Modal
 const HistoryModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
-  onSelect: (sessionId: string) => void;
   currentSessionId: string | null;
-}> = ({ isOpen, onClose, onSelect, currentSessionId }) => {
+}> = ({ isOpen, onClose, currentSessionId }) => {
+  const { showToast } = useToast();
   const [sessions, setSessions] = useState<{id: string, name: string, updatedAt: string}[]>([]);
   const [loading, setLoading] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,7 +70,11 @@ const HistoryModal: React.FC<{
               >
                 <div className="flex items-start justify-between gap-3">
                   <button
-                    onClick={() => { onSelect(s.id); onClose(); }}
+                    onClick={() => {
+                      sessionController.useSession(s.id);
+                      showToast(`Opened session: ${s.id.substring(0, 8)}`, "success");
+                      onClose();
+                    }}
                     className="flex-1 text-left"
                   >
                     <div className="font-medium truncate">{s.name}</div>
@@ -77,6 +83,61 @@ const HistoryModal: React.FC<{
                       <span className="text-[10px] text-zinc-600">{new Date(s.updatedAt).toLocaleDateString()}</span>
                     </div>
                   </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={async (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (busyId) return;
+                        setBusyId(s.id);
+                        try {
+                          const ok = await knezClient.validateSession(s.id);
+                          if (!ok) {
+                            showToast("Session not present on server yet", "warning");
+                            return;
+                          }
+                          const next = await sessionController.resumeSession(s.id);
+                          showToast(`Resumed: ${next.substring(0, 8)}`, "success");
+                          onClose();
+                        } catch (err: any) {
+                          showToast(String(err?.message ?? err), "error");
+                        } finally {
+                          setBusyId(null);
+                        }
+                      }}
+                      disabled={busyId !== null}
+                      className="px-2 py-1 rounded bg-zinc-950/40 border border-zinc-800 hover:bg-zinc-950/70 text-zinc-400 hover:text-zinc-200 transition-colors text-[10px] font-mono disabled:opacity-50"
+                      title="Resume as new session"
+                    >
+                      {busyId === s.id ? "..." : "resume"}
+                    </button>
+                    <button
+                      onClick={async (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (busyId) return;
+                        setBusyId(s.id);
+                        try {
+                          const ok = await knezClient.validateSession(s.id);
+                          if (!ok) {
+                            showToast("Session not present on server yet", "warning");
+                            return;
+                          }
+                          const next = await sessionController.forkSession(s.id);
+                          showToast(`Forked: ${next.substring(0, 8)}`, "success");
+                          onClose();
+                        } catch (err: any) {
+                          showToast(String(err?.message ?? err), "error");
+                        } finally {
+                          setBusyId(null);
+                        }
+                      }}
+                      disabled={busyId !== null}
+                      className="px-2 py-1 rounded bg-zinc-950/40 border border-zinc-800 hover:bg-zinc-950/70 text-zinc-400 hover:text-zinc-200 transition-colors text-[10px] font-mono disabled:opacity-50"
+                      title="Fork as new session"
+                    >
+                      {busyId === s.id ? "..." : "fork"}
+                    </button>
                   <button
                     onClick={async (e) => {
                       e.preventDefault();
@@ -89,6 +150,7 @@ const HistoryModal: React.FC<{
                   >
                     <Trash2 size={14} />
                   </button>
+                  </div>
                 </div>
               </div>
             ))
@@ -231,8 +293,10 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   // const [showPerception, setShowPerception] = useState(false);
   // Use ChatService state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [showAllMessages, setShowAllMessages] = useState(false);
   const [sending, setSending] = useState(false);
   const [activeTools, setActiveTools] = useState<{ search: boolean }>({ search: false });
+  const [searchProvider, setSearchProvider] = useState<"off" | "taqwin" | "proxy">("off");
   
   const [inputValue, setInputValue] = useState("");
   const [validating, setValidating] = useState(false);
@@ -249,6 +313,13 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
+  const { online, health } = useStatus();
+  const backend = health?.backends?.[0];
+  const lastAssistant = [...messages].reverse().find((m) => m.from === "knez");
+  const canContinue = !readOnly && !sending && (lastAssistant?.metrics as any)?.finishReason === "stopped";
+  const maxMessages = 250;
+  const hiddenCount = Math.max(0, messages.length - maxMessages);
+  const visibleMessages = showAllMessages || hiddenCount === 0 ? messages : messages.slice(-maxMessages);
 
   // Sync with Service
   useEffect(() => {
@@ -256,6 +327,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
        setMessages(state.messages);
        setSending(state.sending);
        setActiveTools(state.activeTools);
+       setSearchProvider(state.searchProvider);
     });
     return unsub;
   }, [sessionId]);
@@ -266,7 +338,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
       if (s) setSessionName(s.name);
       else setSessionName(`Session ${sessionId.substring(0,6)}`);
     });
-  }, [sessionId, messages.length]);
+  }, [sessionId]);
 
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -384,6 +456,13 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
             </div>
          </div>
          <div className="flex items-center gap-2">
+            <div className="hidden md:flex items-center gap-2 px-2 py-1 rounded border border-zinc-800 bg-zinc-950/40 text-[10px] font-mono text-zinc-400">
+              <span>{online ? "online" : "offline"}</span>
+              <span>•</span>
+              <span>{(lastAssistant?.metrics as any)?.modelId ?? backend?.model_id ?? "model:n/a"}</span>
+              <span>•</span>
+              <span>{backend?.status ?? "status:n/a"}</span>
+            </div>
             <button
                onClick={() => setHistoryOpen(true)}
                className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
@@ -415,8 +494,18 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         className="flex-1 overflow-y-auto p-4 space-y-6 scroll-smooth"
       >
         {renderOfflineOverlay()}
+
+        {hiddenCount > 0 && !showAllMessages && (
+          <button
+            type="button"
+            onClick={() => setShowAllMessages(true)}
+            className="text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-900/40 border border-zinc-800 hover:border-zinc-700 rounded-lg px-3 py-2 w-full"
+          >
+            Load earlier messages ({hiddenCount})
+          </button>
+        )}
         
-        {messages.map((msg, idx) => (
+        {visibleMessages.map((msg, idx) => (
           <MessageItem 
             key={msg.id || idx} 
             msg={msg} 
@@ -432,6 +521,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         <div className="flex gap-2 mb-2 px-1">
            <button 
              data-testid="search-toggle"
+             type="button"
              onClick={() => {
                const next = { ...activeTools, search: !activeTools.search };
                chatService.setActiveTools(next);
@@ -439,13 +529,14 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
                activeTools.search 
                  ? "bg-blue-600 text-white shadow-blue-900/50 shadow-sm" 
-                 : "bg-transparent border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300"
+                 : "bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300"
              }`}
            >
              <Search size={14} />
              <span>{activeTools.search ? 'Search On' : 'Search Off'}</span>
            </button>
            <button
+             type="button"
              onClick={() => setAuditOpen(true)}
              className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300 transition-all"
              title="Chat State Audit"
@@ -453,6 +544,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
              <span>Audit</span>
            </button>
            <button
+             type="button"
              onClick={() => setToolsOpen(true)}
              className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300 transition-all"
              title="TAQWIN Tools"
@@ -460,6 +552,23 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
              <span>Tools</span>
            </button>
         </div>
+        <div className="px-1 mb-2 text-[10px] text-zinc-500 font-mono">
+          search_provider={activeTools.search ? searchProvider : "off"}
+        </div>
+        {canContinue && (
+          <div className="px-1 mb-2">
+            <button
+              type="button"
+              onClick={() => {
+                const tail = (lastAssistant?.text ?? "").slice(-2000);
+                void chatService.sendMessage("Continue", `\n\n[SYSTEM: Continue]\nResume from the last assistant output:\n${tail}`);
+              }}
+              className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-1.5 rounded-lg"
+            >
+              Continue
+            </button>
+          </div>
+        )}
 
         <form onSubmit={handleSend} className="relative flex gap-2">
           <VoiceInput onTranscript={handleVoiceTranscript} />
@@ -471,12 +580,25 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
             placeholder={readOnly ? "System is offline..." : "Type a message..."}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
-            disabled={sending}
+            disabled={readOnly}
           />
+          {sending && !readOnly && (
+            <button
+              type="button"
+              onClick={() => chatService.stopCurrentResponse()}
+              className="px-4 py-2 rounded-lg text-sm font-medium bg-zinc-900 border border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:text-white transition-colors"
+              title="Stop current response"
+            >
+              <div className="flex items-center gap-2">
+                <Square size={14} />
+                <span>Stop</span>
+              </div>
+            </button>
+          )}
           <button
             data-testid="chat-send"
             type="submit"
-            disabled={!inputValue.trim() || sending}
+            disabled={!inputValue.trim() || readOnly}
             className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg shadow-blue-900/20"
           >
             {sending ? "Sending..." : "Send"}
@@ -516,14 +638,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         isOpen={historyOpen}
         onClose={() => setHistoryOpen(false)}
         currentSessionId={sessionId}
-        onSelect={async (sid) => {
-           try {
-             await sessionController.resumeSession(sid);
-             showToast(`Session resumed: ${sid.substring(0, 8)}`, "success");
-           } catch {
-             showToast("Failed to resume session", "error");
-           }
-        }}
       />
     </div>
   );

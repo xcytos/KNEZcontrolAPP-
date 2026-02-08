@@ -64,7 +64,7 @@ const FormattedContent: React.FC<{ text: string }> = ({ text }) => {
   );
 };
 
-export const MessageItem: React.FC<{ 
+const MessageItemInner: React.FC<{ 
   msg: ChatMessage; 
   readOnly: boolean;
   onVote: (id: string, vote: "upvote" | "downvote") => void;
@@ -164,6 +164,30 @@ export const MessageItem: React.FC<{
                  </div>
                );
             }
+            if (part.type === "system") {
+              const title = (part as any).title ?? "SYSTEM";
+              const content = part.content ?? "";
+              return (
+                <div key={i} className="my-3 rounded-lg border border-zinc-800 bg-zinc-950/50 overflow-hidden">
+                  <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800">
+                    <div className="text-[10px] font-mono text-zinc-400">{title}</div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void copyToClipboard(content);
+                      }}
+                      className="text-[10px] text-zinc-500 hover:text-zinc-300"
+                      title="Copy"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <pre className="text-[10px] text-zinc-300 p-3 overflow-x-auto whitespace-pre-wrap">
+                    {content}
+                  </pre>
+                </div>
+              );
+            }
             return <FormattedContent key={i} text={part.content} />;
           })
         )}
@@ -180,6 +204,16 @@ export const MessageItem: React.FC<{
            {msg.deliveryStatus === "failed" && (
              <span className="text-[10px] font-mono bg-red-900/20 text-red-200 px-1.5 py-0.5 rounded border border-red-900/40" title={msg.deliveryError || "delivery failed"}>
                failed
+             </span>
+           )}
+           {msg.metrics?.finishReason === "stopped" && (
+             <span className="text-[10px] font-mono bg-amber-900/20 text-amber-200 px-1.5 py-0.5 rounded border border-amber-900/40">
+               stopped
+             </span>
+           )}
+           {msg.metrics?.modelId && (
+             <span className="text-[10px] font-mono bg-zinc-900/50 text-zinc-300 px-1.5 py-0.5 rounded border border-zinc-800">
+               {msg.metrics.modelId}
              </span>
            )}
            {msg.isPartial && msg.from !== "user" && (msg.metrics?.totalTokens ?? 0) === 0 && (
@@ -212,3 +246,5 @@ export const MessageItem: React.FC<{
     </div>
   );
 };
+
+export const MessageItem = React.memo(MessageItemInner);

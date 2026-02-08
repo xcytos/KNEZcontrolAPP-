@@ -20,6 +20,10 @@ export class AppError extends Error {
 
 export function asErrorMessage(err: unknown): string {
   if (err instanceof AppError) return `[${err.code}] ${err.message}`;
+  if (err && typeof err === "object" && "name" in err) {
+    const name = String((err as any).name);
+    if (name === "AbortError") return "Request cancelled";
+  }
   if (err instanceof Error) return err.message;
   return String(err);
 }

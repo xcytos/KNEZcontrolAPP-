@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { knezClient } from "../../services/KnezClient";
 import { KnowledgeBaseView } from "./KnowledgeBaseView";
+import { useStatus } from "../../contexts/useStatus";
 
 const MemoryDetailModal: React.FC<{ 
   memoryId: string | null;
@@ -58,10 +59,11 @@ const MemoryDetailModal: React.FC<{
 
 import { persistenceService } from '../../services/PersistenceService'
 export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: boolean }> = ({ sessionId }) => {
+  const { online } = useStatus();
   const [memories, setMemories] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"memories" | "knowledge" | "graph" | "gate">("memories");
-  const [lastCount, setLastCount] = useState(0);
+  const [error, setError] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [sessions, setSessions] = useState<string[]>([])
   const [searchQuery, setSearchQuery] = useState("");
@@ -71,23 +73,39 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
   useEffect(() => {
     let interval: any;
     
-    const fetchMemories = () => {
-      knezClient.listMemory(sessionId || undefined).then(recs => {
-         const newMemories = knezClient.mapMemoryToUi(recs);
-         if (newMemories.length > lastCount && lastCount > 0) {
-            setIsRecording(true);
-            setTimeout(() => setIsRecording(false), 2000);
-         }
-         setMemories(newMemories);
-         setLastCount(newMemories.length);
-      });
+    let lastCount = 0;
+    if (!sessionId) {
+      setMemories([]);
+      setError("No session selected.");
+      return;
+    }
+    if (!online) {
+      setMemories([]);
+      setError("Offline. Start KNEZ to load memories.");
+      return;
+    }
+    setError(null);
+
+    const fetchMemories = async () => {
+      try {
+        const recs = await knezClient.listMemory(sessionId);
+        const newMemories = knezClient.mapMemoryToUi(recs);
+        if (newMemories.length > lastCount && lastCount > 0) {
+          setIsRecording(true);
+          setTimeout(() => setIsRecording(false), 2000);
+        }
+        lastCount = newMemories.length;
+        setMemories(newMemories);
+      } catch (e: any) {
+        setError(String(e?.message ?? e));
+        setMemories([]);
+      }
     };
 
-    fetchMemories();
-    // CP8-7: Real-time feedback polling
+    void fetchMemories();
     interval = setInterval(fetchMemories, 3000);
     return () => clearInterval(interval);
-  }, [sessionId, lastCount]);
+  }, [sessionId, online]);
 
   useEffect(() => {
     persistenceService.listSessions().then(setSessions)
@@ -193,6 +211,11 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
       <div className="px-4 py-2 bg-zinc-900/30 border-b border-zinc-800 text-[10px] text-zinc-500">
         Sessions: {sessions.slice(0, 6).map(s => s.slice(0,8)).join(', ')}{sessions.length > 6 ? '…' : ''}
       </div>
+      {error && (
+        <div className="px-4 py-2 border-b border-zinc-800 bg-red-950/20 text-[10px] text-red-300">
+          {error}
+        </div>
+      )}
       
       {activeTab === 'memories' ? (
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
@@ -215,10 +238,6 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
               <div className="mt-2 flex items-center justify-between">
                 <span className="text-[10px] text-zinc-500">{new Date(m.createdAt).toLocaleTimeString()}</span>
                 <div className="flex items-center gap-2">
-                  {/* CP7-12: Show evidence hint if present */}
-                  {m.evidence_event_ids && m.evidence_event_ids.length > 0 && (
-                     <span className="text-[10px] text-blue-500" title="Has Provenance">EVID</span>
-                  )}
                   <span className="text-[10px] text-zinc-600 font-mono">{(m.importance * 100).toFixed(0)}% Conf</span>
                 </div>
               </div>
