@@ -4,9 +4,12 @@ export type McpServerConfig = {
   args: string[];
   env: Record<string, string>;
   cwd?: string;
+  enabled?: boolean;
+  tags?: string[];
 };
 
 export type McpHostConfig = {
+  schema_version?: string;
   mcpServers: Record<string, McpServerConfig>;
 };
 
@@ -38,6 +41,33 @@ function toRecord(v: any): Record<string, string> {
 export function parseMcpHostConfigJson(raw: string): McpHostConfig {
   const parsed = JSON.parse(raw);
 
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && (parsed as any).schema_version && (parsed as any).servers) {
+    const serversRaw = (parsed as any).servers;
+    if (!serversRaw || typeof serversRaw !== "object" || Array.isArray(serversRaw)) {
+      throw new Error("mcp_config_invalid: servers must be an object");
+    }
+    const mcpServers: Record<string, McpServerConfig> = {};
+    for (const [name, entry] of Object.entries(serversRaw)) {
+      if (!name) continue;
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+      const command = String((entry as any).command ?? "");
+      const args = Array.isArray((entry as any).args) ? (entry as any).args.map((a: any) => String(a)) : [];
+      const env = toRecord((entry as any).env);
+      const cwd =
+        (entry as any).cwd
+          ? String((entry as any).cwd)
+          : (entry as any).working_directory
+            ? String((entry as any).working_directory)
+            : (entry as any).workingDirectory
+              ? String((entry as any).workingDirectory)
+              : undefined;
+      const enabled = typeof (entry as any).enabled === "boolean" ? (entry as any).enabled : undefined;
+      const tags = Array.isArray((entry as any).tags) ? (entry as any).tags.map((t: any) => String(t)) : undefined;
+      mcpServers[name] = { id: name, command, args, env, cwd, enabled, tags };
+    }
+    return { schema_version: String((parsed as any).schema_version), mcpServers };
+  }
+
   if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && (parsed as any).mcpServers) {
     const mcpServersRaw = (parsed as any).mcpServers;
     if (!mcpServersRaw || typeof mcpServersRaw !== "object" || Array.isArray(mcpServersRaw)) {
@@ -50,8 +80,17 @@ export function parseMcpHostConfigJson(raw: string): McpHostConfig {
       const command = String((entry as any).command ?? "");
       const args = Array.isArray((entry as any).args) ? (entry as any).args.map((a: any) => String(a)) : [];
       const env = toRecord((entry as any).env);
-      const cwd = (entry as any).cwd ? String((entry as any).cwd) : undefined;
-      mcpServers[name] = { id: name, command, args, env, cwd };
+      const cwd =
+        (entry as any).cwd
+          ? String((entry as any).cwd)
+          : (entry as any).working_directory
+            ? String((entry as any).working_directory)
+            : (entry as any).workingDirectory
+              ? String((entry as any).workingDirectory)
+              : undefined;
+      const enabled = typeof (entry as any).enabled === "boolean" ? (entry as any).enabled : undefined;
+      const tags = Array.isArray((entry as any).tags) ? (entry as any).tags.map((t: any) => String(t)) : undefined;
+      mcpServers[name] = { id: name, command, args, env, cwd, enabled, tags };
     }
     return { mcpServers };
   }
@@ -73,8 +112,12 @@ export function parseMcpHostConfigJson(raw: string): McpHostConfig {
           ? String((entry as any).cwd)
           : (entry as any).working_directory
             ? String((entry as any).working_directory)
+            : (entry as any).workingDirectory
+              ? String((entry as any).workingDirectory)
             : undefined;
-      mcpServers[name] = { id: name, command, args, env, cwd };
+      const enabled = typeof (entry as any).enabled === "boolean" ? (entry as any).enabled : undefined;
+      const tags = Array.isArray((entry as any).tags) ? (entry as any).tags.map((t: any) => String(t)) : undefined;
+      mcpServers[name] = { id: name, command, args, env, cwd, enabled, tags };
     }
     return { mcpServers };
   }

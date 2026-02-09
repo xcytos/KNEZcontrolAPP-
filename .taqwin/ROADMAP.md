@@ -27,3 +27,22 @@ Outputs:
 - Memory mesh links sessions ↔ events ↔ insights ↔ knowledge docs.
 - UI provides a clean “flow”: Chat → Analyze → Memory → Replay → MCP Tools.
 
+## CP03_MCP_CLIENT_CORE (Next)
+Goal: production-grade MCP client core used by UI, chat, and tests.
+
+Outputs:
+- Unified MCP config schema with migration and one source-of-truth file.
+- Robust TAQWIN V1 handshake: initialize → tools/list → tools/call.
+- Compatibility shims for tool naming and framing mode.
+- Safe process lifecycle (start/stop/restart) with backoff and diagnostics.
+- Tool catalog cache with deterministic invalidation.
+- Local tool-call audit records (duration, bytes, ok/error).
+
+## CP04_MCP_UI_STATUS_AND_CONTROL (After)
+Goal: all MCP controls reflect true runtime status (starting/running/error).
+
+Outputs:
+- Global MCP status store driving header, Tools modal, and chat controls.
+- Stateful TAQWIN ACTIVATE surface with progress + failure visibility.
+- Tools button shows MCP badge (running/down/error).
+- MCP Health panel (pid, framing, last_ok, last_error, failures).

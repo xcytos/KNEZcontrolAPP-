@@ -35,6 +35,7 @@ test.describe("Tauri E2E", () => {
       const diag = getPageDiagnostics(page);
       console.log(`[E2E] Summary label=${label} url=${page.url()} diagnostics=${diag.length}`);
       if (diag.length) console.log(diag.join("\n"));
+      await page.keyboard.press("Escape");
     } finally {
       await closeE2EWindow(label);
     }

@@ -38,6 +38,7 @@ import { CommandPalette } from './components/ui/CommandPalette';
 import { FloatingConsole } from './components/ui/FloatingConsole';
 import { E2EBanner } from './components/ui/E2EBanner';
 import { taqwinMcpService } from './services/TaqwinMcpService';
+import { taqwinActivationService } from './services/TaqwinActivationService';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { analytics } from './services/AnalyticsService';
@@ -254,7 +255,7 @@ function AppContent() {
       const sid = sessionController.getSessionId() ?? sessionId ?? "";
       const endpoint = knezClient.getProfile().endpoint;
       const cp = "CP01_MCP_REGISTRY";
-      const result = await taqwinMcpService.callTool("taqwin_activate", { session_id: sid, knez_endpoint: endpoint, checkpoint: cp });
+      const result = await taqwinActivationService.activate({ sessionId: sid, knezEndpoint: endpoint, checkpoint: cp });
       logger.info("mcp", "TAQWIN ACTIVATE completed", result);
       window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
     } catch (e: any) {
@@ -311,8 +312,14 @@ function AppContent() {
       headerActions={
         <div className="flex items-center gap-2">
           <button
-            onClick={() => launchAndConnect(systemStatus === "failed")}
-            disabled={systemStatus === "starting" || systemStatus === "running"}
+            onClick={() => {
+              if (isConnected || isDegraded) {
+                forceCheck();
+                return;
+              }
+              launchAndConnect(systemStatus === "failed");
+            }}
+            disabled={systemStatus === "starting"}
             className="text-xs bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 px-3 py-1 rounded"
           >
             {systemStatus === "starting" ? "Starting" : (isConnected || isDegraded) ? "Reconnect" : "Start"}

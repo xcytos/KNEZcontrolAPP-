@@ -121,6 +121,7 @@ export class McpStdioClient {
     const command = server.command;
     const base = command.split(/[\\/]/).pop()?.toLowerCase() ?? "";
     const looksLikePython = base === "python.exe" || base === "python";
+    const isBareCommand = !/[\\/]/.test(command);
     const envKeys = Object.keys(server.env ?? {});
     const onlyPyUnbuffered =
       envKeys.length === 0 || (envKeys.length === 1 && envKeys[0].toUpperCase() === "PYTHONUNBUFFERED");
@@ -141,18 +142,12 @@ export class McpStdioClient {
     this.startedWith = { mode: "config", serverId: server.id, command: server.command };
 
     const cmd = (() => {
-      if (looksLikePython && onlyPyUnbuffered) {
-        return Command.create("python", args, { encoding: "raw", cwd: server.cwd });
+      if (looksLikePython && onlyPyUnbuffered && isBareCommand) {
+        return Command.create("python", args, { encoding: "raw", cwd: server.cwd, env: server.env });
       }
       const cmdArgs = args.map((a) => this.cmdQuote(a)).join(" ");
       const baseCmd = `${this.cmdQuote(command)}${cmdArgs ? ` ${cmdArgs}` : ""}`.trim();
-      const envPairs = Object.entries(server.env ?? {});
-      const envPrefix =
-        envPairs.length > 0
-          ? `${envPairs.map(([k, v]) => `set ${this.cmdQuote(`${k}=${String(v)}`)}&&`).join("")}`
-          : "";
-      const cmdLine = `${envPrefix}${baseCmd}`;
-      return Command.create("cmd", ["/d", "/s", "/c", cmdLine], { encoding: "raw", cwd: server.cwd });
+      return Command.create("cmd", ["/d", "/s", "/c", baseCmd], { encoding: "raw", cwd: server.cwd, env: server.env });
     })();
     cmd.stdout.on("data", (chunk) => this.onStdout(chunk));
     cmd.stderr.on("data", (chunk) => this.onStderr(chunk));

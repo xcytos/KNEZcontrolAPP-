@@ -32,3 +32,23 @@
 
 ## Reconciliation Events
 - Chat emits `chat_user_message` and `chat_assistant_message` into KNEZ events with payload fields:\n  - `message_id`, `from`, `reply_to_message_id`, `correlation_id`\n- Replay and Memory can use these events to jump back to the exact chat message.\n+
+
+## doc_id (repository document identity)
+- Owner: TAQWIN ingestion runner.
+- Format: opaque string derived from `repo_relative_path + sha256_prefix` (do not parse semantics beyond display).
+- Invariant: stable for a specific file content hash; if file content changes, doc_id changes.
+
+## ingestion_run_id
+- Owner: TAQWIN ingestion runner.
+- Format: UUID without dashes (`uuid4().hex`) or equivalent opaque string.
+- Invariant: unique per ingestion execution; used to join manifest + checkpoint evidence.
+
+## chunk_id (hierarchical chunk identity)
+- Owner: TAQWIN ingestion runner.
+- Format: opaque string, hierarchy represented by delimiter only for display (do not parse for logic).
+- Invariant: stable within a single ingestion_run_id; must include a reference to `doc_id`.
+
+## manifest_id (evidence ledger identity)
+- Owner: TAQWIN ingestion runner.
+- Format: opaque string naming the manifest file(s) that record evidence for an ingestion run.
+- Invariant: append-only; never rewrite prior manifests, add new segments if needed.

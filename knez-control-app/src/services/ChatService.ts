@@ -809,22 +809,65 @@ export class ChatService {
       }
     };
 
+    const toolAuditEnabled = (() => {
+      try {
+        return localStorage.getItem("taqwin_chat_audit") === "1";
+      } catch {
+        return false;
+      }
+    })();
+
+    const emitToolAuditMessage = async (tool: string, args: any, status: "succeeded" | "failed", extra: { durationMs: number; error?: string }) => {
+      if (!toolAuditEnabled) return;
+      const now = new Date().toISOString();
+      const msg: ChatMessage = {
+        id: newMessageId(),
+        sessionId: this.sessionId,
+        from: "knez",
+        text: "",
+        createdAt: now,
+        toolCall: {
+          tool,
+          args,
+          status,
+          startedAt: now,
+          finishedAt: now,
+          result: status === "succeeded" ? { durationMs: extra.durationMs } : undefined,
+          error: status === "failed" ? extra.error : undefined
+        },
+        deliveryStatus: "delivered"
+      };
+      try {
+        await sessionDatabase.saveMessages(this.sessionId, [msg]);
+      } catch {}
+      this.state.messages = [...this.state.messages, msg];
+      this.notify();
+    };
+
     const urlMatch = opts.text.match(/https?:\/\/[^\s]+/);
     if (urlMatch) {
       const provider = this.resolveSearchProvider(true);
       if (provider === "taqwin") {
+        const toolArgs = {
+          action: "get_content",
+          url: urlMatch[0],
+          analysis_type: "standard",
+          agent_context: "taqwin"
+        };
+        const t0 = performance.now();
         try {
-          const res = await withTimeout(taqwinMcpService.callTool("web_intelligence", {
-            action: "get_content",
-            url: urlMatch[0],
-            analysis_type: "standard",
-            agent_context: "taqwin"
-          }), Math.min(1200, timeLeftMs()));
+          const res = await withTimeout(taqwinMcpService.callTool("web_intelligence", toolArgs), Math.min(1200, timeLeftMs()));
+          await emitToolAuditMessage("web_intelligence", toolArgs, "succeeded", { durationMs: Math.round(performance.now() - t0) });
           const text = extractMcpText(res);
           const parsed = safeJsonParseLocal<any>(text);
           const body = parsed ?? { raw: text };
           return `\n\n[SYSTEM: Web Extraction (TAQWIN)]\nURL: ${urlMatch[0]}\n${truncateString(JSON.stringify(body), 4000)}`;
-        } catch {}
+        } catch (e: any) {
+          await emitToolAuditMessage("web_intelligence", toolArgs, "failed", {
+            durationMs: Math.round(performance.now() - t0),
+            error: String(e?.message ?? e)
+          });
+        }
       }
       const budget = Math.min(1500, timeLeftMs());
       if (budget <= 0) return "";
@@ -837,19 +880,27 @@ export class ChatService {
 
     const provider = this.resolveSearchProvider(true);
     if (provider === "taqwin") {
+      const toolArgs = {
+        action: "search_web",
+        query: opts.text,
+        max_results: 5,
+        analysis_type: "standard",
+        agent_context: "taqwin"
+      };
+      const t0 = performance.now();
       try {
-        const res = await withTimeout(taqwinMcpService.callTool("web_intelligence", {
-          action: "search_web",
-          query: opts.text,
-          max_results: 5,
-          analysis_type: "standard",
-          agent_context: "taqwin"
-        }), Math.min(1200, timeLeftMs()));
+        const res = await withTimeout(taqwinMcpService.callTool("web_intelligence", toolArgs), Math.min(1200, timeLeftMs()));
+        await emitToolAuditMessage("web_intelligence", toolArgs, "succeeded", { durationMs: Math.round(performance.now() - t0) });
         const text = extractMcpText(res);
         const parsed = safeJsonParseLocal<any>(text);
         const body = parsed ?? { raw: text };
         return `\n\n[SYSTEM: Web Search (TAQWIN)]\nQuery: ${opts.text}\n${truncateString(JSON.stringify(body), 4000)}`;
-      } catch {}
+      } catch (e: any) {
+        await emitToolAuditMessage("web_intelligence", toolArgs, "failed", {
+          durationMs: Math.round(performance.now() - t0),
+          error: String(e?.message ?? e)
+        });
+      }
     }
 
     const budget = Math.min(1500, timeLeftMs());
