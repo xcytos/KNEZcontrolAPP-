@@ -88,6 +88,8 @@ export const TaqwinToolsModal: React.FC<{
 
   const [showConfig, setShowConfig] = useState(false);
   const [showHealth, setShowHealth] = useState(false);
+  const [showTrace, setShowTrace] = useState(false);
+  const [traceText, setTraceText] = useState<string>("");
   const [chatTrail, setChatTrail] = useState(() => {
     try {
       return localStorage.getItem("taqwin_chat_audit") === "1";
@@ -285,6 +287,52 @@ export const TaqwinToolsModal: React.FC<{
   const selectedDef = toolByName.get(selectedTool);
   const stderrTail = (mcpStatus as any)?.debug?.stderrTail ?? null;
 
+  const buildTraceText = () => {
+    const snap: any = {
+      when: new Date().toISOString(),
+      handshake: [
+        "initialize (client -> server)",
+        "initialize result (server -> client)",
+        "notifications/initialized (client -> server)",
+        "tools/list, tools/call..."
+      ],
+      mcpStatus: {
+        state: (mcpStatus as any)?.state,
+        running: (mcpStatus as any)?.running,
+        initialized: (mcpStatus as any)?.initialized,
+        framing: (mcpStatus as any)?.framing,
+        toolsCached: (mcpStatus as any)?.toolsCached,
+        toolsCacheAt: (mcpStatus as any)?.toolsCacheAt,
+        consecutiveFailures: (mcpStatus as any)?.consecutiveFailures,
+        lastError: (mcpStatus as any)?.lastError,
+        lastRawError: (mcpStatus as any)?.lastRawError,
+        lastNormalizedError: (mcpStatus as any)?.lastNormalizedError,
+      },
+      debug: (mcpStatus as any)?.debug ?? null,
+    };
+    const logTail = (() => {
+      try {
+        const lines = logger
+          .getLogs()
+          .slice(0, 800)
+          .filter((l: any) => l.category === "mcp" || l.category === "knez_client")
+          .slice(0, 250)
+          .map((l: any) => {
+            const ts = String(l.timestamp ?? "");
+            const level = String(l.level ?? "");
+            const cat = String(l.category ?? "");
+            const msg = String(l.message ?? "");
+            const meta = l.meta ? JSON.stringify(l.meta) : "";
+            return `${ts} [${level}] [${cat}] ${msg}${meta ? ` ${meta}` : ""}`;
+          });
+        return lines.reverse().join("\n");
+      } catch {
+        return "";
+      }
+    })();
+    return `${JSON.stringify(snap, null, 2)}\n\n--- recent mcp/knez_client logs ---\n${logTail || "(no logs)"}`;
+  };
+
   const runTool = async () => {
     setError("");
     setErrorRaw("");
@@ -391,6 +439,16 @@ export const TaqwinToolsModal: React.FC<{
               </button>
               <button
                 onClick={() => {
+                  const next = !showTrace;
+                  setShowTrace(next);
+                  if (next) setTraceText(buildTraceText());
+                }}
+                className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+              >
+                Trace
+              </button>
+              <button
+                onClick={() => {
                   const next = !chatTrail;
                   setChatTrail(next);
                   try {
@@ -408,6 +466,15 @@ export const TaqwinToolsModal: React.FC<{
                 className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
               >
                 Open MCP Logs
+              </button>
+              <button
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent("taqwin-activate"));
+                  window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
+                }}
+                className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+              >
+                Activate TAQWIN
               </button>
               <button
                 onClick={() => {
@@ -491,6 +558,39 @@ export const TaqwinToolsModal: React.FC<{
               </div>
               {mcpStatus.lastError && (
                 <div className="mt-2 text-[10px] font-mono text-red-300 whitespace-pre-wrap break-words">{mcpStatus.lastError}</div>
+              )}
+            </div>
+          )}
+          {showTrace && (
+            <div className="mt-3 border border-zinc-800 rounded bg-zinc-950/40 p-3">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div className="text-xs font-mono text-zinc-400">MCP Trace</div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTraceText(buildTraceText())}
+                    className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+                  >
+                    Refresh
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void navigator.clipboard?.writeText(traceText)}
+                    className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+                  >
+                    Copy
+                  </button>
+                </div>
+              </div>
+              <textarea
+                className="w-full h-56 bg-zinc-950 border border-zinc-800 rounded p-3 text-zinc-200 text-xs font-mono focus:border-blue-500 outline-none"
+                value={traceText}
+                readOnly
+              />
+              {stderrTail && (
+                <div className="mt-2 text-[10px] text-red-300 font-mono">
+                  stderr_tail={String(stderrTail).slice(-220)}
+                </div>
               )}
             </div>
           )}

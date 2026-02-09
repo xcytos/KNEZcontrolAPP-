@@ -242,6 +242,8 @@ class TaqwinMcpService {
       lastStartAt: this.lastStartAt,
       lastOkAt: this.lastOkAt,
       framing: (debug as any)?.requestFraming ?? this.framingPreference,
+      toolsCached: this.toolsCache?.length ?? 0,
+      toolsCacheAt: this.toolsCacheAt,
       lastError: this.lastNormalizedError ?? this.lastRawError,
       running: !!this.client && this.initialized,
       initialized: this.initialized,

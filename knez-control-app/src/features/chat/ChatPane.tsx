@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChatMessage } from "../../domain/DataContracts";
 import { knezClient } from "../../services/KnezClient";
 import { MessageItem } from "./MessageItem";
@@ -10,7 +10,7 @@ import { VoiceInput } from "../voice/VoiceInput";
 import { chatService } from "../../services/ChatService";
 import { sessionDatabase } from "../../services/SessionDatabase";
 import { sessionController } from "../../services/SessionController";
-import { History, Loader2, MessageSquarePlus, Search, Square, Trash2, TerminalSquare, Puzzle, Sparkles, Zap } from "lucide-react";
+import { FolderOpen, History, Loader2, MessageSquarePlus, Play, Search, Square, TerminalSquare, Trash2, Puzzle, Sparkles, Zap } from "lucide-react";
 import { TaqwinToolsModal } from "./TaqwinToolsModal";
 import { SessionInspectorModal } from "./SessionInspectorModal";
 import { useStatus } from "../../contexts/useStatus";
@@ -19,6 +19,7 @@ import { features } from "../../config/features";
 import { useTaqwinActivationStatus } from "../../hooks/useTaqwinActivationStatus";
 import { useTaqwinMcpStatus } from "../../hooks/useTaqwinMcpStatus";
 import { ChatTerminalPane } from "./ChatTerminalPane";
+import { Command, Child } from "@tauri-apps/plugin-shell";
 
 // CP17: History Modal
 const HistoryModal: React.FC<{
@@ -356,6 +357,13 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [toolsOpen, setToolsOpen] = useState(false);
   const [inspectSessionId, setInspectSessionId] = useState<string | null>(null);
   const [mode, setMode] = useState<"chat" | "terminal">("chat");
+  const [composerMode, setComposerMode] = useState<"chat" | "terminal">("chat");
+  const [terminalCwd, setTerminalCwd] = useState<string>("");
+  const [terminalCmd, setTerminalCmd] = useState<string>("Get-Location");
+  const [terminalOut, setTerminalOut] = useState<string>("");
+  const [terminalRunning, setTerminalRunning] = useState(false);
+  const termChildRef = useRef<Child | null>(null);
+  const termOutRef = useRef<HTMLDivElement | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -558,6 +566,97 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     return null;
   };
 
+  const isTauri = useMemo(() => {
+    const w = window as any;
+    return !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
+  }, []);
+
+  useEffect(() => {
+    const el = termOutRef.current;
+    if (!el) return;
+    try {
+      (el as any).scrollTo?.({ top: el.scrollHeight });
+      if (typeof (el as any).scrollTo !== "function") el.scrollTop = el.scrollHeight;
+    } catch {
+      try { el.scrollTop = el.scrollHeight; } catch {}
+    }
+  }, [terminalOut]);
+
+  const appendTerm = (line: string) => {
+    setTerminalOut((prev) => (prev ? prev + "\n" + line : line));
+  };
+
+  const selectTerminalDirectory = async () => {
+    if (!isTauri) {
+      appendTerm("[WEB] Directory picker requires the desktop app (Tauri).");
+      return;
+    }
+    try {
+      const script =
+        "Add-Type -AssemblyName System.Windows.Forms;" +
+        "$d=New-Object System.Windows.Forms.FolderBrowserDialog;" +
+        "$d.Description='Select working directory';" +
+        "$d.ShowNewFolderButton=$true;" +
+        "if($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){$d.SelectedPath}";
+      const res = await Command.create(
+        "powershell",
+        ["-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", script],
+        { encoding: "utf-8" }
+      ).execute();
+      const picked = String((res as any)?.stdout ?? "").trim();
+      if (picked) {
+        setTerminalCwd(picked);
+        appendTerm(`[CWD] ${picked}`);
+      }
+    } catch (e: any) {
+      appendTerm(`[ERROR] ${String(e?.message ?? e)}`);
+    }
+  };
+
+  const stopTerminal = async () => {
+    try {
+      await termChildRef.current?.kill();
+    } catch {}
+    termChildRef.current = null;
+    setTerminalRunning(false);
+  };
+
+  const runTerminal = async () => {
+    const cmd = terminalCmd.trim();
+    if (!cmd) return;
+    if (!isTauri) {
+      appendTerm("[WEB] Terminal requires the desktop app (Tauri).");
+      return;
+    }
+    if (terminalRunning) return;
+    setTerminalRunning(true);
+    appendTerm(`[RUN] ${cmd}`);
+    try {
+      const ps = Command.create(
+        "powershell",
+        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
+        { encoding: "utf-8", cwd: terminalCwd || undefined }
+      );
+      ps.on("close", (evt) => {
+        appendTerm(`[EXIT] code=${evt.code ?? "null"}`);
+        termChildRef.current = null;
+        setTerminalRunning(false);
+      });
+      ps.on("error", (err) => {
+        appendTerm(`[ERROR] ${String((err as any)?.message ?? err)}`);
+        termChildRef.current = null;
+        setTerminalRunning(false);
+      });
+      ps.stdout.on("data", (line) => appendTerm(String(line).trimEnd()));
+      ps.stderr.on("data", (line) => appendTerm(`[STDERR] ${String(line).trimEnd()}`));
+      termChildRef.current = await ps.spawn();
+    } catch (e: any) {
+      appendTerm(`[ERROR] ${String(e?.message ?? e)}`);
+      termChildRef.current = null;
+      setTerminalRunning(false);
+    }
+  };
+
   // CP16: Enterprise Header
   return (
     <div className="flex flex-col h-full bg-zinc-950 relative">
@@ -601,6 +700,10 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
               <span>{(lastAssistant?.metrics as any)?.modelId ?? backend?.model_id ?? "model:n/a"}</span>
               <span>•</span>
               <span>{backendLabel}</span>
+              <span>•</span>
+              <span>mcp:{taqwinMcpStatus.state}</span>
+              <span>•</span>
+              <span>tools:{(taqwinMcpStatus as any).toolsCached ?? 0}</span>
             </div>
             <button
                onClick={() => setHistoryOpen(true)}
@@ -740,9 +843,13 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                    onClick={() => setToolsOpen(true)}
                    className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300 transition-all"
                    title="TAQWIN Tools"
+                   aria-label="Tools"
                  >
                   <span className="flex items-center gap-2">
                     Tools
+                    <span className="text-[10px] text-zinc-500" aria-hidden="true">
+                      {(taqwinMcpStatus as any).toolsCached ?? 0}
+                    </span>
                     <span
                       className={`inline-block w-2 h-2 rounded-full ${
                         taqwinMcpStatus.state === "running"
@@ -779,18 +886,87 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
               </div>
             )}
 
-            <form onSubmit={handleSend} className="relative flex gap-2">
-              <VoiceInput onTranscript={handleVoiceTranscript} />
+            {composerMode === "terminal" && (
+              <div className="mb-3 border border-zinc-800 rounded-lg bg-zinc-950/40 overflow-hidden">
+                <div className="p-2 border-b border-zinc-800 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void selectTerminalDirectory()}
+                    className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs flex items-center gap-2"
+                    title="Select working directory"
+                  >
+                    <FolderOpen size={14} />
+                    Dir
+                  </button>
+                  <input
+                    value={terminalCwd}
+                    onChange={(e) => setTerminalCwd(e.target.value)}
+                    placeholder="cwd (optional)"
+                    className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-100 focus:outline-none focus:border-zinc-600 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void setTerminalOut("")}
+                    className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs"
+                  >
+                    Clear
+                  </button>
+                </div>
+                <div ref={termOutRef} className="max-h-44 overflow-y-auto p-2 font-mono text-[11px] text-zinc-200 whitespace-pre-wrap">
+                  {terminalOut || "Terminal ready."}
+                </div>
+              </div>
+            )}
+
+            <form
+              onSubmit={(e) => {
+                if (composerMode === "terminal") {
+                  e.preventDefault();
+                  void runTerminal();
+                  return;
+                }
+                void handleSend(e);
+              }}
+              className="relative flex gap-2"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  const next = composerMode === "chat" ? "terminal" : "chat";
+                  setComposerMode(next);
+                }}
+                className="px-3 py-2 rounded-lg text-sm font-medium bg-zinc-900 border border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:text-white transition-colors"
+                title={composerMode === "chat" ? "Switch to terminal input" : "Switch to chat input"}
+              >
+                <TerminalSquare size={16} />
+              </button>
+              {composerMode === "chat" && <VoiceInput onTranscript={handleVoiceTranscript} />}
               <input
                 data-testid="chat-input"
                 autoFocus
                 type="text"
                 className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 transition-all placeholder-zinc-600"
-                placeholder={readOnly ? "System is offline..." : "Type a message..."}
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
+                placeholder={
+                  composerMode === "terminal"
+                    ? "Type a PowerShell command..."
+                    : readOnly
+                      ? "System is offline..."
+                      : "Type a message..."
+                }
+                value={composerMode === "terminal" ? terminalCmd : inputValue}
+                onChange={(e) => {
+                  if (composerMode === "terminal") setTerminalCmd(e.target.value);
+                  else setInputValue(e.target.value);
+                }}
+                onKeyDown={(e) => {
+                  if (composerMode !== "terminal") return;
+                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    void runTerminal();
+                  }
+                }}
               />
-              {sending && (
+              {composerMode === "chat" && sending && (
                 <button
                   type="button"
                   onClick={() => chatService.stopCurrentResponse()}
@@ -803,14 +979,40 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                   </div>
                 </button>
               )}
-              <button
-                data-testid="chat-send"
-                type="submit"
-                disabled={!inputValue.trim()}
-                className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg shadow-blue-900/20"
-              >
-                {sending ? "Sending..." : "Send"}
-              </button>
+              {composerMode === "terminal" ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void runTerminal()}
+                    disabled={terminalRunning}
+                    className="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg shadow-blue-900/20 flex items-center gap-2"
+                  >
+                    <Play size={14} />
+                    Run
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void stopTerminal()}
+                    disabled={!terminalRunning}
+                    className="px-4 py-2 rounded-lg text-sm font-medium bg-zinc-900 border border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:text-white transition-colors disabled:opacity-50"
+                    title="Stop terminal command"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Square size={14} />
+                      <span>Stop</span>
+                    </div>
+                  </button>
+                </>
+              ) : (
+                <button
+                  data-testid="chat-send"
+                  type="submit"
+                  disabled={!inputValue.trim()}
+                  className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg shadow-blue-900/20"
+                >
+                  {sending ? "Sending..." : "Send"}
+                </button>
+              )}
             </form>
             
             {validating && (
