@@ -1,7 +1,7 @@
 import { Command, Child } from "@tauri-apps/plugin-shell";
-import { McpToolDefinition } from "./McpTypes";
-import { logger } from "./LogService";
-import type { McpServerConfig } from "./McpHostConfig";
+import { McpToolDefinition } from "../../services/McpTypes";
+import { logger } from "../../services/LogService";
+import type { McpServerConfig } from "../config/McpHostConfig";
 
 type McpRequest = {
   jsonrpc: "2.0";
@@ -136,7 +136,7 @@ export class McpStdioClient {
     const framingHint = String((server.env as any)?.KNEZ_MCP_CLIENT_FRAMING ?? "").trim().toLowerCase();
     if (framingHint === "line") this.requestFraming = "line";
     else if (framingHint === "content-length" || framingHint === "content_length") this.requestFraming = "content-length";
-    else this.requestFraming = server.id === "taqwin" ? "line" : "content-length";
+    else this.requestFraming = "content-length";
     this.lastTimeout = null;
     this.lastWrite = null;
     this.startedWith = { mode: "config", serverId: server.id, command: server.command };
@@ -325,7 +325,9 @@ export class McpStdioClient {
       hasError: "error" in msg
     });
     if ("error" in msg) {
-      slot.reject(new Error(msg.error.message));
+      const code = (msg as any)?.error?.code;
+      const message = String((msg as any)?.error?.message ?? "mcp_error");
+      slot.reject(new Error(code !== undefined ? `mcp_error_${code}: ${message}` : message));
     } else {
       slot.resolve(msg.result);
     }
@@ -445,7 +447,7 @@ export class McpStdioClient {
   }
 
   async initialize(): Promise<any> {
-    return await this.request(
+    const res = await this.request(
       "initialize",
       {
         protocolVersion: "2024-11-05",
@@ -454,6 +456,8 @@ export class McpStdioClient {
       },
       { timeoutMs: 90000, stopOnTimeout: true }
     );
+    logger.info("mcp", "MCP initialize ok", { framing: this.requestFraming });
+    return res;
   }
 
   async notifyInitialized(): Promise<void> {
@@ -475,6 +479,7 @@ export class McpStdioClient {
   getDebugState() {
     return {
       running: !!this.child,
+      pid: this.child?.pid ?? null,
       startedWith: this.startedWith,
       requestFraming: this.requestFraming,
       lastExitCode: this.lastExitCode,

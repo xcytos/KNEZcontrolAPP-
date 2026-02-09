@@ -18,6 +18,7 @@ import { backendHasLiveMetrics, isBackendHealthyStatus, selectPrimaryBackend } f
 import { features } from "../../config/features";
 import { useTaqwinActivationStatus } from "../../hooks/useTaqwinActivationStatus";
 import { useTaqwinMcpStatus } from "../../hooks/useTaqwinMcpStatus";
+import { ChatTerminalPane } from "./ChatTerminalPane";
 
 // CP17: History Modal
 const HistoryModal: React.FC<{
@@ -354,6 +355,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [auditOpen, setAuditOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [inspectSessionId, setInspectSessionId] = useState<string | null>(null);
+  const [mode, setMode] = useState<"chat" | "terminal">("chat");
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -571,6 +573,28 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
             </div>
          </div>
          <div className="flex items-center gap-2">
+            <div className="flex items-center border border-zinc-800 rounded-md overflow-hidden bg-zinc-950/40">
+              <button
+                type="button"
+                onClick={() => setMode("chat")}
+                className={`px-3 py-1.5 text-xs font-medium ${
+                  mode === "chat" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-zinc-200"
+                }`}
+                title="Chat messages"
+              >
+                Chat
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("terminal")}
+                className={`px-3 py-1.5 text-xs font-medium ${
+                  mode === "terminal" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-zinc-200"
+                }`}
+                title="In-chat terminal"
+              >
+                Terminal
+              </button>
+            </div>
             <div className="hidden md:flex items-center gap-2 px-2 py-1 rounded border border-zinc-800 bg-zinc-950/40 text-[10px] font-mono text-zinc-400">
               <span>{online ? "online" : "offline"}</span>
               <span>•</span>
@@ -652,148 +676,156 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
          </div>
       </div>
 
-      <div 
-        ref={containerRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-4 space-y-6 scroll-smooth"
-      >
-        {renderOfflineOverlay()}
-
-        {hiddenCount > 0 && (
-          <button
-            type="button"
-            onClick={() => setVisibleCount(prev => Math.min(messages.length, prev + 50))}
-            className="text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-900/40 border border-zinc-800 hover:border-zinc-700 rounded-lg px-3 py-2 w-full"
+      {mode === "chat" ? (
+        <>
+          <div 
+            ref={containerRef}
+            onScroll={handleScroll}
+            className="flex-1 overflow-y-auto p-4 space-y-6 scroll-smooth"
           >
-            Load earlier messages ({hiddenCount} remaining)
-          </button>
-        )}
-        
-        {visibleMessages.map((msg, idx) => (
-          <MessageItem 
-            key={msg.id || idx} 
-            msg={msg} 
-            onEdit={handleEdit}
-            onStop={handleStop}
-            onRetry={handleRetry}
-            readOnly={readOnly}
-          />
-        ))}
-        <div ref={messagesEndRef} className="h-4" />
-      </div>
+            {renderOfflineOverlay()}
 
-      <div className="p-4 border-t border-zinc-800 bg-zinc-900/30">
-        <div className="flex gap-2 mb-2 px-1">
-           <button 
-             data-testid="search-toggle"
-             type="button"
-             onClick={() => {
-               const next = { ...activeTools, search: !activeTools.search };
-               chatService.setActiveTools(next);
-             }}
-             className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-               activeTools.search 
-                 ? "bg-blue-600 text-white shadow-blue-900/50 shadow-sm" 
-                 : "bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300"
-             }`}
-           >
-             <Search size={14} />
-             <span>{activeTools.search ? 'Search On' : 'Search Off'}</span>
-           </button>
-           <button
-             type="button"
-             onClick={() => setAuditOpen(true)}
-             className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300 transition-all"
-             title="Chat State Audit"
-           >
-             <span>Audit</span>
-           </button>
-           {features.taqwinTools && (
-             <button
-               type="button"
-               onClick={() => setToolsOpen(true)}
-               className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300 transition-all"
-               title="TAQWIN Tools"
-             >
-              <span className="flex items-center gap-2">
-                Tools
-                <span
-                  className={`inline-block w-2 h-2 rounded-full ${
-                    taqwinMcpStatus.state === "running"
-                      ? "bg-emerald-400"
-                      : taqwinMcpStatus.state === "starting"
-                        ? "bg-amber-400"
-                        : taqwinMcpStatus.state === "error"
-                          ? "bg-red-400"
-                          : "bg-zinc-500"
-                  }`}
-                  title={`TAQWIN MCP: ${taqwinMcpStatus.state}`}
-                />
-              </span>
-             </button>
-           )}
-        </div>
-        {features.logViews && (
-          <div className="px-1 mb-2 text-[10px] text-zinc-500 font-mono">
-            search_provider={activeTools.search ? searchProvider : "off"}
+            {hiddenCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setVisibleCount(prev => Math.min(messages.length, prev + 50))}
+                className="text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-900/40 border border-zinc-800 hover:border-zinc-700 rounded-lg px-3 py-2 w-full"
+              >
+                Load earlier messages ({hiddenCount} remaining)
+              </button>
+            )}
+            
+            {visibleMessages.map((msg, idx) => (
+              <MessageItem 
+                key={msg.id || idx} 
+                msg={msg} 
+                onEdit={handleEdit}
+                onStop={handleStop}
+                onRetry={handleRetry}
+                readOnly={readOnly}
+              />
+            ))}
+            <div ref={messagesEndRef} className="h-4" />
           </div>
-        )}
-        {canContinue && (
-          <div className="px-1 mb-2">
-            <button
-              type="button"
-              onClick={() => {
-                const tail = (lastAssistant?.text ?? "").slice(-2000);
-                void chatService.sendMessage("Continue", `\n\n[SYSTEM: Continue]\nResume from the last assistant output:\n${tail}`);
-              }}
-              className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-1.5 rounded-lg"
-            >
-              Continue
-            </button>
-          </div>
-        )}
 
-        <form onSubmit={handleSend} className="relative flex gap-2">
-          <VoiceInput onTranscript={handleVoiceTranscript} />
-          <input
-            data-testid="chat-input"
-            autoFocus
-            type="text"
-            className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 transition-all placeholder-zinc-600"
-            placeholder={readOnly ? "System is offline..." : "Type a message..."}
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-          />
-          {sending && (
-            <button
-              type="button"
-              onClick={() => chatService.stopCurrentResponse()}
-              className="px-4 py-2 rounded-lg text-sm font-medium bg-zinc-900 border border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:text-white transition-colors"
-              title="Stop current response"
-            >
-              <div className="flex items-center gap-2">
-                <Square size={14} />
-                <span>Stop</span>
+          <div className="p-4 border-t border-zinc-800 bg-zinc-900/30">
+            <div className="flex gap-2 mb-2 px-1">
+               <button 
+                 data-testid="search-toggle"
+                 type="button"
+                 onClick={() => {
+                   const next = { ...activeTools, search: !activeTools.search };
+                   chatService.setActiveTools(next);
+                 }}
+                 className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                   activeTools.search 
+                     ? "bg-blue-600 text-white shadow-blue-900/50 shadow-sm" 
+                     : "bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300"
+                 }`}
+               >
+                 <Search size={14} />
+                 <span>{activeTools.search ? 'Search On' : 'Search Off'}</span>
+               </button>
+               <button
+                 type="button"
+                 onClick={() => setAuditOpen(true)}
+                 className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300 transition-all"
+                 title="Chat State Audit"
+               >
+                 <span>Audit</span>
+               </button>
+               {features.taqwinTools && (
+                 <button
+                   type="button"
+                   onClick={() => setToolsOpen(true)}
+                   className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300 transition-all"
+                   title="TAQWIN Tools"
+                 >
+                  <span className="flex items-center gap-2">
+                    Tools
+                    <span
+                      className={`inline-block w-2 h-2 rounded-full ${
+                        taqwinMcpStatus.state === "running"
+                          ? "bg-emerald-400"
+                          : taqwinMcpStatus.state === "starting"
+                            ? "bg-amber-400"
+                            : taqwinMcpStatus.state === "error"
+                              ? "bg-red-400"
+                              : "bg-zinc-500"
+                      }`}
+                      title={`TAQWIN MCP: ${taqwinMcpStatus.state}`}
+                    />
+                  </span>
+                 </button>
+               )}
+            </div>
+            {features.logViews && (
+              <div className="px-1 mb-2 text-[10px] text-zinc-500 font-mono">
+                search_provider={activeTools.search ? searchProvider : "off"}
               </div>
-            </button>
-          )}
-          <button
-            data-testid="chat-send"
-            type="submit"
-            disabled={!inputValue.trim()}
-            className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg shadow-blue-900/20"
-          >
-            {sending ? "Sending..." : "Send"}
-          </button>
-        </form>
-        
-        {validating && (
-           <div className="absolute top-0 right-0 -mt-8 mr-4 text-[10px] text-zinc-500 flex items-center gap-2">
-              <div className="w-2 h-2 border-2 border-zinc-600 border-t-transparent rounded-full animate-spin"></div>
-              Validating Cognition...
-           </div>
-        )}
-      </div>
+            )}
+            {canContinue && (
+              <div className="px-1 mb-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const tail = (lastAssistant?.text ?? "").slice(-2000);
+                    void chatService.sendMessage("Continue", `\n\n[SYSTEM: Continue]\nResume from the last assistant output:\n${tail}`);
+                  }}
+                  className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-1.5 rounded-lg"
+                >
+                  Continue
+                </button>
+              </div>
+            )}
+
+            <form onSubmit={handleSend} className="relative flex gap-2">
+              <VoiceInput onTranscript={handleVoiceTranscript} />
+              <input
+                data-testid="chat-input"
+                autoFocus
+                type="text"
+                className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 transition-all placeholder-zinc-600"
+                placeholder={readOnly ? "System is offline..." : "Type a message..."}
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+              />
+              {sending && (
+                <button
+                  type="button"
+                  onClick={() => chatService.stopCurrentResponse()}
+                  className="px-4 py-2 rounded-lg text-sm font-medium bg-zinc-900 border border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:text-white transition-colors"
+                  title="Stop current response"
+                >
+                  <div className="flex items-center gap-2">
+                    <Square size={14} />
+                    <span>Stop</span>
+                  </div>
+                </button>
+              )}
+              <button
+                data-testid="chat-send"
+                type="submit"
+                disabled={!inputValue.trim()}
+                className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg shadow-blue-900/20"
+              >
+                {sending ? "Sending..." : "Send"}
+              </button>
+            </form>
+            
+            {validating && (
+               <div className="absolute top-0 right-0 -mt-8 mr-4 text-[10px] text-zinc-500 flex items-center gap-2">
+                  <div className="w-2 h-2 border-2 border-zinc-600 border-t-transparent rounded-full animate-spin"></div>
+                  Validating Cognition...
+               </div>
+            )}
+          </div>
+        </>
+      ) : (
+        <div className="flex-1 overflow-hidden">
+          <ChatTerminalPane />
+        </div>
+      )}
 
       <ForkModal 
         isOpen={!!forkingMsgId} 

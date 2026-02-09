@@ -49,7 +49,7 @@ vi.mock("../../src/services/TaqwinToolPermissions", () => ({
   isTaqwinToolAllowed: () => false,
 }));
 
-vi.mock("../../src/services/TaqwinMcpService", () => ({
+vi.mock("../../src/mcp/taqwin/TaqwinMcpService", () => ({
   taqwinMcpService: {},
 }));
 
@@ -126,4 +126,3 @@ describe("CP02 persistence pairing", () => {
     expect(sessionDatabaseMock.enqueueOutgoing).toHaveBeenCalledWith(expect.objectContaining({ id: "u1", sessionId: "sid1", text: "new text" }));
   });
 });
-

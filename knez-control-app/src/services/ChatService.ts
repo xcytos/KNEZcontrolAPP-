@@ -8,7 +8,7 @@ import { observe } from "../utils/observer";
 import { sessionDatabase } from "./SessionDatabase";
 import { sessionController } from "./SessionController";
 import { isTaqwinToolAllowed } from "./TaqwinToolPermissions";
-import { taqwinMcpService } from "./TaqwinMcpService";
+import { taqwinMcpService } from "../mcp/taqwin/TaqwinMcpService";
 import { logger } from "./LogService";
 import { tabErrorStore } from "./TabErrorStore";
 import { selectPrimaryBackend } from "../utils/health";

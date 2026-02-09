@@ -5,10 +5,37 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $AppDir = Resolve-Path (Join-Path $ScriptDir "..\..")
 $RepoRoot = Resolve-Path (Join-Path $AppDir "..")
-$ConfigPath = Join-Path $AppDir "src-tauri\mcp\mcp.config.json"
+$BundledConfigPath = Join-Path $AppDir "src-tauri\mcp\mcp.config.json"
+$OverrideConfigPath = [string]$env:KNEZ_MCP_CONFIG_PATH
+$AppData = [string]$env:APPDATA
+$AppLocalCandidates = @()
+if ($AppData) {
+  $AppLocalCandidates += (Join-Path $AppData "com.syedm.knez-control-app\mcp.config.json")
+  $AppLocalCandidates += (Join-Path $AppData "knez-control-app\mcp.config.json")
+}
 
-if (-not (Test-Path $ConfigPath)) {
-  throw "MCP config not found at: $ConfigPath"
+$CandidatePaths = @()
+if ($OverrideConfigPath) {
+  if (-not ([System.IO.Path]::IsPathRooted($OverrideConfigPath))) {
+    $CandidatePaths += (Join-Path $RepoRoot $OverrideConfigPath)
+  } else {
+    $CandidatePaths += $OverrideConfigPath
+  }
+}
+$CandidatePaths += $AppLocalCandidates
+$CandidatePaths += $BundledConfigPath
+
+$ConfigPath = $null
+foreach ($p in $CandidatePaths) {
+  if ($p -and (Test-Path $p)) {
+    $ConfigPath = $p
+    break
+  }
+}
+
+if (-not $ConfigPath -or -not (Test-Path $ConfigPath)) {
+  $Tried = ($CandidatePaths | Where-Object { $_ }) -join "`n - "
+  throw "MCP config not found. Tried:`n - $Tried"
 }
 
 try {

@@ -1,27 +1,36 @@
-import { McpToolDefinition } from "./McpTypes";
-import { logger } from "./LogService";
-import { mcpHostConfigService } from "./McpHostConfigService";
-import { normalizeTaqwinMcpServer } from "./McpHostConfig";
+import { McpToolDefinition } from "../../services/McpTypes";
+import { logger } from "../../services/LogService";
+import { mcpHostConfigService } from "../config/McpHostConfigService";
+import { normalizeTaqwinMcpServer } from "../config/McpHostConfig";
 
 function isTauriRuntime(): boolean {
   const w = window as any;
   return !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
 }
 
+export function resolveTaqwinActivationToolName(
+  tools: Array<{ name: string }>
+): "activate_taqwin_unified_consciousness" | "taqwin_activate" | null {
+  const names = new Set((tools ?? []).map((t) => t.name));
+  if (names.has("activate_taqwin_unified_consciousness")) return "activate_taqwin_unified_consciousness";
+  if (names.has("taqwin_activate")) return "taqwin_activate";
+  return null;
+}
+
 class TaqwinMcpService {
-  private client: import("./McpStdioClient").McpStdioClient | null = null;
+  private client: import("../client/McpStdioClient").McpStdioClient | null = null;
   private initialized = false;
   private toolsCache: McpToolDefinition[] | null = null;
   private toolsCacheAt: number | null = null;
   private toolsCacheTtlMs = 30000;
-  private initPromise: Promise<import("./McpStdioClient").McpStdioClient> | null = null;
+  private initPromise: Promise<import("../client/McpStdioClient").McpStdioClient> | null = null;
   private opChain: Promise<void> = Promise.resolve();
   private consecutiveFailures = 0;
   private lastRawError: string | null = null;
   private lastNormalizedError: string | null = null;
   private lastDebugState: any | null = null;
   private generation = 0;
-  private framingPreference: "line" | "content-length" = "line";
+  private framingPreference: "line" | "content-length" = "content-length";
   private state: "down" | "starting" | "running" | "error" = "down";
   private lastStartAt: number | null = null;
   private lastOkAt: number | null = null;
@@ -72,7 +81,7 @@ class TaqwinMcpService {
     }
   }
 
-  private async getClient(): Promise<import("./McpStdioClient").McpStdioClient> {
+  private async getClient(): Promise<import("../client/McpStdioClient").McpStdioClient> {
     if (!isTauriRuntime()) throw new Error("mcp_unavailable_non_tauri");
     if (this.initPromise) return this.initPromise;
     const gen = this.generation;
@@ -82,42 +91,71 @@ class TaqwinMcpService {
     this.initPromise = (async () => {
       let client = this.client;
       try {
-        if (!client) {
-          const { McpStdioClient } = await import("./McpStdioClient");
-          client = new McpStdioClient();
-          this.client = client;
-          const loaded = await mcpHostConfigService.load();
-          const effective = loaded ?? mcpHostConfigService.getDefault();
-          const selected =
-            effective.config.mcpServers["taqwin"] ??
-            Object.values(effective.config.mcpServers)[0];
-          const server = normalizeTaqwinMcpServer(selected);
-          server.env = {
-            ...(server.env ?? {}),
-            KNEZ_MCP_CLIENT_FRAMING: this.framingPreference,
-            TAQWIN_MCP_OUTPUT_MODE: this.framingPreference
-          };
-          await client.startWithConfig(server);
-          this.initialized = false;
-          this.toolsCache = null;
-          this.toolsCacheAt = null;
-        }
-        if (!this.initialized) {
-          if (gen !== this.generation) throw new Error("mcp_restart_in_progress");
-          await client.initialize();
+        let lastErr: any = null;
+        for (let attempt = 0; attempt < 2; attempt++) {
           try {
-            await client.notifyInitialized?.();
-          } catch {}
-          this.initialized = true;
+            if (!client) {
+              const { McpStdioClient } = await import("../client/McpStdioClient");
+              client = new McpStdioClient();
+              this.client = client;
+              const loaded = await mcpHostConfigService.load();
+              const effective = loaded ?? mcpHostConfigService.getDefault();
+              const selected =
+                effective.config.servers["taqwin"] ??
+                Object.values(effective.config.servers)[0];
+              const server = normalizeTaqwinMcpServer(selected);
+              server.env = {
+                ...(server.env ?? {}),
+                KNEZ_MCP_CLIENT_FRAMING: this.framingPreference,
+                TAQWIN_MCP_OUTPUT_MODE: this.framingPreference
+              };
+              await client.startWithConfig(server);
+              this.initialized = false;
+              this.toolsCache = null;
+              this.toolsCacheAt = null;
+            }
+            if (!this.initialized) {
+              if (gen !== this.generation) throw new Error("mcp_restart_in_progress");
+              await client.initialize();
+              try {
+                await client.notifyInitialized?.();
+              } catch {}
+              this.initialized = true;
+            }
+            this.state = "running";
+            this.lastOkAt = Date.now();
+            this.emitStatus();
+            this.consecutiveFailures = 0;
+            this.lastRawError = null;
+            this.lastNormalizedError = null;
+            this.lastDebugState = client.getDebugState?.() ?? null;
+            return client;
+          } catch (err) {
+            lastErr = err;
+            const raw = String((err as any)?.message ?? err);
+            const dbg = client?.getDebugState?.() ?? this.lastDebugState;
+            const lastTimeout = dbg?.lastTimeout;
+            const canFlip =
+              attempt === 0 &&
+              raw.includes("mcp_request_timeout") &&
+              lastTimeout?.method === "initialize" &&
+              lastTimeout?.stdoutBytes === 0;
+            if (!canFlip) throw err;
+            this.framingPreference = this.framingPreference === "line" ? "content-length" : "line";
+            logger.warn("mcp", "TAQWIN MCP switching client framing after initialize stall", {
+              nextFraming: this.framingPreference
+            });
+            try {
+              await client?.stop?.();
+            } catch {}
+            if (this.client === client) this.client = null;
+            client = null;
+            this.initialized = false;
+            this.toolsCache = null;
+            this.toolsCacheAt = null;
+          }
         }
-        this.state = "running";
-        this.lastOkAt = Date.now();
-        this.emitStatus();
-        this.consecutiveFailures = 0;
-        this.lastRawError = null;
-        this.lastNormalizedError = null;
-        this.lastDebugState = client.getDebugState?.() ?? null;
-        return client;
+        throw lastErr;
       } catch (err) {
         const raw = String((err as any)?.message ?? err);
         this.lastRawError = raw;
@@ -154,7 +192,7 @@ class TaqwinMcpService {
     }
 
     if (/mcp_config_missing/i.test(raw)) {
-      return new Error("TAQWIN MCP is not configured. Open TAQWIN Tools → MCP Config and paste an mcpServers JSON config.");
+      return new Error("TAQWIN MCP is not configured. Open TAQWIN Tools → MCP Config and paste a servers JSON config.");
     }
 
     if (/mcp_custom_config_windows_only/i.test(raw)) {
@@ -175,10 +213,14 @@ class TaqwinMcpService {
 
     if (/mcp_request_timeout/i.test(raw)) {
       const dbg = this.lastDebugState ?? this.client?.getDebugState?.() ?? null;
+      const m = String(dbg?.lastTimeout?.method ?? "").trim();
+      const pid = dbg?.childPid ?? dbg?.pid ?? null;
+      const framing = String(dbg?.requestFraming ?? this.framingPreference);
       const tail = String(dbg?.stderrTail ?? dbg?.stdoutTail ?? "").trim();
       const shortTail = tail ? tail.split(/\r?\n/).slice(-4).join(" | ").slice(-220) : "";
       const suffix = shortTail ? ` Last MCP output: ${shortTail}` : "";
-      return new Error(`TAQWIN MCP request timed out. Open MCP Logs.${suffix}`);
+      const meta = ` method=${m || "unknown"} framing=${framing}${pid ? ` pid=${pid}` : ""}`;
+      return new Error(`TAQWIN MCP request timed out (${meta}). Open MCP Logs.${suffix}`);
     }
 
     if (/mcp_process_closed_/i.test(raw)) {
@@ -368,15 +410,15 @@ class TaqwinMcpService {
     return this.enqueue(async () => {
       if (!isTauriRuntime()) throw new Error("mcp_unavailable_non_tauri");
       const tools = await this.listTools(true);
-      const names = new Set(tools.map((t) => t.name));
-      if (names.has("taqwin_activate")) {
+      const tool = resolveTaqwinActivationToolName(tools);
+      if (tool === "taqwin_activate") {
         const sid = opts.sessionId ?? "";
         const endpoint = opts.knezEndpoint ?? "";
         const cp = opts.checkpoint ?? "CP01_MCP_REGISTRY";
-        return await this.callTool("taqwin_activate", { session_id: sid, knez_endpoint: endpoint, checkpoint: cp });
+        return await this.callTool(tool, { session_id: sid, knez_endpoint: endpoint, checkpoint: cp });
       }
-      if (names.has("activate_taqwin_unified_consciousness")) {
-        return await this.callTool("activate_taqwin_unified_consciousness", {
+      if (tool === "activate_taqwin_unified_consciousness") {
+        return await this.callTool(tool, {
           level: "superintelligence",
           enable_learning: true,
           enable_insights: true,

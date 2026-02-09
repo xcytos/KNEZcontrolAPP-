@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { taqwinMcpService } from "../../services/TaqwinMcpService";
+import { Command } from "@tauri-apps/plugin-shell";
+import { taqwinMcpService } from "../../mcp/taqwin/TaqwinMcpService";
 import { getTaqwinToolPermissions, isTaqwinToolAllowed, setTaqwinToolEnabled } from "../../services/TaqwinToolPermissions";
 import { McpToolDefinition } from "../../services/McpTypes";
 import { sessionController } from "../../services/SessionController";
@@ -8,8 +9,8 @@ import { sessionDatabase } from "../../services/SessionDatabase";
 import { ChatMessage, ToolCallMessage } from "../../domain/DataContracts";
 import { knezClient } from "../../services/KnezClient";
 import { logger } from "../../services/LogService";
-import { mcpHostConfigService } from "../../services/McpHostConfigService";
-import { normalizeTaqwinMcpServer, parseMcpHostConfigJson, validateTaqwinMcpServer } from "../../services/McpHostConfig";
+import { mcpHostConfigService } from "../../mcp/config/McpHostConfigService";
+import { normalizeTaqwinMcpServer, parseMcpHostConfigJson, validateTaqwinMcpServer } from "../../mcp/config/McpHostConfig";
 import { useTaqwinMcpStatus } from "../../hooks/useTaqwinMcpStatus";
 
 function newLocalId(prefix: string): string {
@@ -121,7 +122,7 @@ export const TaqwinToolsModal: React.FC<{
         const effective = loaded ?? mcpHostConfigService.getDefault();
         setConfigText(effective.raw);
         const issues: Record<string, ReturnType<typeof validateTaqwinMcpServer>> = {};
-        for (const [name, server] of Object.entries(effective.config.mcpServers)) {
+        for (const [name, server] of Object.entries(effective.config.servers)) {
           issues[name] = validateTaqwinMcpServer(server);
         }
         setConfigIssues(issues);
@@ -515,7 +516,7 @@ export const TaqwinToolsModal: React.FC<{
                             try {
                               const cfg = parseMcpHostConfigJson(configText);
                               const normalized: any = { schema_version: "1", servers: {} as Record<string, any> };
-                              for (const [name, server] of Object.entries(cfg.mcpServers)) {
+                              for (const [name, server] of Object.entries(cfg.servers)) {
                                 const next = normalizeTaqwinMcpServer(server);
                                 normalized.servers[name] = {
                                   command: next.command,

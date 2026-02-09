@@ -21,7 +21,7 @@ test.describe("Tauri E2E", () => {
       await page.waitForTimeout(400);
 
       console.log("[E2E] Click Chat");
-      await page.getByRole("button", { name: "Chat" }).click();
+      await page.getByTitle("Chat", { exact: true }).click();
 
       console.log("[E2E] Open TAQWIN Tools");
       await expect(page.getByRole("button", { name: "Tools" })).toBeVisible({ timeout: 30000 });

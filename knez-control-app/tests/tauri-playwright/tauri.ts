@@ -38,11 +38,18 @@ function attachPageDiagnostics(page: Page, label: string) {
     const buf = pageLogBuffer.get(page);
     if (!buf) return;
     buf.push(line);
-    if (buf.length > 80) buf.splice(0, buf.length - 80);
+    if (buf.length > 200) buf.splice(0, buf.length - 200);
   };
   page.on("console", (msg) => {
-    if (msg.type() !== "error" && msg.type() !== "warning") return;
-    const line = `[E2E:${label}] console.${msg.type()}: ${msg.text()}`;
+    const t = msg.type();
+    const text = msg.text();
+    const important =
+      t === "error" ||
+      t === "warning" ||
+      /\[(mcp|knez_client|taqwin|runtime)\]/i.test(text) ||
+      /\b(mcp_request_timeout|stdin_write|shell\.execute not allowed|permission)\b/i.test(text);
+    if (!important) return;
+    const line = `[E2E:${label}] console.${t}: ${text}`;
     push(line);
     console.log(line);
   });

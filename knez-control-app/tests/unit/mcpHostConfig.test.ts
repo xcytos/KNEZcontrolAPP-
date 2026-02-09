@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { normalizeTaqwinMcpServer, parseMcpHostConfigJson, validateTaqwinMcpServer } from "../../src/services/McpHostConfig";
+import { normalizeTaqwinMcpServer, parseMcpHostConfigJson, validateTaqwinMcpServer } from "../../src/mcp/config/McpHostConfig";
 
 describe("McpHostConfig", () => {
   test("parses mcpServers format", () => {
@@ -14,7 +14,7 @@ describe("McpHostConfig", () => {
       }
     });
     const cfg = parseMcpHostConfigJson(raw);
-    expect(cfg.mcpServers.taqwin.command).toContain("python.exe");
+    expect(cfg.servers.taqwin.command).toContain("python.exe");
   });
 
   test("parses legacy servers format", () => {
@@ -30,7 +30,7 @@ describe("McpHostConfig", () => {
       }
     });
     const cfg = parseMcpHostConfigJson(raw);
-    expect(cfg.mcpServers.taqwin.cwd).toBe("C:\\\\TAQWIN_V1");
+    expect(cfg.servers.taqwin.cwd).toBe("C:\\\\TAQWIN_V1");
   });
 
   test("validates required fields per TAQWIN guide", () => {
@@ -46,7 +46,7 @@ describe("McpHostConfig", () => {
         }
       })
     );
-    const issues = validateTaqwinMcpServer(cfg.mcpServers.taqwin);
+    const issues = validateTaqwinMcpServer(cfg.servers.taqwin);
     expect(issues.some((i) => i.level === "error")).toBe(true);
   });
 
@@ -63,7 +63,7 @@ describe("McpHostConfig", () => {
         }
       })
     );
-    const normalized = normalizeTaqwinMcpServer(cfg.mcpServers.taqwin);
+    const normalized = normalizeTaqwinMcpServer(cfg.servers.taqwin);
     expect(normalized.args[0]).toBe("-u");
     expect(normalized.env.PYTHONUNBUFFERED).toBe("1");
   });

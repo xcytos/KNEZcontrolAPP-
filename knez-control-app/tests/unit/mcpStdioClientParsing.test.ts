@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { McpStdioClient } from "../../src/services/McpStdioClient";
+import { McpStdioClient } from "../../src/mcp/client/McpStdioClient";
 
 function frameContentLength(bodyText: string, crlf = true): Uint8Array {
   const encoder = new TextEncoder();
@@ -103,4 +103,3 @@ describe("McpStdioClient stdout parsing", () => {
     expect(resolved).toEqual({ ok: true });
   });
 });
-
