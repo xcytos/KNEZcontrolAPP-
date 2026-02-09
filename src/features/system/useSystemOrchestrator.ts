@@ -180,17 +180,14 @@ export function useSystemOrchestrator(onReady?: () => void) {
 
   const stopKnez = useCallback(async () => {
      try {
-       // In a real scenario, we might call a stop script or kill the process ID if we tracked it.
-       // Since 'start-local-stack' spawns separate processes, killing the command object might not be enough
-       // if it spawned detached children.
-       // However, for "Failure Injection", we can try to call a stop command.
-       // Or we can just call the OS kill command via shell.
-       
        setOutput((prev) => prev + "\n[Inject Failure] Stopping KNEZ...");
-       // Assuming Windows: taskkill /IM python.exe /F
-       // NOTE: This is aggressive but fits "Failure Injection".
-       // We need "stop-local-stack" command or similar.
-       const command = Command.create("exec", ["/F", "/IM", "python.exe"]);
+       const killScript =
+         "$ErrorActionPreference='SilentlyContinue';" +
+         "$k=(Get-NetTCPConnection -LocalPort 8000 -State Listen | Select-Object -First 1 -ExpandProperty OwningProcess);" +
+         "if($k){Write-Host \"Killing KNEZ pid=$k\"; taskkill /PID $k /T /F | Out-Host}else{Write-Host \"No listener on 8000\"};" +
+         "$o=(Get-NetTCPConnection -LocalPort 11434 -State Listen | Select-Object -First 1 -ExpandProperty OwningProcess);" +
+         "if($o){Write-Host \"Killing Ollama pid=$o\"; taskkill /PID $o /T /F | Out-Host}else{Write-Host \"No listener on 11434\"}";
+       const command = Command.create("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", killScript]);
        command.on("close", (data) => {
          setOutput((prev) => prev + `\n[Stop exited with code ${data.code}]`);
        });

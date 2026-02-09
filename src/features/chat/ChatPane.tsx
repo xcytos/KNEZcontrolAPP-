@@ -10,12 +10,14 @@ import { VoiceInput } from "../voice/VoiceInput";
 import { chatService } from "../../services/ChatService";
 import { sessionDatabase } from "../../services/SessionDatabase";
 import { sessionController } from "../../services/SessionController";
-import { History, MessageSquarePlus, Search, Square, Trash2, TerminalSquare, Puzzle, Sparkles, Zap } from "lucide-react";
+import { History, Loader2, MessageSquarePlus, Search, Square, Trash2, TerminalSquare, Puzzle, Sparkles, Zap } from "lucide-react";
 import { TaqwinToolsModal } from "./TaqwinToolsModal";
 import { SessionInspectorModal } from "./SessionInspectorModal";
 import { useStatus } from "../../contexts/useStatus";
 import { backendHasLiveMetrics, isBackendHealthyStatus, selectPrimaryBackend } from "../../utils/health";
 import { features } from "../../config/features";
+import { useTaqwinActivationStatus } from "../../hooks/useTaqwinActivationStatus";
+import { useTaqwinMcpStatus } from "../../hooks/useTaqwinMcpStatus";
 
 // CP17: History Modal
 const HistoryModal: React.FC<{
@@ -357,6 +359,8 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const containerRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
   const { online, health } = useStatus();
+  const taqwinActivation = useTaqwinActivationStatus();
+  const taqwinMcpStatus = useTaqwinMcpStatus();
   const backend = selectPrimaryBackend(health?.backends);
   const backendLabel = backend
     ? isBackendHealthyStatus(backend.status)
@@ -609,10 +613,25 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
             {features.taqwinTools && (
               <button
                  onClick={() => window.dispatchEvent(new CustomEvent("taqwin-activate"))}
-                 className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
-                 title="TAQWIN ACTIVATE"
+                disabled={taqwinActivation.state === "starting"}
+                className={`p-2 rounded-md transition-colors ${
+                  taqwinActivation.state === "running"
+                    ? "text-emerald-300 hover:text-emerald-200 hover:bg-emerald-900/20"
+                    : taqwinActivation.state === "error"
+                      ? "text-red-300 hover:text-red-200 hover:bg-red-900/20"
+                      : "text-zinc-400 hover:text-white hover:bg-zinc-800"
+                } ${taqwinActivation.state === "starting" ? "opacity-70 cursor-not-allowed" : ""}`}
+                title={
+                  taqwinActivation.state === "error"
+                    ? `TAQWIN ERROR: ${taqwinActivation.lastError ?? "unknown"}`
+                    : taqwinActivation.state === "running"
+                      ? "TAQWIN RUNNING"
+                      : taqwinActivation.state === "starting"
+                        ? "TAQWIN STARTING"
+                        : "TAQWIN ACTIVATE"
+                }
               >
-                 <Zap size={18} />
+                {taqwinActivation.state === "starting" ? <Loader2 size={18} className="animate-spin" /> : <Zap size={18} />}
               </button>
             )}
             <button
@@ -696,7 +715,21 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300 transition-all"
                title="TAQWIN Tools"
              >
-               <span>Tools</span>
+              <span className="flex items-center gap-2">
+                Tools
+                <span
+                  className={`inline-block w-2 h-2 rounded-full ${
+                    taqwinMcpStatus.state === "running"
+                      ? "bg-emerald-400"
+                      : taqwinMcpStatus.state === "starting"
+                        ? "bg-amber-400"
+                        : taqwinMcpStatus.state === "error"
+                          ? "bg-red-400"
+                          : "bg-zinc-500"
+                  }`}
+                  title={`TAQWIN MCP: ${taqwinMcpStatus.state}`}
+                />
+              </span>
              </button>
            )}
         </div>

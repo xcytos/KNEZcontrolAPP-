@@ -2,7 +2,8 @@ import { BaseDirectory, readTextFile, writeTextFile } from "@tauri-apps/plugin-f
 import { McpHostConfig, parseMcpHostConfigJson, validateTaqwinMcpServer } from "./McpHostConfig";
 import { getDefaultMcpHostConfig } from "./DefaultMcpHostConfig";
 
-const FILE_NAME = "mcp.host.json";
+const FILE_NAME = "mcp.config.json";
+const LEGACY_FILE_NAME = "mcp.host.json";
 
 export class McpHostConfigService {
   async load(): Promise<{ raw: string; config: McpHostConfig } | null> {
@@ -11,7 +12,19 @@ export class McpHostConfigService {
       const config = parseMcpHostConfigJson(raw);
       return { raw, config };
     } catch {
-      return null;
+      try {
+        const raw = await readTextFile(LEGACY_FILE_NAME, { baseDir: BaseDirectory.AppLocalData });
+        const config = parseMcpHostConfigJson(raw);
+        try {
+          const migrated = JSON.stringify({ schema_version: "1", servers: config.mcpServers }, null, 2);
+          await writeTextFile(FILE_NAME, migrated, { baseDir: BaseDirectory.AppLocalData });
+          return { raw: migrated, config };
+        } catch {
+          return { raw, config };
+        }
+      } catch {
+        return null;
+      }
     }
   }
 

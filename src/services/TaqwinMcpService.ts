@@ -22,6 +22,29 @@ class TaqwinMcpService {
   private lastDebugState: any | null = null;
   private generation = 0;
   private framingPreference: "line" | "content-length" = "line";
+  private state: "down" | "starting" | "running" | "error" = "down";
+  private lastStartAt: number | null = null;
+  private lastOkAt: number | null = null;
+  private listeners = new Set<(status: ReturnType<TaqwinMcpService["getStatus"]>) => void>();
+
+  subscribe(listener: (status: ReturnType<TaqwinMcpService["getStatus"]>) => void): () => void {
+    this.listeners.add(listener);
+    try {
+      listener(this.getStatus());
+    } catch {}
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  private emitStatus() {
+    const snap = this.getStatus();
+    for (const l of this.listeners) {
+      try {
+        l(snap);
+      } catch {}
+    }
+  }
 
   private enqueue<T>(fn: () => Promise<T>): Promise<T> {
     const p = this.opChain.then(fn, fn);
@@ -53,6 +76,9 @@ class TaqwinMcpService {
     if (!isTauriRuntime()) throw new Error("mcp_unavailable_non_tauri");
     if (this.initPromise) return this.initPromise;
     const gen = this.generation;
+    this.state = "starting";
+    this.lastStartAt = Date.now();
+    this.emitStatus();
     this.initPromise = (async () => {
       let client = this.client;
       try {
@@ -84,6 +110,9 @@ class TaqwinMcpService {
           } catch {}
           this.initialized = true;
         }
+        this.state = "running";
+        this.lastOkAt = Date.now();
+        this.emitStatus();
         this.consecutiveFailures = 0;
         this.lastRawError = null;
         this.lastNormalizedError = null;
@@ -94,6 +123,8 @@ class TaqwinMcpService {
         this.lastRawError = raw;
         this.lastDebugState = client?.getDebugState?.() ?? null;
         this.lastNormalizedError = this.normalizeError(err).message;
+        this.state = "error";
+        this.emitStatus();
         try {
           await client?.stop?.();
         } catch {}
@@ -162,13 +193,20 @@ class TaqwinMcpService {
   }
 
   getStatus() {
+    const debug = this.lastDebugState ?? this.client?.getDebugState?.() ?? null;
     return {
+      state: this.state,
+      processAlive: !!this.client,
+      lastStartAt: this.lastStartAt,
+      lastOkAt: this.lastOkAt,
+      framing: (debug as any)?.requestFraming ?? this.framingPreference,
+      lastError: this.lastNormalizedError ?? this.lastRawError,
       running: !!this.client && this.initialized,
       initialized: this.initialized,
       consecutiveFailures: this.consecutiveFailures,
       lastRawError: this.lastRawError,
       lastNormalizedError: this.lastNormalizedError,
-      debug: this.lastDebugState ?? this.client?.getDebugState?.() ?? null,
+      debug,
     };
   }
 
@@ -193,6 +231,8 @@ class TaqwinMcpService {
     this.initialized = false;
     this.toolsCache = null;
     this.toolsCacheAt = null;
+    this.state = "down";
+    this.emitStatus();
   }
 
   async stop() {
@@ -214,7 +254,10 @@ class TaqwinMcpService {
         this.toolsCache = tools;
         this.toolsCacheAt = Date.now();
         const durationMs = Math.round(performance.now() - startedAt);
+        this.lastOkAt = Date.now();
+        this.emitStatus();
         logger.info("mcp", "TAQWIN MCP tools/list ok", { durationMs, tools: tools.length });
+        logger.info("mcp_audit", "tools/list", { ok: true, durationMs, tools: tools.length });
         return tools;
       } catch (err) {
         if (!this.shouldRetry(err)) throw err;
@@ -241,12 +284,16 @@ class TaqwinMcpService {
           this.toolsCache = tools;
           this.toolsCacheAt = Date.now();
           const durationMs = Math.round(performance.now() - startedAt);
+          this.lastOkAt = Date.now();
+          this.emitStatus();
           logger.info("mcp", "TAQWIN MCP tools/list ok (after retry)", { durationMs, tools: tools.length });
+          logger.info("mcp_audit", "tools/list", { ok: true, durationMs, tools: tools.length, afterRetry: true });
           return tools;
         } catch (err2) {
           const durationMs = Math.round(performance.now() - startedAt);
           logger.error("mcp", "TAQWIN MCP listTools failed after retry", { error: String((err2 as any)?.message ?? err2) });
           logger.error("mcp", "TAQWIN MCP tools/list audit", { durationMs, ok: false });
+          logger.error("mcp_audit", "tools/list", { ok: false, durationMs, error: String((err2 as any)?.message ?? err2), afterRetry: true });
           const normalized = this.normalizeError(err2);
           this.lastRawError = String((err2 as any)?.message ?? err2);
           this.lastNormalizedError = normalized.message;
@@ -265,10 +312,16 @@ class TaqwinMcpService {
         const client = await this.getClient();
         const res = await client.callTool(name, args);
         const durationMs = Math.round(performance.now() - startedAt);
+        this.lastOkAt = Date.now();
+        this.emitStatus();
         const bytes = (() => {
           try { return JSON.stringify(res).length; } catch { return null; }
         })();
+        const argsBytes = (() => {
+          try { return JSON.stringify(args ?? {}).length; } catch { return null; }
+        })();
         logger.info("mcp", "TAQWIN MCP tools/call ok", { tool: name, durationMs, bytes });
+        logger.info("mcp_audit", "tools/call", { ok: true, tool: name, durationMs, argsBytes, resultBytes: bytes });
         return res;
       } catch (err) {
         if (!this.shouldRetry(err)) throw err;
@@ -282,10 +335,16 @@ class TaqwinMcpService {
           const client = await this.getClient();
           const res = await client.callTool(name, args);
           const durationMs = Math.round(performance.now() - startedAt);
+          this.lastOkAt = Date.now();
+          this.emitStatus();
           const bytes = (() => {
             try { return JSON.stringify(res).length; } catch { return null; }
           })();
+          const argsBytes = (() => {
+            try { return JSON.stringify(args ?? {}).length; } catch { return null; }
+          })();
           logger.info("mcp", "TAQWIN MCP tools/call ok (after retry)", { tool: name, durationMs, bytes });
+          logger.info("mcp_audit", "tools/call", { ok: true, tool: name, durationMs, argsBytes, resultBytes: bytes, afterRetry: true });
           return res;
         } catch (err2) {
           const durationMs = Math.round(performance.now() - startedAt);
@@ -294,6 +353,7 @@ class TaqwinMcpService {
             error: String((err2 as any)?.message ?? err2)
           });
           logger.error("mcp", "TAQWIN MCP tools/call audit", { tool: name, durationMs, ok: false });
+          logger.error("mcp_audit", "tools/call", { ok: false, tool: name, durationMs, error: String((err2 as any)?.message ?? err2), afterRetry: true });
           const normalized = this.normalizeError(err2);
           this.lastRawError = String((err2 as any)?.message ?? err2);
           this.lastNormalizedError = normalized.message;
@@ -304,23 +364,63 @@ class TaqwinMcpService {
     });
   }
 
+  async activateTaqwin(opts: { sessionId?: string; knezEndpoint?: string; checkpoint?: string } = {}) {
+    return this.enqueue(async () => {
+      if (!isTauriRuntime()) throw new Error("mcp_unavailable_non_tauri");
+      const tools = await this.listTools(true);
+      const names = new Set(tools.map((t) => t.name));
+      if (names.has("taqwin_activate")) {
+        const sid = opts.sessionId ?? "";
+        const endpoint = opts.knezEndpoint ?? "";
+        const cp = opts.checkpoint ?? "CP01_MCP_REGISTRY";
+        return await this.callTool("taqwin_activate", { session_id: sid, knez_endpoint: endpoint, checkpoint: cp });
+      }
+      if (names.has("activate_taqwin_unified_consciousness")) {
+        return await this.callTool("activate_taqwin_unified_consciousness", {
+          level: "superintelligence",
+          enable_learning: true,
+          enable_insights: true,
+          enable_delegation: true,
+          enable_performance_monitoring: true,
+          enable_superintelligence: true,
+          enable_council: true,
+          enable_fallbacks: true,
+          performance_mode: "optimized",
+          delegation_strategy: "adaptive",
+          persistent_mode: true,
+          memory_depth: 50,
+        });
+      }
+      throw new Error("taqwin_activate_tool_missing");
+    });
+  }
+
   async selfTest() {
     if (!isTauriRuntime()) throw new Error("mcp_unavailable_non_tauri");
-    const steps: { step: string; ok: boolean; detail?: any }[] = [];
+    const steps: { step: string; ok: boolean; durationMs?: number; detail?: any }[] = [];
     const startedAt = performance.now();
     try {
+      const t0 = performance.now();
       await this.start(true);
-      steps.push({ step: "start", ok: true });
+      steps.push({ step: "start", ok: true, durationMs: Math.round(performance.now() - t0) });
 
+      const t1 = performance.now();
       const tools = await this.listTools(true);
       const names = tools.map((t) => t.name);
-      steps.push({ step: "tools/list", ok: tools.length > 0, detail: { tools: tools.length, names: names.slice(0, 12) } });
+      steps.push({
+        step: "tools/list",
+        ok: tools.length > 0,
+        durationMs: Math.round(performance.now() - t1),
+        detail: { tools: tools.length, names: names.slice(0, 12) }
+      });
 
+      const t2 = performance.now();
       const status = await this.callTool("get_server_status", { force_refresh: true, include_db_analysis: false });
-      steps.push({ step: "tools/call get_server_status", ok: true, detail: status });
+      steps.push({ step: "tools/call get_server_status", ok: true, durationMs: Math.round(performance.now() - t2), detail: status });
 
+      const t3 = performance.now();
       const dbg = await this.callTool("debug_test", { message: "mcp_self_test" });
-      steps.push({ step: "tools/call debug_test", ok: true, detail: dbg });
+      steps.push({ step: "tools/call debug_test", ok: true, durationMs: Math.round(performance.now() - t3), detail: dbg });
 
       return { ok: steps.every((s) => s.ok), durationMs: Math.round(performance.now() - startedAt), steps };
     } catch (e: any) {
