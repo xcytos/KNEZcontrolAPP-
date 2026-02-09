@@ -2,6 +2,7 @@ import net from "node:net";
 import { execSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import http from "node:http";
 import https from "node:https";
 import { fileURLToPath } from "node:url";
@@ -122,18 +123,15 @@ async function validateReusableCdp(cdpUrl) {
   }
 }
 
-function spawnTauriDev({ cdpPort }) {
+async function spawnTauriDev({ cdpPort }) {
   const isWin = process.platform === "win32";
-  const cmd = isWin ? "cmd.exe" : "npm";
-  const args = isWin
-    ? ["/d", "/s", "/c", "npm", "run", "tauri", "--", "dev"]
-    : ["run", "tauri", "--", "dev"];
-  const webview2UserData = path.join(__dirname, `.webview2-user-data-${cdpPort}-${process.pid}`);
+  const webview2UserData = path.join(os.tmpdir(), `knez-webview2-e2e-${cdpPort}-${process.pid}`);
   fs.mkdirSync(webview2UserData, { recursive: true });
   const env = {
     ...process.env,
+    RUST_BACKTRACE: process.env.RUST_BACKTRACE ?? "1",
     WEBVIEW2_USER_DATA_FOLDER: webview2UserData,
-    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${cdpPort} --remote-allow-origins=*`,
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${cdpPort} --remote-debugging-address=127.0.0.1`,
     TAURI_CDP_URL: `http://${CDP_HOST}:${cdpPort}`,
     TAURI_CDP_PORT: String(cdpPort),
     TAURI_E2E: "1",
@@ -144,6 +142,10 @@ function spawnTauriDev({ cdpPort }) {
   const logFile = path.join(__dirname, "tauri-dev.log");
   const logStream = fs.createWriteStream(logFile, { flags: "w" });
 
+  const cmd = isWin ? "cmd.exe" : "npm";
+  const args = isWin
+    ? ["/d", "/s", "/c", "npm", "run", "tauri", "--", "dev"]
+    : ["run", "tauri", "--", "dev"];
   const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], env, shell: false });
   child.stdout?.pipe(logStream);
   child.stderr?.pipe(logStream);
@@ -167,11 +169,20 @@ function runPlaywrightTauri({ cdpUrl }) {
     stdio: ["ignore", "pipe", "pipe"],
     shell: false
   });
+  const keepAliveId = setInterval(() => {
+    void httpGetJson(`${cdpUrl}/json/version`, 1500);
+  }, 500);
   child.stdout?.pipe(runLogStream, { end: false });
   child.stderr?.pipe(runLogStream, { end: false });
   return new Promise((resolve) => {
-    child.on("close", (code) => resolve(code ?? 1));
-    child.on("error", () => resolve(1));
+    child.on("close", (code) => {
+      clearInterval(keepAliveId);
+      resolve(code ?? 1);
+    });
+    child.on("error", () => {
+      clearInterval(keepAliveId);
+      resolve(1);
+    });
   });
 }
 
@@ -264,6 +275,22 @@ function killListeningPort(port) {
   } catch {}
 }
 
+function killProcessTree(proc) {
+  if (!proc?.pid) return;
+  if (process.platform !== "win32") return;
+  try {
+    execSync(`taskkill /PID ${proc.pid} /T /F`, { stdio: "ignore", timeout: 5000 });
+  } catch {}
+}
+
+function killImage(imageName) {
+  if (process.platform !== "win32") return;
+  if (!imageName) return;
+  try {
+    execSync(`taskkill /IM ${imageName} /T /F`, { stdio: "ignore", timeout: 5000 });
+  } catch {}
+}
+
 function spawnKnezServer() {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
@@ -308,6 +335,7 @@ async function main() {
   let knezLog = null;
   let knezTempLog = null;
   let knezDetached = false;
+
   try {
     logLine(`TAURI E2E: checking KNEZ at http://${KNEZ_HOST}:${KNEZ_PORT}/health`);
     await waitForHttpOk(`http://${KNEZ_HOST}:${KNEZ_PORT}/health`, 2000);
@@ -343,6 +371,7 @@ async function main() {
     return 0;
   }
 
+  killImage("knez-control-app.exe");
   killListeningPort(5173);
   let tauriProc = null;
   let logFile = null;
@@ -351,7 +380,7 @@ async function main() {
   for (let attempt = 1; attempt <= maxStarts; attempt++) {
     cdpPort = process.env.TAURI_CDP_PORT ? Number(process.env.TAURI_CDP_PORT) : await pickFreePort(CDP_HOST);
     killListeningPort(cdpPort);
-    const started = spawnTauriDev({ cdpPort });
+    const started = await spawnTauriDev({ cdpPort });
     tauriProc = started.child;
     logFile = started.logFile;
     logLine(`TAURI E2E: starting desktop app; log=${logFile}`);
@@ -360,9 +389,6 @@ async function main() {
       await waitForHttpOk("http://127.0.0.1:5173/", 90000);
       logLine(`TAURI E2E: waiting for CDP ${CDP_HOST}:${cdpPort}`);
       await waitForPort(CDP_HOST, cdpPort, 180000);
-      await waitForCdpReady(`http://${CDP_HOST}:${cdpPort}`, 180000);
-      await sleep(1000);
-      await waitForCdpReady(`http://${CDP_HOST}:${cdpPort}`, 60000);
 
       try {
         await fs.promises.writeFile(
@@ -378,6 +404,7 @@ async function main() {
       try { tauriProc.kill("SIGINT"); } catch {}
       await sleep(750);
       try { tauriProc.kill(); } catch {}
+      killProcessTree(tauriProc);
       tauriProc = null;
       logFile = null;
       if (attempt === maxStarts) throw e;
@@ -403,12 +430,16 @@ async function main() {
     try {
       tauriProc?.kill();
     } catch {}
+    killProcessTree(tauriProc);
+    killListeningPort(5173);
+    if (cdpPort) killListeningPort(cdpPort);
     if (knezDetached) {
       killListeningPort(KNEZ_PORT);
     } else if (knezProc) {
       try { knezProc.kill("SIGINT"); } catch {}
       await sleep(500);
       try { knezProc.kill(); } catch {}
+      killProcessTree(knezProc);
     }
     try { runLogStream.end(); } catch {}
   }

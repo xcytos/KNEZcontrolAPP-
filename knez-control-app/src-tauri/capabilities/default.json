@@ -5,6 +5,7 @@
   "permissions": [
     "core:default",
     "fs:default",
+    "fs:allow-applocaldata-write",
     "http:default",
     "shell:allow-open",
     "shell:allow-stdin-write",
@@ -64,6 +65,21 @@
         {
           "name": "powershell",
           "cmd": "powershell.exe",
+          "args": true
+        },
+        {
+          "name": "cmd",
+          "cmd": "cmd.exe",
+          "args": true
+        },
+        {
+          "name": "python",
+          "cmd": "python",
+          "args": true
+        },
+        {
+          "name": "python-exe",
+          "cmd": "python.exe",
           "args": true
         },
         {

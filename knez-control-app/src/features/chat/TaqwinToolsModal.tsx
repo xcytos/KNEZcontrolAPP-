@@ -8,6 +8,8 @@ import { sessionDatabase } from "../../services/SessionDatabase";
 import { ChatMessage, ToolCallMessage } from "../../domain/DataContracts";
 import { knezClient } from "../../services/KnezClient";
 import { logger } from "../../services/LogService";
+import { mcpHostConfigService } from "../../services/McpHostConfigService";
+import { normalizeTaqwinMcpServer, parseMcpHostConfigJson, validateTaqwinMcpServer } from "../../services/McpHostConfig";
 
 function newLocalId(prefix: string): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -20,11 +22,18 @@ function formatMcpUiError(raw: string): string {
   if (/mcp_stdin_write_denied/i.test(raw)) {
     return "MCP blocked: stdin_write permission denied. Enable shell:allow-stdin-write in Tauri capabilities.";
   }
+  if (/mcp_config_missing/i.test(raw)) {
+    return "TAQWIN MCP is not configured. Click MCP Config and paste an mcpServers JSON config.";
+  }
+  if (/mcp_custom_config_windows_only/i.test(raw)) {
+    return "Custom MCP configs are currently supported on Windows only.";
+  }
   if (/ModuleNotFoundError:\s*No module named 'config'|No module named 'config'/i.test(raw)) {
     return "TAQWIN MCP failed to start (Python module path/config issue).";
   }
   if (/mcp_request_timeout/i.test(raw)) {
-    return "TAQWIN MCP request timed out. Please retry.";
+    if (/TAQWIN MCP request timed out/i.test(raw) || raw.length > 80) return raw;
+    return "TAQWIN MCP request timed out. Open MCP Logs for details, then retry.";
   }
   if (/mcp_process_closed_/i.test(raw)) {
     return "TAQWIN MCP closed unexpectedly. Please retry.";
@@ -39,6 +48,8 @@ export const TaqwinToolsModal: React.FC<{
   const [tools, setTools] = useState<McpToolDefinition[]>([]);
   const [selectedTool, setSelectedTool] = useState<string>("");
   const [argsText, setArgsText] = useState<string>("{}");
+  const [loadingTools, setLoadingTools] = useState(false);
+  const [startingMcp, setStartingMcp] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>("");
   const [errorRaw, setErrorRaw] = useState<string>("");
@@ -63,6 +74,42 @@ export const TaqwinToolsModal: React.FC<{
       return [];
     }
   });
+
+  const [showConfig, setShowConfig] = useState(false);
+  const [configText, setConfigText] = useState("");
+  const [configIssues, setConfigIssues] = useState<Record<string, ReturnType<typeof validateTaqwinMcpServer>>>({});
+  const [configError, setConfigError] = useState("");
+  const [selfTest, setSelfTest] = useState<any>(null);
+
+  const e2eMode = useMemo(() => {
+    try {
+      return new URLSearchParams(window.location.search).get("e2e") === "1";
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const isTauri = useMemo(() => {
+    const w = window as any;
+    return !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!isTauri) return;
+    void (async () => {
+      try {
+        const loaded = await mcpHostConfigService.load();
+        const effective = loaded ?? mcpHostConfigService.getDefault();
+        setConfigText(effective.raw);
+        const issues: Record<string, ReturnType<typeof validateTaqwinMcpServer>> = {};
+        for (const [name, server] of Object.entries(effective.config.mcpServers)) {
+          issues[name] = validateTaqwinMcpServer(server);
+        }
+        setConfigIssues(issues);
+      } catch {}
+    })();
+  }, [isOpen, isTauri]);
 
   const toolByName = useMemo(() => new Map(tools.map(t => [t.name, t])), [tools]);
   const visibleTools = useMemo(() => {
@@ -125,9 +172,12 @@ export const TaqwinToolsModal: React.FC<{
     let cancelled = false;
     const load = async (force = false) => {
       try {
+        setLoadingTools(true);
         setMcpStatus(taqwinMcpService.getStatus());
         const list = await taqwinMcpService.listTools(force);
         if (!cancelled) {
+          setError("");
+          setErrorRaw("");
           setTools(list);
           setSelectedTool((prev) => {
             const next = prev && list.some((t) => t.name === prev) ? prev : (list[0]?.name ?? "");
@@ -142,16 +192,20 @@ export const TaqwinToolsModal: React.FC<{
           setError(formatMcpUiError(raw));
           setErrorRaw(raw);
           setMcpStatus(taqwinMcpService.getStatus());
+          setTools([]);
+          setSelectedTool("");
         }
+      } finally {
+        if (!cancelled) setLoadingTools(false);
       }
     };
     void load(true);
-    const t = window.setInterval(() => void load(false), 20000);
+    const t = e2eMode ? null : window.setInterval(() => void load(false), 20000);
     return () => {
       cancelled = true;
-      clearInterval(t);
+      if (typeof t === "number") clearInterval(t);
     };
-  }, [isOpen]);
+  }, [isOpen, e2eMode]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -168,6 +222,8 @@ export const TaqwinToolsModal: React.FC<{
   }, [isOpen, onClose]);
 
   if (!isOpen) return null;
+  const selectedDef = toolByName.get(selectedTool);
+  const stderrTail = (mcpStatus as any)?.debug?.stderrTail ?? null;
 
   const runTool = async () => {
     setError("");
@@ -247,6 +303,28 @@ export const TaqwinToolsModal: React.FC<{
             <h2 className="text-lg font-light text-zinc-200">TAQWIN Tools</h2>
             <div className="flex items-center gap-2">
               <button
+                onClick={() => setShowConfig((v) => !v)}
+                className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+              >
+                MCP Config
+              </button>
+              <button
+                onClick={() => {
+                  void (async () => {
+                    setSelfTest(null);
+                    try {
+                      const res = await taqwinMcpService.selfTest();
+                      setSelfTest(res);
+                    } catch (e: any) {
+                      setSelfTest({ ok: false, steps: [{ step: "error", ok: false, detail: String(e?.message ?? e) }] });
+                    }
+                  })();
+                }}
+                className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+              >
+                Self-Test
+              </button>
+              <button
                 onClick={() => {
                   window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
                 }}
@@ -260,6 +338,8 @@ export const TaqwinToolsModal: React.FC<{
                     setError("");
                     setErrorRaw("");
                     try {
+                      setStartingMcp(true);
+                      setLoadingTools(true);
                       const status = await taqwinMcpService.start(true);
                       setMcpStatus(status);
                       const list = await taqwinMcpService.listTools(true);
@@ -275,12 +355,18 @@ export const TaqwinToolsModal: React.FC<{
                       setErrorRaw(raw);
                       setMcpStatus(taqwinMcpService.getStatus());
                       window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
+                    } finally {
+                      setStartingMcp(false);
+                      setLoadingTools(false);
                     }
                   })();
                 }}
-                className="text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                disabled={loadingTools || startingMcp}
+                className={`text-xs px-2 py-1 rounded text-white transition-colors ${
+                  loadingTools || startingMcp ? "bg-blue-600/60 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-500"
+                }`}
               >
-                {mcpStatus.running ? "Restart TAQWIN MCP" : "Start TAQWIN MCP"}
+                {startingMcp ? "Starting..." : mcpStatus.running ? "Restart TAQWIN MCP" : "Start TAQWIN MCP"}
               </button>
               <button onClick={onClose} className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors">
                 Close
@@ -295,6 +381,99 @@ export const TaqwinToolsModal: React.FC<{
               <div className="truncate text-red-300 max-w-[520px]">{mcpStatus.lastRawError}</div>
             )}
           </div>
+          {showConfig && (
+            <div className="mt-4 border border-zinc-800 rounded bg-zinc-950/40 p-3 space-y-2">
+              {!isTauri ? (
+                <div className="text-xs text-zinc-400">MCP config editing requires the desktop app (Tauri).</div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-xs font-mono text-zinc-500">mcp.host.json (AppLocalData)</div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          void (async () => {
+                            setConfigError("");
+                            try {
+                              const cfg = parseMcpHostConfigJson(configText);
+                              const normalized: any = { mcpServers: {} as Record<string, any> };
+                              for (const [name, server] of Object.entries(cfg.mcpServers)) {
+                                normalized.mcpServers[name] = normalizeTaqwinMcpServer(server);
+                              }
+                              setConfigText(JSON.stringify(normalized, null, 2));
+                            } catch (e: any) {
+                              setConfigError(String(e?.message ?? e));
+                            }
+                          })();
+                        }}
+                        className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+                      >
+                        Auto-fix
+                      </button>
+                      <button
+                        onClick={() => {
+                          void (async () => {
+                            setConfigError("");
+                            try {
+                              const res = await mcpHostConfigService.save(configText);
+                              setConfigIssues(res.issues);
+                            } catch (e: any) {
+                              setConfigError(String(e?.message ?? e));
+                            }
+                          })();
+                        }}
+                        className="text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                      >
+                        Save
+                      </button>
+                    </div>
+                  </div>
+                  <textarea
+                    value={configText}
+                    onChange={(e) => setConfigText(e.target.value)}
+                    placeholder={`{\n  \"mcpServers\": {\n    \"taqwin\": {\n      \"command\": \"C:\\\\path\\\\to\\\\python.exe\",\n      \"args\": [\"-u\", \"C:\\\\path\\\\to\\\\TAQWIN_V1\\\\main.py\"],\n      \"cwd\": \"C:\\\\path\\\\to\\\\TAQWIN_V1\",\n      \"env\": {\"PYTHONUNBUFFERED\": \"1\"}\n    }\n  }\n}`}
+                    className="w-full h-40 bg-zinc-950 border border-zinc-800 rounded p-2 text-zinc-300 text-xs font-mono focus:border-blue-500 outline-none"
+                  />
+                  {configError && <div className="text-xs text-red-300">{configError}</div>}
+                  {Object.keys(configIssues).length > 0 && (
+                    <div className="space-y-2">
+                      {Object.entries(configIssues).map(([name, issues]) => (
+                        <div key={name} className="text-[10px] font-mono">
+                          <div className="text-zinc-400">{name}</div>
+                          {issues.length === 0 ? (
+                            <div className="text-green-300">ok</div>
+                          ) : (
+                            issues.map((iss, idx) => (
+                              <div key={`${name}-${idx}`} className={iss.level === "error" ? "text-red-300" : "text-yellow-300"}>
+                                {iss.level}: {iss.message}
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+          {selfTest && (
+            <div className="mt-3 border border-zinc-800 rounded bg-zinc-950/40 p-3 space-y-2">
+              <div className="text-xs font-mono text-zinc-500">mcp self-test</div>
+              <div className={selfTest.ok ? "text-xs text-green-300" : "text-xs text-red-300"}>
+                {selfTest.ok ? "PASS" : "FAIL"} {typeof selfTest.durationMs === "number" ? `(${selfTest.durationMs}ms)` : ""}
+              </div>
+              {Array.isArray(selfTest.steps) && (
+                <div className="text-[10px] font-mono space-y-1">
+                  {selfTest.steps.map((s: any, idx: number) => (
+                    <div key={idx} className={s.ok ? "text-zinc-300" : "text-red-300"}>
+                      {s.ok ? "ok" : "fail"} {s.step}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <div className="p-6 overflow-y-auto flex-1 grid grid-cols-3 gap-4">
           <div className="col-span-1 space-y-2">
@@ -311,8 +490,23 @@ export const TaqwinToolsModal: React.FC<{
               </div>
             )}
             <div className="border border-zinc-800 rounded bg-zinc-950/40 overflow-hidden">
-              {tools.length === 0 ? (
-                <div className="p-3 text-xs text-zinc-500">No tools loaded.</div>
+              {loadingTools ? (
+                <div className="p-3 text-xs text-zinc-500">Loading tools...</div>
+              ) : tools.length === 0 ? (
+                <div className="p-3 space-y-2">
+                  <div className="text-xs text-zinc-500">No tools loaded.</div>
+                  {error && <div className="text-xs text-red-300">{error}</div>}
+                  {stderrTail && (
+                    <div className="text-[10px] font-mono text-zinc-300 whitespace-pre-wrap break-words">
+                      {String(stderrTail)}
+                    </div>
+                  )}
+                  {errorRaw && (
+                    <div className="text-[10px] font-mono text-zinc-400 whitespace-pre-wrap break-words">
+                      {errorRaw}
+                    </div>
+                  )}
+                </div>
               ) : (
                 visibleTools.map((t) => {
                   const enabled = permissions[t.name] !== false;
@@ -369,14 +563,14 @@ export const TaqwinToolsModal: React.FC<{
             <div className="border border-zinc-800 rounded bg-zinc-950/40 p-4">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <div className="text-sm font-mono text-zinc-200">{selectedTool}</div>
+                  <div className="text-sm font-mono text-zinc-200">{selectedTool || "Select a tool"}</div>
                   <div className="text-xs text-zinc-500 mt-1">
-                    {toolByName.get(selectedTool)?.description ?? "No description."}
+                    {selectedDef?.description ?? (selectedTool ? "No description." : "Pick a tool from the registry to see details.")}
                   </div>
                 </div>
                 <button
                   onClick={() => void runTool()}
-                  disabled={busy}
+                  disabled={busy || !selectedTool}
                   className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {busy ? "Running..." : "Run Tool"}

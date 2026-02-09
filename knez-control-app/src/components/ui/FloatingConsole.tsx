@@ -169,6 +169,7 @@ export const FloatingConsole: React.FC = () => {
       <button
         onClick={() => setOpen(true)}
         className="fixed bottom-5 right-5 w-12 h-12 rounded-full bg-zinc-900 border border-zinc-700 shadow-lg flex items-center justify-center text-zinc-200 hover:bg-zinc-800 transition-colors z-[9999] relative"
+        style={{ left: "auto", right: 20, bottom: 20 }}
         title="System Console"
       >
         <TerminalSquare size={20} />
@@ -265,8 +266,8 @@ export const FloatingConsole: React.FC = () => {
                 {filteredLogs.length === 0 ? (
                   <div className="text-zinc-500">No logs yet.</div>
                 ) : (
-                  filteredLogs.map((l) => (
-                    <div key={l.id} className="border border-zinc-900 rounded p-2 bg-zinc-900/20">
+                  filteredLogs.map((l, idx) => (
+                    <div key={`${l.id}-${l.timestamp}-${idx}`} className="border border-zinc-900 rounded p-2 bg-zinc-900/20">
                       <div className="flex items-center justify-between">
                         <div className="text-[10px] text-zinc-500">
                           {new Date(l.timestamp).toLocaleTimeString()} • {l.category}

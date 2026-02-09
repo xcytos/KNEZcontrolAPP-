@@ -22,7 +22,12 @@ export default defineConfig(async () => ({
       host: 'localhost',
     },
     watch: {
-      ignored: ["**/src-tauri/**"],
+      ignored: [
+        "**/src-tauri/**",
+        "**/playwright-report/**",
+        "**/test-results/**",
+        "**/tests/tauri-e2e/**"
+      ],
     },
   },
 }));

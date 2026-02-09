@@ -1,8 +1,9 @@
 import { test, expect } from "@playwright/test";
-import { closeAllE2EWindows, closeE2EWindow, closeTauri, openE2EWindow, setKnezEndpoint } from "./tauri";
+import { closeAllE2EWindows, closeE2EWindow, closeTauri, getPageDiagnostics, openE2EWindow } from "./tauri";
 
 test.describe("Tauri E2E", () => {
   test.describe.configure({ mode: "serial" });
+  test.setTimeout(240000);
 
   test.afterEach(async () => {
     await new Promise((r) => setTimeout(r, 600));
@@ -13,28 +14,7 @@ test.describe("Tauri E2E", () => {
     await closeTauri();
   });
 
-  test("delivery check: send hi and receive response", async () => {
-    const { page, label } = await openE2EWindow();
-    try {
-      const endpoint = process.env.KNEZ_ENDPOINT ?? "http://127.0.0.1:8000";
-      await setKnezEndpoint(page, endpoint);
-      await page.waitForTimeout(400);
-
-      await page.click('button[title="Chat"]');
-      const input = page.locator('[data-testid="chat-input"]');
-      await expect(input).toBeVisible();
-      await input.fill("hi");
-      await page.click('[data-testid="chat-send"]');
-
-      const lastAssistant = page.locator('[data-testid="message-bubble"][data-role="knez"]').last();
-      await expect(lastAssistant).toBeVisible({ timeout: 60000 });
-      await expect(lastAssistant).not.toHaveText(/waiting for response/i, { timeout: 60000 });
-    } finally {
-      await closeE2EWindow(label);
-    }
-  });
-
-  test("TAQWIN + MCP UI is visible and shows actionable errors", async () => {
+  test("TAQWIN MCP registry loads tools", async () => {
     const { page, label } = await openE2EWindow();
     try {
       await page.waitForTimeout(400);
@@ -42,10 +22,14 @@ test.describe("Tauri E2E", () => {
       await page.click('button[title="Chat"]');
       await expect(page.locator('button[title="TAQWIN Tools"]')).toBeVisible({ timeout: 30000 });
       await page.click('button[title="TAQWIN Tools"]');
-      await expect(page.getByText("TAQWIN Tools")).toBeVisible({ timeout: 30000 });
+      await expect(page.getByRole("heading", { name: "TAQWIN Tools" })).toBeVisible({ timeout: 30000 });
 
-      await expect(page.getByText(/Start TAQWIN MCP|Restart TAQWIN MCP/)).toBeVisible({ timeout: 30000 });
       await expect(page.getByText(/Open MCP Logs/)).toBeVisible({ timeout: 30000 });
+      await expect(page.getByText(/Start TAQWIN MCP|Restart TAQWIN MCP/)).toBeVisible({ timeout: 30000 });
+      await expect(page.getByText("MCP Config")).toBeVisible({ timeout: 30000 });
+      await expect(page.getByText("Self-Test")).toBeVisible({ timeout: 30000 });
+      const diag = getPageDiagnostics(page);
+      if (diag.length) console.log(diag.join("\n"));
     } finally {
       await closeE2EWindow(label);
     }

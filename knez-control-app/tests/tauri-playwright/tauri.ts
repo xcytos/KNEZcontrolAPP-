@@ -2,9 +2,12 @@ import { Browser, Page, chromium } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 
-let cached: { browser: Browser; page: Page } | null = null;
+let cached: { browser: Browser; page: Page; mode: "cdp" | "browser" } | null = null;
+const pageLogBuffer = new WeakMap<Page, string[]>();
+const openedLabels = new Set<string>();
 
 async function invokeTauri<T = any>(page: Page, command: string, args?: any): Promise<T> {
+  if (cached?.mode === "browser") throw new Error("tauri_invoke_unavailable");
   return await page.evaluate(
     async ({ command, args }) => {
       const w: any = window as any;
@@ -14,6 +17,39 @@ async function invokeTauri<T = any>(page: Page, command: string, args?: any): Pr
     },
     { command, args }
   );
+}
+
+function attachPageDiagnostics(page: Page, label: string) {
+  if (pageLogBuffer.has(page)) return;
+  pageLogBuffer.set(page, []);
+  const push = (line: string) => {
+    const buf = pageLogBuffer.get(page);
+    if (!buf) return;
+    buf.push(line);
+    if (buf.length > 80) buf.splice(0, buf.length - 80);
+  };
+  page.on("console", (msg) => {
+    if (msg.type() !== "error" && msg.type() !== "warning") return;
+    const line = `[E2E:${label}] console.${msg.type()}: ${msg.text()}`;
+    push(line);
+    console.log(line);
+  });
+  page.on("pageerror", (err) => {
+    const line = `[E2E:${label}] pageerror: ${String((err as any)?.message ?? err)}`;
+    push(line);
+    console.log(line);
+  });
+  page.on("requestfailed", (req) => {
+    const failure = req.failure();
+    if (!failure) return;
+    const line = `[E2E:${label}] requestfailed: ${req.url()} (${failure.errorText})`;
+    push(line);
+    console.log(line);
+  });
+}
+
+export function getPageDiagnostics(page: Page): string[] {
+  return pageLogBuffer.get(page)?.slice() ?? [];
 }
 
 export async function connectTauri(): Promise<{ browser: Browser; page: Page }> {
@@ -43,18 +79,27 @@ export async function connectTauri(): Promise<{ browser: Browser; page: Page }> 
       await new Promise((r) => setTimeout(r, 500));
     }
   }
-  if (!browser) throw lastErr ?? new Error("tauri_cdp_connect_failed");
+  if (!browser) {
+    const baseUrl = process.env.VITE_URL ?? "http://127.0.0.1:5173/";
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+    cached = { browser, page, mode: "browser" };
+    return cached;
+  }
   const contexts = browser.contexts();
   const pages = contexts.flatMap((c) => c.pages()).filter((p) => !p.isClosed());
   const page =
+    pages.find((p) => p.url().startsWith("http://127.0.0.1:5173/") && !p.url().includes("e2e=1")) ??
     pages.find((p) => p.url().startsWith("http://localhost:5173/") && !p.url().includes("e2e=1")) ??
     pages.find((p) => p.url().includes(":5173/") && !p.url().includes("e2e=1")) ??
-    pages.find((p) => !p.url().includes("playwright-report") && !p.url().includes("e2e=1")) ??
+    pages.find((p) => !p.url().includes("playwright-report")) ??
     pages.find((p) => (p.title() || "").toLowerCase().includes("knez")) ??
     pages[0];
   if (!page) throw new Error("tauri_no_page");
   await page.waitForLoadState("domcontentloaded");
-  cached = { browser, page };
+  attachPageDiagnostics(page, "main");
+  cached = { browser, page, mode: "cdp" };
   return cached;
 }
 
@@ -67,41 +112,42 @@ export async function closeTauri() {
 }
 
 export async function openE2EWindow(): Promise<{ page: Page; label: string }> {
-  let lastErr: any = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const { page: controlPage } = await connectTauri();
-    if (controlPage.isClosed()) {
-      cached = null;
-      continue;
+  const { browser, page: main } = await connectTauri();
+  try {
+    const label = await invokeTauri<string>(main, "open_test_window");
+    openedLabels.add(label);
+    let target: Page | null = null;
+    for (let attempt = 0; attempt < 80; attempt++) {
+      const contexts = browser.contexts();
+      const pages = contexts.flatMap((c) => c.pages()).filter((p) => !p.isClosed());
+      target = pages.find((p) => p.url().includes(`label=${label}`)) ?? null;
+      if (target) break;
+      await new Promise((r) => setTimeout(r, 250));
     }
-    try {
-      const context = controlPage.context();
-      const pagePromise = context.waitForEvent("page", { timeout: 30000 });
-      const label = await invokeTauri<string>(controlPage, "open_test_window");
-      const page = await pagePromise;
-      await page.waitForLoadState("domcontentloaded");
-      return { page, label };
-    } catch (e) {
-      lastErr = e;
-      cached = null;
-      await new Promise((r) => setTimeout(r, 500));
-    }
+    if (!target) throw new Error("tauri_test_window_not_found");
+    await target.waitForLoadState("domcontentloaded");
+    attachPageDiagnostics(target, label);
+    return { page: target, label };
+  } catch {
+    return { page: main, label: "main" };
   }
-  throw lastErr ?? new Error("tauri_open_e2e_window_failed");
 }
 
 export async function closeE2EWindow(label: string): Promise<void> {
-  const { page: controlPage } = await connectTauri();
+  if (!label || label === "main") return;
+  openedLabels.delete(label);
   try {
-    await invokeTauri(controlPage, "close_window", { label });
+    const { page } = await connectTauri();
+    await invokeTauri(page, "close_window", { label });
   } catch {}
 }
 
 export async function closeAllE2EWindows(): Promise<void> {
-  const { page: controlPage } = await connectTauri();
   try {
-    await invokeTauri(controlPage, "close_all_test_windows");
+    const { page } = await connectTauri();
+    await invokeTauri(page, "close_all_test_windows");
   } catch {}
+  openedLabels.clear();
 }
 
 export async function setKnezEndpoint(page: Page, endpoint: string) {
