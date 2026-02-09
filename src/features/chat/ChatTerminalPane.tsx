@@ -4,7 +4,7 @@ import { FolderOpen, Play, Square, Trash2 } from "lucide-react";
 
 function isTauriRuntime(): boolean {
   const w = window as any;
-  return !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
+  return !!(w.__TAURI__?.core?.invoke ?? w.__TAURI__?.invoke ?? w.__TAURI_INTERNALS__ ?? w.__TAURI_IPC__);
 }
 
 function nowStamp(): string {

@@ -10,7 +10,7 @@ import { VoiceInput } from "../voice/VoiceInput";
 import { chatService } from "../../services/ChatService";
 import { sessionDatabase } from "../../services/SessionDatabase";
 import { sessionController } from "../../services/SessionController";
-import { FolderOpen, History, Loader2, MessageSquarePlus, Play, Search, Square, TerminalSquare, Trash2, Puzzle, Sparkles, Zap } from "lucide-react";
+import { FolderOpen, History, Loader2, MessageSquarePlus, MoreVertical, Play, Search, Square, TerminalSquare, Trash2, Puzzle, Sparkles, Zap } from "lucide-react";
 import { TaqwinToolsModal } from "./TaqwinToolsModal";
 import { SessionInspectorModal } from "./SessionInspectorModal";
 import { useStatus } from "../../contexts/useStatus";
@@ -357,6 +357,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [toolsOpen, setToolsOpen] = useState(false);
   const [inspectSessionId, setInspectSessionId] = useState<string | null>(null);
   const [mode, setMode] = useState<"chat" | "terminal">("chat");
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [composerMode, setComposerMode] = useState<"chat" | "terminal">("chat");
   const [terminalCwd, setTerminalCwd] = useState<string>("");
   const [terminalCmd, setTerminalCmd] = useState<string>("Get-Location");
@@ -420,11 +421,12 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         else if (auditOpen) setAuditOpen(false);
         else if (toolsOpen) setToolsOpen(false);
         else if (renameOpen) setRenameOpen(false);
+        else if (headerMenuOpen) setHeaderMenuOpen(false);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [historyOpen, auditOpen, toolsOpen, renameOpen]);
+  }, [historyOpen, auditOpen, toolsOpen, renameOpen, headerMenuOpen]);
 
   // Sync with Service
   useEffect(() => {
@@ -453,7 +455,61 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
       void chatService.editUserMessageAndResend(editingMessageId, inputValue);
       setEditingMessageId(null);
     } else {
-      void chatService.sendMessage(inputValue);
+      const raw = inputValue.trim();
+      const isTerminalDirective = raw.startsWith("!term ") || raw === "!term" || raw.startsWith("!cd ") || raw === "!cd";
+      if (isTerminalDirective) {
+        const body = raw.startsWith("!term") ? raw.replace(/^!term\s*/i, "") : raw.replace(/^!cd\s*/i, "cd ");
+        if (!isTauri) {
+          void chatService.sendMessage(`[SYSTEM: Terminal]\nThis requires the desktop app (Tauri).\n\nCommand: ${body || "(empty)"}`);
+        } else if (!body.trim()) {
+          void chatService.sendMessage(`[SYSTEM: Terminal]\nNo command provided. Try: !term Get-Location`);
+        } else {
+          const chunks = body.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+          let cwd = terminalCwd;
+          let out = "";
+          for (const cmd of chunks.slice(0, 6)) {
+            const m = cmd.match(/^cd\s+(.+)$/i) || cmd.match(/^set-location\s+(.+)$/i);
+            if (m) {
+              const p = String(m[1]).trim().replace(/^["']|["']$/g, "");
+              if (p) {
+                cwd = p;
+                setTerminalCwd(p);
+                appendTerm(`[CWD] ${p}`);
+                out += `\n$ cd ${p}\n(exit=0)\n`;
+              }
+              continue;
+            }
+            try {
+              appendTerm(`[RUN] ${cmd}`);
+              const res = await Command.create(
+                "powershell",
+                ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
+                { encoding: "utf-8", cwd: cwd || undefined }
+              ).execute();
+              const code = (res as any)?.code ?? null;
+              const stdout = String((res as any)?.stdout ?? "").trimEnd();
+              const stderr = String((res as any)?.stderr ?? "").trimEnd();
+              const clippedStdout = stdout.length > 6000 ? stdout.slice(0, 6000) + "\n...(truncated)" : stdout;
+              const clippedStderr = stderr.length > 2000 ? stderr.slice(0, 2000) + "\n...(truncated)" : stderr;
+              if (clippedStdout) appendTerm(clippedStdout);
+              if (clippedStderr) appendTerm(`[STDERR] ${clippedStderr}`);
+              appendTerm(`[EXIT] code=${code ?? "null"}`);
+              out += `\n$ ${cmd}\n(exit=${code ?? "null"})\n`;
+              if (clippedStdout) out += `${clippedStdout}\n`;
+              if (clippedStderr) out += `[STDERR]\n${clippedStderr}\n`;
+            } catch (err: any) {
+              const msg = String(err?.message ?? err);
+              appendTerm(`[ERROR] ${msg}`);
+              out += `\n$ ${cmd}\n(error)\n${msg}\n`;
+            }
+          }
+          setComposerMode("terminal");
+          const payload = `[SYSTEM: Terminal Output]\n${out.trim()}`;
+          void chatService.sendMessage(payload);
+        }
+      } else {
+        void chatService.sendMessage(inputValue);
+      }
     }
     
     // UI clears immediately, service handles logic
@@ -568,7 +624,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
 
   const isTauri = useMemo(() => {
     const w = window as any;
-    return !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
+    return !!(w.__TAURI__?.core?.invoke ?? w.__TAURI__?.invoke ?? w.__TAURI_INTERNALS__ ?? w.__TAURI_IPC__);
   }, []);
 
   useEffect(() => {
@@ -621,14 +677,23 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     setTerminalRunning(false);
   };
 
-  const runTerminal = async () => {
-    const cmd = terminalCmd.trim();
+  const runTerminal = async (override?: string) => {
+    const cmd = String(override ?? terminalCmd).trim();
     if (!cmd) return;
     if (!isTauri) {
       appendTerm("[WEB] Terminal requires the desktop app (Tauri).");
       return;
     }
     if (terminalRunning) return;
+    const cd = cmd.match(/^cd\s+(.+)$/i) || cmd.match(/^set-location\s+(.+)$/i);
+    if (cd) {
+      const p = String(cd[1]).trim().replace(/^["']|["']$/g, "");
+      if (p) {
+        setTerminalCwd(p);
+        appendTerm(`[CWD] ${p}`);
+      }
+      return;
+    }
     setTerminalRunning(true);
     appendTerm(`[RUN] ${cmd}`);
     try {
@@ -656,6 +721,21 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
       setTerminalRunning(false);
     }
   };
+
+  useEffect(() => {
+    const onRun = (e: any) => {
+      const cmd = String(e?.detail?.command ?? "").trim();
+      if (!cmd) return;
+      setMode("chat");
+      setComposerMode("terminal");
+      setTerminalCmd(cmd);
+      window.setTimeout(() => {
+        if (e?.detail?.runNow) void runTerminal(cmd);
+      }, 0);
+    };
+    window.addEventListener("knez-terminal-run", onRun as any);
+    return () => window.removeEventListener("knez-terminal-run", onRun as any);
+  }, [runTerminal]);
 
   // CP16: Enterprise Header
   return (
@@ -706,62 +786,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
               <span>tools:{(taqwinMcpStatus as any).toolsCached ?? 0}</span>
             </div>
             <button
-               onClick={() => setHistoryOpen(true)}
-               className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
-               title="Session History"
-            >
-               <History size={18} />
-            </button>
-            {features.floatingConsole && (
-              <button
-                 onClick={() => window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "logs" } }))}
-                 className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
-                 title="Open Console"
-              >
-                 <TerminalSquare size={18} />
-              </button>
-            )}
-            {features.mcpViews && (
-              <button
-                 onClick={() => window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "mcp" } }))}
-                 className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
-                 title="MCP Registry"
-              >
-                 <Puzzle size={18} />
-              </button>
-            )}
-            <button
-               onClick={() => window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "reflection" } }))}
-               className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
-               title="Analyze"
-            >
-               <Sparkles size={18} />
-            </button>
-            {features.taqwinTools && (
-              <button
-                 onClick={() => window.dispatchEvent(new CustomEvent("taqwin-activate"))}
-                disabled={taqwinActivation.state === "starting"}
-                className={`p-2 rounded-md transition-colors ${
-                  taqwinActivation.state === "running"
-                    ? "text-emerald-300 hover:text-emerald-200 hover:bg-emerald-900/20"
-                    : taqwinActivation.state === "error"
-                      ? "text-red-300 hover:text-red-200 hover:bg-red-900/20"
-                      : "text-zinc-400 hover:text-white hover:bg-zinc-800"
-                } ${taqwinActivation.state === "starting" ? "opacity-70 cursor-not-allowed" : ""}`}
-                title={
-                  taqwinActivation.state === "error"
-                    ? `TAQWIN ERROR: ${taqwinActivation.lastError ?? "unknown"}`
-                    : taqwinActivation.state === "running"
-                      ? "TAQWIN RUNNING"
-                      : taqwinActivation.state === "starting"
-                        ? "TAQWIN STARTING"
-                        : "TAQWIN ACTIVATE"
-                }
-              >
-                {taqwinActivation.state === "starting" ? <Loader2 size={18} className="animate-spin" /> : <Zap size={18} />}
-              </button>
-            )}
-            <button
                 onClick={() => {
                    sessionController.createNewSession();
                 }}
@@ -770,12 +794,101 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
              >
                <MessageSquarePlus size={18} />
             </button>
-            <button
-              onClick={() => setRenameOpen(true)}
-              className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-1.5 rounded transition-colors"
-            >
-              Rename
-            </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setHeaderMenuOpen((v) => !v)}
+                className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
+                title="Menu"
+              >
+                <MoreVertical size={18} />
+              </button>
+              {headerMenuOpen && (
+                <div className="absolute right-0 mt-2 w-52 rounded-lg border border-zinc-800 bg-zinc-950 shadow-xl overflow-hidden z-50">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHeaderMenuOpen(false);
+                      setHistoryOpen(true);
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-900 flex items-center gap-2"
+                  >
+                    <History size={14} />
+                    Session History
+                  </button>
+                  {features.floatingConsole && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHeaderMenuOpen(false);
+                        window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "logs" } }));
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-900 flex items-center gap-2"
+                    >
+                      <TerminalSquare size={14} />
+                      Open Console
+                    </button>
+                  )}
+                  {features.mcpViews && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHeaderMenuOpen(false);
+                        window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "mcp" } }));
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-900 flex items-center gap-2"
+                    >
+                      <Puzzle size={14} />
+                      MCP Registry
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHeaderMenuOpen(false);
+                      window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "reflection" } }));
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-900 flex items-center gap-2"
+                  >
+                    <Sparkles size={14} />
+                    Analyze
+                  </button>
+                  {features.taqwinTools && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHeaderMenuOpen(false);
+                        window.dispatchEvent(new CustomEvent("taqwin-activate"));
+                      }}
+                      disabled={taqwinActivation.state === "starting"}
+                      className="w-full text-left px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-900 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      title={
+                        taqwinActivation.state === "error"
+                          ? `TAQWIN ERROR: ${taqwinActivation.lastError ?? "unknown"}`
+                          : taqwinActivation.state === "running"
+                            ? "TAQWIN RUNNING"
+                            : taqwinActivation.state === "starting"
+                              ? "TAQWIN STARTING"
+                              : "TAQWIN ACTIVATE"
+                      }
+                    >
+                      {taqwinActivation.state === "starting" ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+                      Activate TAQWIN
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHeaderMenuOpen(false);
+                      setRenameOpen(true);
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-900"
+                  >
+                    Rename Session
+                  </button>
+                </div>
+              )}
+            </div>
          </div>
       </div>
 
@@ -935,7 +1048,11 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                   const next = composerMode === "chat" ? "terminal" : "chat";
                   setComposerMode(next);
                 }}
-                className="px-3 py-2 rounded-lg text-sm font-medium bg-zinc-900 border border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:text-white transition-colors"
+                className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                  composerMode === "terminal"
+                    ? "bg-blue-600 border-blue-500 text-white hover:bg-blue-500"
+                    : "bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:text-white"
+                }`}
                 title={composerMode === "chat" ? "Switch to terminal input" : "Switch to chat input"}
               >
                 <TerminalSquare size={16} />

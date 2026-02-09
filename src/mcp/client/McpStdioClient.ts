@@ -121,10 +121,6 @@ export class McpStdioClient {
     const command = server.command;
     const base = command.split(/[\\/]/).pop()?.toLowerCase() ?? "";
     const looksLikePython = base === "python.exe" || base === "python";
-    const isBareCommand = !/[\\/]/.test(command);
-    const envKeys = Object.keys(server.env ?? {});
-    const onlyPyUnbuffered =
-      envKeys.length === 0 || (envKeys.length === 1 && envKeys[0].toUpperCase() === "PYTHONUNBUFFERED");
 
     this.stdoutBuffer = new Uint8Array(0);
     this.stderrLines = [];
@@ -142,7 +138,7 @@ export class McpStdioClient {
     this.startedWith = { mode: "config", serverId: server.id, command: server.command };
 
     const cmd = (() => {
-      if (looksLikePython && onlyPyUnbuffered && isBareCommand) {
+      if (looksLikePython) {
         return Command.create("python", args, { encoding: "raw", cwd: server.cwd, env: server.env });
       }
       const cmdArgs = args.map((a) => this.cmdQuote(a)).join(" ");
@@ -175,7 +171,7 @@ export class McpStdioClient {
     try {
       this.child = await cmd.spawn();
       logger.info("mcp", "MCP process started", {
-        programName: looksLikePython && onlyPyUnbuffered ? "python" : "cmd",
+        programName: looksLikePython ? "python" : "cmd",
         serverId: server.id,
         cwd: server.cwd,
         command: server.command,
@@ -185,7 +181,7 @@ export class McpStdioClient {
       const e = this.asMcpError(err);
       this.lastError = String(e?.message ?? e);
       logger.error("mcp", "MCP spawn failed", {
-        programName: looksLikePython && onlyPyUnbuffered ? "python" : "cmd",
+        programName: looksLikePython ? "python" : "cmd",
         serverId: server.id,
         cwd: server.cwd,
         error: this.lastError

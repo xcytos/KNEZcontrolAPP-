@@ -5,9 +5,9 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
     schema_version: "1",
     servers: {
       taqwin: {
-        command: "C:\\\\Users\\\\syedm\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe",
-        args: ["-u", "C:\\\\Users\\\\syedm\\\\Downloads\\\\ASSETS\\\\controlAPP\\\\TAQWIN_V1\\\\main.py"],
-        working_directory: "C:\\\\Users\\\\syedm\\\\Downloads\\\\ASSETS\\\\controlAPP\\\\TAQWIN_V1",
+        command: "python",
+        args: ["-u", "main.py", "mcp"],
+        working_directory: "..\\\\TAQWIN_V1",
         env: { PYTHONUNBUFFERED: "1" },
         enabled: true,
         tags: ["taqwin", "mcp"]

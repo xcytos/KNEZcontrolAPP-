@@ -90,6 +90,7 @@ export const TaqwinToolsModal: React.FC<{
   const [showHealth, setShowHealth] = useState(false);
   const [showTrace, setShowTrace] = useState(false);
   const [traceText, setTraceText] = useState<string>("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [chatTrail, setChatTrail] = useState(() => {
     try {
       return localStorage.getItem("taqwin_chat_audit") === "1";
@@ -110,10 +111,28 @@ export const TaqwinToolsModal: React.FC<{
     }
   }, []);
 
-  const isTauri = useMemo(() => {
+  const detectTauri = () => {
     const w = window as any;
-    return !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
-  }, []);
+    return !!(w.__TAURI__?.core?.invoke ?? w.__TAURI__?.invoke ?? w.__TAURI_INTERNALS__ ?? w.__TAURI_IPC__);
+  };
+  const [isTauri, setIsTauri] = useState<boolean>(() => detectTauri());
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (isTauri) return;
+    let tries = 0;
+    const t = window.setInterval(() => {
+      tries++;
+      const ok = detectTauri();
+      if (ok) {
+        setIsTauri(true);
+        clearInterval(t);
+      } else if (tries >= 15) {
+        clearInterval(t);
+      }
+    }, 200);
+    return () => clearInterval(t);
+  }, [isOpen, isTauri]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -190,6 +209,14 @@ export const TaqwinToolsModal: React.FC<{
 
   useEffect(() => {
     if (!isOpen) return;
+    if (!isTauri) {
+      setLoadingTools(false);
+      setTools([]);
+      setSelectedTool("");
+      setError(formatMcpUiError("mcp_unavailable_non_tauri"));
+      setErrorRaw("mcp_unavailable_non_tauri");
+      return;
+    }
     let cancelled = false;
     const load = async (force = false) => {
       try {
@@ -224,7 +251,7 @@ export const TaqwinToolsModal: React.FC<{
       cancelled = true;
       if (typeof t === "number") clearInterval(t);
     };
-  }, [isOpen, e2eMode]);
+  }, [isOpen, e2eMode, isTauri]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -245,11 +272,11 @@ export const TaqwinToolsModal: React.FC<{
     setConfigError("");
     try {
       const w = window as any;
-      const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
+      const isTauri = !!(w.__TAURI__?.core?.invoke ?? w.__TAURI__?.invoke ?? w.__TAURI_INTERNALS__ ?? w.__TAURI_IPC__);
       if (!isTauri) throw new Error("mcp_unavailable_non_tauri");
       const script =
         "$ErrorActionPreference='SilentlyContinue';" +
-        "$py=(Get-Command python).Source;" +
+        "$py='python';" +
         "$c=@(" +
         "\"$env:USERPROFILE\\\\Downloads\\\\ASSETS\\\\controlAPP\\\\TAQWIN_V1\"," +
         "\"$env:USERPROFILE\\\\Downloads\\\\TAQWIN_V1\"," +
@@ -270,9 +297,9 @@ export const TaqwinToolsModal: React.FC<{
         schema_version: "1",
         servers: {
           taqwin: {
-            command: python ?? "C:\\\\path\\\\to\\\\python.exe",
-            args: ["-u", taqwin ? `${taqwin}\\\\main.py` : "C:\\\\path\\\\to\\\\TAQWIN_V1\\\\main.py"],
-            working_directory: taqwin ?? "C:\\\\path\\\\to\\\\TAQWIN_V1",
+            command: python ?? "python",
+            args: ["-u", "main.py", "mcp"],
+            working_directory: taqwin ?? "",
             env: { PYTHONUNBUFFERED: "1" },
             enabled: true,
             tags: ["taqwin", "mcp"]
@@ -288,14 +315,32 @@ export const TaqwinToolsModal: React.FC<{
   const stderrTail = (mcpStatus as any)?.debug?.stderrTail ?? null;
 
   const buildTraceText = () => {
+    const dbg = (mcpStatus as any)?.debug ?? null;
+    const lastTimeout = dbg?.lastTimeout ?? null;
+    const lastWrite = dbg?.lastWrite ?? null;
+    const startedWith = dbg?.startedWith ?? null;
+    const diagnosis = (() => {
+      if (!isTauri) return "web_mode: MCP requires desktop app (Tauri).";
+      if ((mcpStatus as any)?.state === "running") return "running: MCP initialized and ready.";
+      if ((mcpStatus as any)?.state === "starting") {
+        if (lastTimeout?.method === "initialize" && (lastTimeout?.stdoutBytes ?? 0) === 0) {
+          return "initialize_stall: server did not produce stdout. Check stderrTail/lastCloseTail and TAQWIN entrypoint.";
+        }
+        return "starting: waiting for initialize/tools/list. Use MCP Logs for stderrTail.";
+      }
+      if ((mcpStatus as any)?.state === "error") return `error: ${(mcpStatus as any)?.lastError ?? "unknown"}`;
+      return "down: MCP not started.";
+    })();
     const snap: any = {
       when: new Date().toISOString(),
+      mode: isTauri ? "tauri" : "web",
       handshake: [
         "initialize (client -> server)",
         "initialize result (server -> client)",
         "notifications/initialized (client -> server)",
         "tools/list, tools/call..."
       ],
+      diagnosis,
       mcpStatus: {
         state: (mcpStatus as any)?.state,
         running: (mcpStatus as any)?.running,
@@ -308,7 +353,18 @@ export const TaqwinToolsModal: React.FC<{
         lastRawError: (mcpStatus as any)?.lastRawError,
         lastNormalizedError: (mcpStatus as any)?.lastNormalizedError,
       },
-      debug: (mcpStatus as any)?.debug ?? null,
+      startedWith,
+      lastWrite,
+      lastTimeout,
+      debugTails: {
+        stdoutTail: dbg?.stdoutTail ?? null,
+        stderrTail: dbg?.stderrTail ?? null,
+        lastCloseTail: dbg?.lastCloseTail ?? null,
+        lastExitCode: dbg?.lastExitCode ?? null,
+        lastError: dbg?.lastError ?? null,
+        requestFraming: dbg?.requestFraming ?? null,
+        pid: dbg?.pid ?? null
+      }
     };
     const logTail = (() => {
       try {
@@ -416,6 +472,12 @@ export const TaqwinToolsModal: React.FC<{
                 MCP Config
               </button>
               <button
+                onClick={() => setShowAdvanced((v) => !v)}
+                className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+              >
+                Advanced
+              </button>
+              <button
                 onClick={() => {
                   void (async () => {
                     setSelfTest(null);
@@ -431,6 +493,79 @@ export const TaqwinToolsModal: React.FC<{
               >
                 Self-Test
               </button>
+              <button
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
+                }}
+                className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+              >
+                Open MCP Logs
+              </button>
+              <button
+                onClick={() => {
+                  void (async () => {
+                    setError("");
+                    setErrorRaw("");
+                    try {
+                      setStartingMcp(true);
+                      setLoadingTools(true);
+                      await taqwinMcpService.start(true);
+                      const list = await taqwinMcpService.listTools(true);
+                      setTools(list);
+                      setSelectedTool((prev) => {
+                        const next = prev && list.some((t) => t.name === prev) ? prev : (list[0]?.name ?? "");
+                        if (next && next !== prev) setArgsText(JSON.stringify(defaultArgsForTool(next), null, 2));
+                        return next;
+                      });
+                    } catch (e: any) {
+                      const raw = String(e?.message ?? e);
+                      setError(formatMcpUiError(raw));
+                      setErrorRaw(raw);
+                      window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
+                    } finally {
+                      setStartingMcp(false);
+                      setLoadingTools(false);
+                    }
+                  })();
+                }}
+                disabled={!isTauri || loadingTools || startingMcp}
+                className={`text-xs px-2 py-1 rounded text-white transition-colors ${
+                  !isTauri
+                    ? "bg-zinc-700/50 cursor-not-allowed"
+                    : startingMcp || mcpStatus.state === "starting"
+                      ? "bg-blue-600/60 cursor-not-allowed"
+                      : mcpStatus.state === "running"
+                        ? "bg-emerald-600 hover:bg-emerald-500"
+                        : mcpStatus.state === "error"
+                          ? "bg-red-600 hover:bg-red-500"
+                          : "bg-blue-600 hover:bg-blue-500"
+                }`}
+              >
+                {!isTauri
+                  ? "Start TAQWIN MCP"
+                  : startingMcp || mcpStatus.state === "starting"
+                    ? "Starting..."
+                    : mcpStatus.state === "running"
+                      ? "Restart TAQWIN MCP"
+                      : mcpStatus.state === "error"
+                        ? "Retry TAQWIN MCP"
+                        : "Start TAQWIN MCP"}
+              </button>
+              <button onClick={onClose} className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors">
+                Close
+              </button>
+            </div>
+          </div>
+          <div className="mt-2 text-[10px] text-zinc-500 font-mono flex items-center justify-between gap-3">
+            <div>
+              mcp={mcpStatus.state} failures={mcpStatus.consecutiveFailures}
+            </div>
+            {mcpStatus.lastRawError && (
+              <div className="truncate text-red-300 max-w-[520px]">{mcpStatus.lastRawError}</div>
+            )}
+          </div>
+          {showAdvanced && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               <button
                 onClick={() => setShowHealth((v) => !v)}
                 className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
@@ -461,14 +596,6 @@ export const TaqwinToolsModal: React.FC<{
               </button>
               <button
                 onClick={() => {
-                  window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
-                }}
-                className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
-              >
-                Open MCP Logs
-              </button>
-              <button
-                onClick={() => {
                   window.dispatchEvent(new CustomEvent("taqwin-activate"));
                   window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
                 }}
@@ -476,53 +603,8 @@ export const TaqwinToolsModal: React.FC<{
               >
                 Activate TAQWIN
               </button>
-              <button
-                onClick={() => {
-                  void (async () => {
-                    setError("");
-                    setErrorRaw("");
-                    try {
-                      setStartingMcp(true);
-                      setLoadingTools(true);
-                      await taqwinMcpService.start(true);
-                      const list = await taqwinMcpService.listTools(true);
-                      setTools(list);
-                      setSelectedTool((prev) => {
-                        const next = prev && list.some((t) => t.name === prev) ? prev : (list[0]?.name ?? "");
-                        if (next && next !== prev) setArgsText(JSON.stringify(defaultArgsForTool(next), null, 2));
-                        return next;
-                      });
-                    } catch (e: any) {
-                      const raw = String(e?.message ?? e);
-                      setError(formatMcpUiError(raw));
-                      setErrorRaw(raw);
-                      window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
-                    } finally {
-                      setStartingMcp(false);
-                      setLoadingTools(false);
-                    }
-                  })();
-                }}
-                disabled={loadingTools || startingMcp}
-                className={`text-xs px-2 py-1 rounded text-white transition-colors ${
-                  loadingTools || startingMcp ? "bg-blue-600/60 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-500"
-                }`}
-              >
-                {startingMcp ? "Starting..." : mcpStatus.state === "running" ? "Restart TAQWIN MCP" : "Start TAQWIN MCP"}
-              </button>
-              <button onClick={onClose} className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors">
-                Close
-              </button>
             </div>
-          </div>
-          <div className="mt-2 text-[10px] text-zinc-500 font-mono flex items-center justify-between gap-3">
-            <div>
-              mcp={mcpStatus.state} failures={mcpStatus.consecutiveFailures}
-            </div>
-            {mcpStatus.lastRawError && (
-              <div className="truncate text-red-300 max-w-[520px]">{mcpStatus.lastRawError}</div>
-            )}
-          </div>
+          )}
           {showHealth && (
             <div className="mt-3 border border-zinc-800 rounded bg-zinc-950/40 p-3">
               <div className="flex items-center justify-between gap-3 mb-2">

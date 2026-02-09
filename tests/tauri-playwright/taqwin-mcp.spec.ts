@@ -32,6 +32,7 @@ test.describe("TAQWIN MCP", () => {
       await expect(page.getByRole("button", { name: "Save" })).toBeVisible({ timeout: 30000 });
       await page.getByRole("button", { name: "Save" }).click();
 
+      await page.getByRole("button", { name: "Advanced" }).click();
       await expect(page.getByRole("button", { name: "Self-Test" })).toBeVisible({ timeout: 30000 });
       await page.getByRole("button", { name: "Self-Test" }).click();
       await page.keyboard.press("Escape");

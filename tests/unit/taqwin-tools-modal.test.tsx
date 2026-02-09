@@ -1,5 +1,5 @@
 import React from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 let mockMcpStatus: any = {
@@ -80,6 +80,7 @@ vi.mock("../../src/services/LogService", () => ({
   logger: {
     error: vi.fn(),
     info: vi.fn(),
+    getLogs: () => [],
   },
 }));
 
@@ -89,6 +90,10 @@ vi.mock("../../src/services/TaqwinToolPermissions", () => ({
 }));
 
 describe("TaqwinToolsModal status rendering", () => {
+  beforeEach(() => {
+    (window as any).__TAURI__ = { invoke: () => {} };
+  });
+
   it("renders running status and restart label", async () => {
     mockMcpStatus = { ...mockMcpStatus, state: "running" };
     const { TaqwinToolsModal } = await import("../../src/features/chat/TaqwinToolsModal");
