@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "clean": "node scripts/clean.mjs",
+    "clean:build": "npm run clean && npm run build",
     "preview": "vite preview",
     "tauri": "tauri",
     "dev:all": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-all.ps1",
