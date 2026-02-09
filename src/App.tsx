@@ -36,6 +36,7 @@ import './App.css';
 
 import { CommandPalette } from './components/ui/CommandPalette';
 import { FloatingConsole } from './components/ui/FloatingConsole';
+import { E2EBanner } from './components/ui/E2EBanner';
 import { taqwinMcpService } from './services/TaqwinMcpService';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { ThemeProvider } from './contexts/ThemeContext';
@@ -337,6 +338,7 @@ function AppContent() {
         onTaqwinActivate={features.taqwinTools ? () => void runTaqwinActivate() : undefined}
       />
       {features.floatingConsole ? <FloatingConsole /> : null}
+      <E2EBanner />
       
       <div className="h-full min-h-0 min-w-0 relative">
         {renderContent()}

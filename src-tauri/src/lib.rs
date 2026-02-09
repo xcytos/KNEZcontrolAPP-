@@ -44,17 +44,30 @@ fn set_ui_preferences(app: tauri::AppHandle, prefs: UiPreferences) -> Result<(),
 
 #[tauri::command]
 fn open_test_window(app: tauri::AppHandle) -> Result<String, String> {
-    let label = format!("e2e-{}", uuid::Uuid::new_v4());
-    let url = format!("index.html?e2e=1&label={}", label);
+    let label = format!("test-{}", uuid::Uuid::new_v4());
+    let use_dev_url = std::env::var("TAURI_E2E")
+        .ok()
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false)
+        || cfg!(debug_assertions);
+    let url = if use_dev_url {
+        tauri::WebviewUrl::External(
+            tauri::Url::parse(&format!("http://127.0.0.1:5173/?label={}", label))
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        tauri::WebviewUrl::App(format!("index.html?label={}", label).into())
+    };
     tauri::WebviewWindowBuilder::new(
         &app,
         label.clone(),
-        tauri::WebviewUrl::App(url.into()),
+        url,
     )
-    .title("knez-control-app (E2E)")
+    .title("knez-control-app (Test)")
     .inner_size(1280.0, 800.0)
     .min_inner_size(1024.0, 640.0)
     .resizable(true)
+    .decorations(true)
     .visible(true)
     .build()
     .map_err(|e| e.to_string())?;
@@ -74,7 +87,7 @@ fn close_window(app: tauri::AppHandle, label: String) -> Result<bool, String> {
 fn close_all_test_windows(app: tauri::AppHandle) -> Result<u32, String> {
     let mut closed = 0u32;
     for (label, w) in app.webview_windows() {
-        if label.starts_with("e2e-") {
+        if label.starts_with("test-") || label.starts_with("e2e-") {
             let _ = w.close();
             closed += 1;
         }

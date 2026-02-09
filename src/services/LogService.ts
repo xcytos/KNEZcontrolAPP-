@@ -105,21 +105,33 @@ class LogService {
        );
        
        if (content && typeof content === 'string') {
-         const lines = content.split('\n').filter(Boolean).slice(-100); // Last 100
-         lines.forEach(line => {
-            try {
-              const entry = JSON.parse(line);
-              this.logs.push(entry); // Push to end (oldest first? No, logs are unshifted... wait)
-              // this.logs is displayed oldest to newest?
-              // this.add unshifts (newest first).
-              // So we should push these to the end?
-              // If we read from file (oldest to newest lines), we should probably put them at the end if we display newest first?
-              // Wait, `this.logs.unshift(entry)` puts NEWEST at index 0.
-              // So we want file lines (oldest) to be at the end of the array.
-              // So `this.logs.push(entry)` is correct if we iterate lines oldest to newest.
-            } catch {}
-         });
-         // Notify?
+         const lines = content.split('\n').filter(Boolean).slice(-150);
+         const seenIds = new Set<string>();
+         for (const line of lines) {
+           try {
+             const parsed = JSON.parse(line) as Partial<LogEntry>;
+             if (!parsed || typeof parsed !== "object") continue;
+             const baseId = typeof parsed.id === "string" && parsed.id ? parsed.id : null;
+             let id = baseId;
+             if (!id || seenIds.has(id)) {
+               try {
+                 id = crypto.randomUUID();
+               } catch {
+                 id = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+               }
+             }
+             seenIds.add(id);
+             const entry: LogEntry = {
+               id,
+               timestamp: typeof parsed.timestamp === "string" ? parsed.timestamp : new Date().toISOString(),
+               level: (parsed.level as any) ?? LogLevel.INFO,
+               category: typeof parsed.category === "string" ? parsed.category : "runtime",
+               message: typeof parsed.message === "string" ? parsed.message : "",
+               details: parsed.details,
+             };
+             this.logs.push(entry);
+           } catch {}
+         }
        }
     } catch (e) {
        // File might not exist
