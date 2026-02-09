@@ -21,6 +21,7 @@ class TaqwinMcpService {
   private lastNormalizedError: string | null = null;
   private lastDebugState: any | null = null;
   private generation = 0;
+  private framingPreference: "line" | "content-length" = "line";
 
   private enqueue<T>(fn: () => Promise<T>): Promise<T> {
     const p = this.opChain.then(fn, fn);
@@ -65,6 +66,11 @@ class TaqwinMcpService {
             effective.config.mcpServers["taqwin"] ??
             Object.values(effective.config.mcpServers)[0];
           const server = normalizeTaqwinMcpServer(selected);
+          server.env = {
+            ...(server.env ?? {}),
+            KNEZ_MCP_CLIENT_FRAMING: this.framingPreference,
+            TAQWIN_MCP_OUTPUT_MODE: this.framingPreference
+          };
           await client.startWithConfig(server);
           this.initialized = false;
           this.toolsCache = null;
@@ -170,24 +176,28 @@ class TaqwinMcpService {
     return this.enqueue(async () => {
       if (!isTauriRuntime()) throw new Error("mcp_unavailable_non_tauri");
       if (restart) {
-        await this.stop();
+        await this.stopInternal();
       }
       await this.getClient();
       return this.getStatus();
     });
   }
 
+  private async stopInternal() {
+    this.generation++;
+    await this.awaitInitSettled();
+    try {
+      await this.client?.stop();
+    } catch {}
+    this.client = null;
+    this.initialized = false;
+    this.toolsCache = null;
+    this.toolsCacheAt = null;
+  }
+
   async stop() {
     return this.enqueue(async () => {
-      this.generation++;
-      await this.awaitInitSettled();
-      try {
-        await this.client?.stop();
-      } catch {}
-      this.client = null;
-      this.initialized = false;
-      this.toolsCache = null;
-      this.toolsCacheAt = null;
+      await this.stopInternal();
     });
   }
 
@@ -209,8 +219,22 @@ class TaqwinMcpService {
       } catch (err) {
         if (!this.shouldRetry(err)) throw err;
         await this.backoffDelay();
+        try {
+          const dbg = this.client?.getDebugState?.() ?? this.lastDebugState;
+          const lastTimeout = dbg?.lastTimeout;
+          if (
+            String((err as any)?.message ?? err).includes("mcp_request_timeout") &&
+            lastTimeout?.method === "tools/list" &&
+            lastTimeout?.stdoutBytes === 0
+          ) {
+            this.framingPreference = this.framingPreference === "line" ? "content-length" : "line";
+            logger.warn("mcp", "TAQWIN MCP switching client framing after tools/list stall", {
+              nextFraming: this.framingPreference
+            });
+          }
+        } catch {}
         logger.warn("mcp", "TAQWIN MCP listTools failed; restarting and retrying", { error: String((err as any)?.message ?? err) });
-        await this.stop();
+        await this.stopInternal();
         try {
           const client = await this.getClient();
           const tools = await client.listTools();
@@ -253,7 +277,7 @@ class TaqwinMcpService {
           tool: name,
           error: String((err as any)?.message ?? err)
         });
-        await this.stop();
+        await this.stopInternal();
         try {
           const client = await this.getClient();
           const res = await client.callTool(name, args);

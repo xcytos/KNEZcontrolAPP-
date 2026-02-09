@@ -33,6 +33,30 @@ export class McpStdioClient {
   private encoder = new TextEncoder();
   private stdoutTail = "";
   private startedWith: { mode: "program"; programName: string } | { mode: "config"; serverId: string; command: string } | null = null;
+  private requestFraming: "content-length" | "line" = "content-length";
+  private lastTimeout:
+    | {
+        at: number;
+        method: string;
+        timeoutMs: number;
+        framing: "content-length" | "line";
+        stdoutBytes: number;
+        stderrTail: string | null;
+        stdoutTail: string | null;
+      }
+    | null = null;
+  private lastWrite:
+    | {
+        at: number;
+        id: string;
+        method: string;
+        framing: "content-length" | "line";
+        bytes: number;
+        preview: string;
+        ok: boolean;
+        error: string | null;
+      }
+    | null = null;
 
   async start(programName: string): Promise<void> {
     if (this.child) return;
@@ -43,6 +67,9 @@ export class McpStdioClient {
     this.lastCloseTail = null;
     this.lastError = null;
     this.stdoutTail = "";
+    this.requestFraming = "content-length";
+    this.lastTimeout = null;
+    this.lastWrite = null;
     this.startedWith = { mode: "program", programName };
     const cmd = Command.create(programName, [], { encoding: "raw" });
     cmd.stdout.on("data", (chunk) => this.onStdout(chunk));
@@ -105,6 +132,12 @@ export class McpStdioClient {
     this.lastCloseTail = null;
     this.lastError = null;
     this.stdoutTail = "";
+    const framingHint = String((server.env as any)?.KNEZ_MCP_CLIENT_FRAMING ?? "").trim().toLowerCase();
+    if (framingHint === "line") this.requestFraming = "line";
+    else if (framingHint === "content-length" || framingHint === "content_length") this.requestFraming = "content-length";
+    else this.requestFraming = server.id === "taqwin" ? "line" : "content-length";
+    this.lastTimeout = null;
+    this.lastWrite = null;
     this.startedWith = { mode: "config", serverId: server.id, command: server.command };
 
     const cmd = (() => {
@@ -289,7 +322,7 @@ export class McpStdioClient {
       }
       return;
     }
-    this.pending.delete(key);
+    if (key) this.pending.delete(key);
     logger.debug("mcp", "MCP response", {
       id: key,
       ok: !("error" in msg),
@@ -311,6 +344,19 @@ export class McpStdioClient {
     return new Error(msg);
   }
 
+  private buildPayload(obj: any): Uint8Array {
+    const bodyText = JSON.stringify(obj);
+    if (this.requestFraming === "line") {
+      return this.encoder.encode(bodyText + "\n");
+    }
+    const bodyBytes = this.encoder.encode(bodyText);
+    const headerBytes = this.encoder.encode(`Content-Length: ${bodyBytes.length}\r\n\r\n`);
+    const payload = new Uint8Array(headerBytes.length + bodyBytes.length);
+    payload.set(headerBytes, 0);
+    payload.set(bodyBytes, headerBytes.length);
+    return payload;
+  }
+
   private async request<T = any>(method: string, params?: any, options: number | McpRequestOptions = 30000): Promise<T> {
     const run = async (): Promise<T> => {
       if (!this.child) throw new Error("mcp_not_started");
@@ -318,13 +364,25 @@ export class McpStdioClient {
       const stopOnTimeout = typeof options === "number" ? true : (options.stopOnTimeout ?? true);
       const id = String(this.nextId++);
       const req: McpRequest = { jsonrpc: "2.0", id, method, params };
-      const bodyText = JSON.stringify(req);
-      const encoder = new TextEncoder();
-      const bodyBytes = encoder.encode(bodyText);
-      const headerBytes = encoder.encode(`Content-Length: ${bodyBytes.length}\r\n\r\n`);
-      const payload = new Uint8Array(headerBytes.length + bodyBytes.length);
-      payload.set(headerBytes, 0);
-      payload.set(bodyBytes, headerBytes.length);
+      const payload = this.buildPayload(req);
+      const previewBytes = payload.slice(0, Math.min(160, payload.length));
+      const preview = (() => {
+        try {
+          return this.decoder.decode(previewBytes).replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+        } catch {
+          return "";
+        }
+      })();
+      this.lastWrite = {
+        at: Date.now(),
+        id,
+        method,
+        framing: this.requestFraming,
+        bytes: payload.length,
+        preview,
+        ok: false,
+        error: null
+      };
       let timeoutId: number | undefined;
       const p = new Promise<T>((resolve, reject) => {
         this.pending.set(id, { resolve, reject });
@@ -335,12 +393,23 @@ export class McpStdioClient {
           this.lastError = "mcp_request_timeout";
           const stderrTail = this.stderrLines.slice(-30).join("").trim();
           const stdoutTail = this.stdoutTail.trim();
+          this.lastTimeout = {
+            at: Date.now(),
+            method,
+            timeoutMs,
+            framing: this.requestFraming,
+            stdoutBytes: this.stdoutBuffer.length,
+            stderrTail: stderrTail ? stderrTail.slice(-800) : null,
+            stdoutTail: stdoutTail ? stdoutTail.slice(-800) : null
+          };
           logger.error("mcp", "MCP request timeout", {
             pid: this.child?.pid ?? null,
             startedWith: this.startedWith,
             method,
             timeoutMs,
+            framing: this.requestFraming,
             stdoutBytes: this.stdoutBuffer.length,
+            lastWrite: this.lastWrite,
             stderrTail: stderrTail ? stderrTail.slice(-800) : null,
             stdoutTail: stdoutTail ? stdoutTail.slice(-800) : null
           });
@@ -352,10 +421,15 @@ export class McpStdioClient {
       try {
         const paramsKeys =
           params && typeof params === "object" && !Array.isArray(params) ? Object.keys(params).slice(0, 12) : [];
-        logger.debug("mcp", "MCP request", { id, method, paramsKeys });
+        logger.debug("mcp", "MCP request", { id, method, paramsKeys, framing: this.requestFraming, bytes: payload.length });
         await this.child.write(Array.from(payload));
+        if (this.lastWrite && this.lastWrite.id === id) this.lastWrite.ok = true;
       } catch (err) {
         const slot = this.pending.get(id);
+        if (this.lastWrite && this.lastWrite.id === id) {
+          this.lastWrite.ok = false;
+          this.lastWrite.error = String((err as any)?.message ?? err);
+        }
         if (slot) {
           this.pending.delete(id);
           const e = this.asMcpError(err);
@@ -390,13 +464,7 @@ export class McpStdioClient {
   async notifyInitialized(): Promise<void> {
     if (!this.child) throw new Error("mcp_not_started");
     const msg = { jsonrpc: "2.0", method: "notifications/initialized", params: {} };
-    const bodyText = JSON.stringify(msg);
-    const encoder = new TextEncoder();
-    const bodyBytes = encoder.encode(bodyText);
-    const headerBytes = encoder.encode(`Content-Length: ${bodyBytes.length}\r\n\r\n`);
-    const payload = new Uint8Array(headerBytes.length + bodyBytes.length);
-    payload.set(headerBytes, 0);
-    payload.set(bodyBytes, headerBytes.length);
+    const payload = this.buildPayload(msg);
     await this.child.write(Array.from(payload));
   }
 
@@ -413,9 +481,12 @@ export class McpStdioClient {
     return {
       running: !!this.child,
       startedWith: this.startedWith,
+      requestFraming: this.requestFraming,
       lastExitCode: this.lastExitCode,
       lastCloseTail: this.lastCloseTail,
       lastError: this.lastError,
+      lastTimeout: this.lastTimeout,
+      lastWrite: this.lastWrite,
       stderrTail: this.stderrLines.slice(-60).join("").trim() || null,
       stdoutTail: this.stdoutTail.trim() || null,
     };

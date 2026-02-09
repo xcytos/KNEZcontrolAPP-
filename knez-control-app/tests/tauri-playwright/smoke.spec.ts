@@ -17,11 +17,15 @@ test.describe("Tauri E2E", () => {
   test("TAQWIN MCP registry loads tools", async () => {
     const { page, label } = await openE2EWindow();
     try {
+      console.log(`[E2E] Start test label=${label} url=${page.url()}`);
       await page.waitForTimeout(400);
 
-      await page.click('button[title="Chat"]');
-      await expect(page.locator('button[title="TAQWIN Tools"]')).toBeVisible({ timeout: 30000 });
-      await page.click('button[title="TAQWIN Tools"]');
+      console.log("[E2E] Click Chat");
+      await page.getByRole("button", { name: "Chat" }).click();
+
+      console.log("[E2E] Open TAQWIN Tools");
+      await expect(page.getByRole("button", { name: "Tools" })).toBeVisible({ timeout: 30000 });
+      await page.getByRole("button", { name: "Tools" }).click();
       await expect(page.getByRole("heading", { name: "TAQWIN Tools" })).toBeVisible({ timeout: 30000 });
 
       await expect(page.getByText(/Open MCP Logs/)).toBeVisible({ timeout: 30000 });
@@ -29,6 +33,7 @@ test.describe("Tauri E2E", () => {
       await expect(page.getByText("MCP Config")).toBeVisible({ timeout: 30000 });
       await expect(page.getByText("Self-Test")).toBeVisible({ timeout: 30000 });
       const diag = getPageDiagnostics(page);
+      console.log(`[E2E] Summary label=${label} url=${page.url()} diagnostics=${diag.length}`);
       if (diag.length) console.log(diag.join("\n"));
     } finally {
       await closeE2EWindow(label);

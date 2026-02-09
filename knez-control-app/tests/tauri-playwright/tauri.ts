@@ -6,6 +6,18 @@ let cached: { browser: Browser; page: Page; mode: "cdp" | "browser" } | null = n
 const pageLogBuffer = new WeakMap<Page, string[]>();
 const openedLabels = new Set<string>();
 
+async function withTimeout<T>(p: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutId: NodeJS.Timeout | null = null;
+  const timeout = new Promise<T>((_resolve, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(label)), Math.max(1, timeoutMs));
+  });
+  try {
+    return await Promise.race([p, timeout]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 async function invokeTauri<T = any>(page: Page, command: string, args?: any): Promise<T> {
   if (cached?.mode === "browser") throw new Error("tauri_invoke_unavailable");
   return await page.evaluate(
@@ -84,18 +96,48 @@ export async function connectTauri(): Promise<{ browser: Browser; page: Page }> 
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
     await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+    console.log(`[E2E] CDP unavailable; using headless browser at ${baseUrl}`);
     cached = { browser, page, mode: "browser" };
     return cached;
   }
+  console.log(`[E2E] Connected via CDP ${cdpUrl}`);
   const contexts = browser.contexts();
   const pages = contexts.flatMap((c) => c.pages()).filter((p) => !p.isClosed());
-  const page =
-    pages.find((p) => p.url().startsWith("http://127.0.0.1:5173/") && !p.url().includes("e2e=1")) ??
-    pages.find((p) => p.url().startsWith("http://localhost:5173/") && !p.url().includes("e2e=1")) ??
-    pages.find((p) => p.url().includes(":5173/") && !p.url().includes("e2e=1")) ??
-    pages.find((p) => !p.url().includes("playwright-report")) ??
-    pages.find((p) => (p.title() || "").toLowerCase().includes("knez")) ??
-    pages[0];
+  const isTauriPage = async (p: Page): Promise<boolean> => {
+    try {
+      return await withTimeout(
+        p.evaluate(() => {
+          const w: any = window as any;
+          return !!(w.__TAURI__?.core?.invoke ?? w.__TAURI__?.invoke ?? w.__TAURI_INTERNALS__ ?? w.__TAURI_IPC__);
+        }),
+        1500,
+        "e2e_is_tauri_page_timeout"
+      );
+    } catch {
+      return false;
+    }
+  };
+  let page: Page | undefined;
+  const candidates = pages.filter((p) => p.url().includes(":5173/"));
+  console.log(`[E2E] CDP pages total=${pages.length} candidates5173=${candidates.length}`);
+  for (const p of candidates) {
+    const url = p.url();
+    const ok = await isTauriPage(p);
+    console.log(`[E2E] page url=${url} tauri=${ok}`);
+    if (ok) {
+      page = p;
+      break;
+    }
+  }
+  if (!page) {
+    page =
+      pages.find((p) => p.url().startsWith("http://127.0.0.1:5173/") && !p.url().includes("e2e=1")) ??
+      pages.find((p) => p.url().startsWith("http://localhost:5173/") && !p.url().includes("e2e=1")) ??
+      pages.find((p) => p.url().includes(":5173/") && !p.url().includes("e2e=1")) ??
+      pages.find((p) => !p.url().includes("playwright-report")) ??
+      pages.find((p) => (p.title() || "").toLowerCase().includes("knez")) ??
+      pages[0];
+  }
   if (!page) throw new Error("tauri_no_page");
   await page.waitForLoadState("domcontentloaded");
   attachPageDiagnostics(page, "main");
@@ -107,13 +149,35 @@ export async function closeTauri() {
   const current = cached;
   cached = null;
   try {
-    await current?.browser.close();
+    if (current?.browser) await withTimeout(current.browser.close(), 8000, "e2e_close_browser_timeout");
   } catch {}
 }
 
 export async function openE2EWindow(): Promise<{ page: Page; label: string }> {
   const { browser, page: main } = await connectTauri();
+  if (cached?.mode === "cdp") {
+    try {
+      const contexts = browser.contexts();
+      const pages = contexts.flatMap((c) => c.pages()).filter((p) => !p.isClosed());
+      if (pages.length <= 1) {
+        console.log(`[E2E] Single CDP target; using main window url=${main.url()}`);
+        return { page: main, label: "main" };
+      }
+    } catch {}
+  }
   try {
+    if (!main.isClosed()) {
+      try {
+        await withTimeout(
+          main.waitForFunction(() => {
+            const w: any = window as any;
+            return !!(w.__TAURI__?.core?.invoke ?? w.__TAURI__?.invoke);
+          }),
+          15000,
+          "e2e_wait_for_tauri_invoke_timeout"
+        );
+      } catch {}
+    }
     const label = await invokeTauri<string>(main, "open_test_window");
     openedLabels.add(label);
     let target: Page | null = null;
@@ -127,8 +191,11 @@ export async function openE2EWindow(): Promise<{ page: Page; label: string }> {
     if (!target) throw new Error("tauri_test_window_not_found");
     await target.waitForLoadState("domcontentloaded");
     attachPageDiagnostics(target, label);
+    console.log(`[E2E] Opened test window label=${label} url=${target.url()}`);
     return { page: target, label };
-  } catch {
+  } catch (e) {
+    console.log(`[E2E] open_test_window failed; using main. error=${String((e as any)?.message ?? e)}`);
+    console.log(`[E2E] Falling back to main window url=${main.url()}`);
     return { page: main, label: "main" };
   }
 }
@@ -138,14 +205,14 @@ export async function closeE2EWindow(label: string): Promise<void> {
   openedLabels.delete(label);
   try {
     const { page } = await connectTauri();
-    await invokeTauri(page, "close_window", { label });
+    await withTimeout(invokeTauri(page, "close_window", { label }), 5000, "e2e_close_window_timeout");
   } catch {}
 }
 
 export async function closeAllE2EWindows(): Promise<void> {
   try {
     const { page } = await connectTauri();
-    await invokeTauri(page, "close_all_test_windows");
+    await withTimeout(invokeTauri(page, "close_all_test_windows"), 5000, "e2e_close_all_windows_timeout");
   } catch {}
   openedLabels.clear();
 }
