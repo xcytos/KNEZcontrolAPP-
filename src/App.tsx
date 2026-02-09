@@ -37,7 +37,6 @@ import './App.css';
 import { CommandPalette } from './components/ui/CommandPalette';
 import { FloatingConsole } from './components/ui/FloatingConsole';
 import { E2EBanner } from './components/ui/E2EBanner';
-import { taqwinMcpService } from './services/TaqwinMcpService';
 import { taqwinActivationService } from './services/TaqwinActivationService';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { ThemeProvider } from './contexts/ThemeContext';

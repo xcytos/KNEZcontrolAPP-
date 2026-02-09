@@ -1,4 +1,4 @@
-import { taqwinMcpService } from "./TaqwinMcpService";
+import { taqwinMcpService } from "../mcp/taqwin/TaqwinMcpService";
 
 export type TaqwinActivationStatus = {
   state: "idle" | "starting" | "running" | "error";
@@ -53,4 +53,3 @@ class TaqwinActivationService {
 }
 
 export const taqwinActivationService = new TaqwinActivationService();
-

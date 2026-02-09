@@ -3,6 +3,14 @@
 ## Purpose
 This guide explains how the desktop app (Tauri) hosts TAQWIN_V1 as an MCP server over STDIO, how to configure it, and how to diagnose failures quickly.
 
+## Topology
+
+```mermaid
+flowchart LR
+  UI[knez-control-app] -->|spawn stdio JSON-RPC| TAQ[TAQWIN_V1 MCP]
+  UI -->|HTTP| KZ[KNEZ :8000]
+```
+
 ## Runtime Model
 - The desktop app spawns TAQWIN as a child process and communicates via JSON-RPC 2.0 over STDIN/STDOUT.
 - The host sequence is: `initialize` → `tools/list` → `tools/call`.
@@ -27,10 +35,41 @@ Minimum required fields for TAQWIN_V1:
 - `working_directory` / `cwd`: absolute path to `TAQWIN_V1/`
 - `env.PYTHONUNBUFFERED`: `"1"`
 
+### Example Config (Preferred)
+
+```json
+{
+  "schema_version": "1",
+  "servers": {
+    "taqwin": {
+      "command": "C:\\\\Path\\\\To\\\\python.exe",
+      "args": [
+        "-u",
+        "C:\\\\Users\\\\syedm\\\\Downloads\\\\ASSETS\\\\controlAPP\\\\TAQWIN_V1\\\\main.py"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "KNEZ_MCP_CLIENT_FRAMING": "line",
+        "TAQWIN_MCP_OUTPUT_MODE": "line"
+      },
+      "working_directory": "C:\\\\Users\\\\syedm\\\\Downloads\\\\ASSETS\\\\controlAPP\\\\TAQWIN_V1"
+    }
+  }
+}
+```
+
 ## UI Surfaces
 - Chat → Tools → “Start TAQWIN MCP”: starts MCP and loads tools.
 - Chat header → “TAQWIN ACTIVATE”: activates TAQWIN for the current session.
 - “Open MCP Logs”: opens the app console filtered to MCP events.
+
+## Required MCP Tools (Operator Expectations)
+- `tools/list` must include at minimum:
+  - `get_server_status`
+  - `debug_test`
+- Activation tool name depends on server version:
+  - `activate_taqwin_unified_consciousness` (TAQWIN_V1)
+  - `taqwin_activate` (legacy)
 
 ## Common Failures and Fixes
 

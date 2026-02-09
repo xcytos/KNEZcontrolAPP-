@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import { McpRegistrySnapshot } from '../../domain/DataContracts';
 import { knezClient } from '../../services/KnezClient';
 import { useToast } from '../../components/ui/Toast';
-import { taqwinMcpService } from '../../services/TaqwinMcpService';
 import { logger } from '../../services/LogService';
+import { runTaqwinMcpSelfTest } from '../../mcp/registry/runTaqwinMcpSelfTest';
 
 export const McpRegistryView: React.FC<{ 
   snapshot: McpRegistrySnapshot | null;
@@ -44,9 +44,12 @@ export const McpRegistryView: React.FC<{
       const w = window as any;
       const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
       if (!isTauri) throw new Error("MCP test requires the desktop app (Tauri).");
-      const tools = await taqwinMcpService.listTools(true);
-      logger.info("mcp", "MCP connectivity test ok", { id, tools: tools.length });
-      showToast(`MCP test OK (${tools.length} tools)`, "success");
+      const res = await runTaqwinMcpSelfTest();
+      if (!res.ok) throw new Error(String(res?.steps?.slice(-1)?.[0]?.detail ?? "self_test_failed"));
+      const toolsStep = (res.steps ?? []).find((s: any) => s.step === "tools/list");
+      const toolCount = Number((toolsStep as any)?.detail?.tools ?? 0);
+      logger.info("mcp", "MCP connectivity test ok", { id, toolCount, durationMs: res.durationMs });
+      showToast(`MCP test OK (${toolCount} tools)`, "success");
       window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
     } catch (e: any) {
       const msg = String(e?.message ?? e);

@@ -16,7 +16,7 @@ export class McpHostConfigService {
         const raw = await readTextFile(LEGACY_FILE_NAME, { baseDir: BaseDirectory.AppLocalData });
         const config = parseMcpHostConfigJson(raw);
         try {
-          const migrated = JSON.stringify({ schema_version: "1", servers: config.mcpServers }, null, 2);
+          const migrated = JSON.stringify({ schema_version: "1", servers: config.servers }, null, 2);
           await writeTextFile(FILE_NAME, migrated, { baseDir: BaseDirectory.AppLocalData });
           return { raw: migrated, config };
         } catch {
@@ -35,7 +35,7 @@ export class McpHostConfigService {
   async save(raw: string): Promise<{ config: McpHostConfig; issues: Record<string, ReturnType<typeof validateTaqwinMcpServer>> }> {
     const config = parseMcpHostConfigJson(raw);
     const issues: Record<string, ReturnType<typeof validateTaqwinMcpServer>> = {};
-    for (const [name, server] of Object.entries(config.mcpServers)) {
+    for (const [name, server] of Object.entries(config.servers)) {
       issues[name] = validateTaqwinMcpServer(server);
     }
     await writeTextFile(FILE_NAME, raw, { baseDir: BaseDirectory.AppLocalData });

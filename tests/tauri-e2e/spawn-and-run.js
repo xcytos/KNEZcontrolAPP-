@@ -161,6 +161,7 @@ function runPlaywrightTauri({ cdpUrl }) {
   const env = {
     ...process.env,
     TAURI_CDP_URL: cdpUrl,
+    VITE_URL: process.env.VITE_URL ?? "http://127.0.0.1:5173/",
     KNEZ_ENDPOINT: process.env.KNEZ_ENDPOINT ?? `http://${KNEZ_HOST}:${KNEZ_PORT}`
   };
   const child = spawn(cmd, args, {
@@ -389,6 +390,8 @@ async function main() {
       await waitForHttpOk("http://127.0.0.1:5173/", 90000);
       logLine(`TAURI E2E: waiting for CDP ${CDP_HOST}:${cdpPort}`);
       await waitForPort(CDP_HOST, cdpPort, 180000);
+      logLine(`TAURI E2E: waiting for CDP JSON http://${CDP_HOST}:${cdpPort}`);
+      await waitForCdpReady(`http://${CDP_HOST}:${cdpPort}`, 60000);
 
       try {
         await fs.promises.writeFile(

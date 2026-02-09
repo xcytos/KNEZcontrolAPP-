@@ -34,7 +34,7 @@ vi.mock("../../src/hooks/useTaqwinMcpStatus", () => ({
   useTaqwinMcpStatus: () => mockMcpStatus,
 }));
 
-vi.mock("../../src/services/TaqwinMcpService", () => ({
+vi.mock("../../src/mcp/taqwin/TaqwinMcpService", () => ({
   taqwinMcpService: {
     listTools: vi.fn(async () => []),
     start: vi.fn(async () => mockMcpStatus),
@@ -44,11 +44,11 @@ vi.mock("../../src/services/TaqwinMcpService", () => ({
   },
 }));
 
-vi.mock("../../src/services/McpHostConfigService", () => ({
+vi.mock("../../src/mcp/config/McpHostConfigService", () => ({
   mcpHostConfigService: {
     load: vi.fn(async () => null),
-    getDefault: vi.fn(async () => ({ raw: "{}", config: { mcpServers: {} } })),
-    save: vi.fn(async () => ({ config: { mcpServers: {} }, issues: {} })),
+    getDefault: vi.fn(async () => ({ raw: "{}", config: { servers: {} } })),
+    save: vi.fn(async () => ({ config: { servers: {} }, issues: {} })),
   },
 }));
 
@@ -107,4 +107,3 @@ describe("TaqwinToolsModal status rendering", () => {
     expect(screen.getByRole("button", { name: "Start TAQWIN MCP" })).toBeTruthy();
   });
 });
-
