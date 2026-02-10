@@ -20,6 +20,7 @@ export function resolveTaqwinActivationToolName(
 class TaqwinMcpService {
   private client: import("../client/McpStdioClient").McpStdioClient | null = null;
   private initialized = false;
+  private serverId: string | null = null;
   private toolsCache: McpToolDefinition[] | null = null;
   private toolsCacheAt: number | null = null;
   private toolsCacheTtlMs = 30000;
@@ -30,8 +31,8 @@ class TaqwinMcpService {
   private lastNormalizedError: string | null = null;
   private lastDebugState: any | null = null;
   private generation = 0;
-  private framingPreference: "line" | "content-length" = "content-length";
-  private state: "down" | "starting" | "running" | "error" = "down";
+  private framingPreference: "line" | "content-length" = "line";
+  private lifecycle: "IDLE" | "STARTING" | "INITIALIZED" | "LISTING_TOOLS" | "READY" | "ERROR" = "IDLE";
   private lastStartAt: number | null = null;
   private lastOkAt: number | null = null;
   private listeners = new Set<(status: ReturnType<TaqwinMcpService["getStatus"]>) => void>();
@@ -64,14 +65,6 @@ class TaqwinMcpService {
     return p;
   }
 
-  private async backoffDelay(): Promise<void> {
-    const n = Math.min(6, this.consecutiveFailures);
-    const base = 250 * Math.pow(2, n);
-    const jitter = Math.floor(Math.random() * 200);
-    const delay = Math.min(5000, base + jitter);
-    await new Promise((r) => setTimeout(r, delay));
-  }
-
   private async awaitInitSettled(): Promise<void> {
     const p = this.initPromise;
     if (!p) return;
@@ -85,7 +78,7 @@ class TaqwinMcpService {
     if (!isTauriRuntime()) throw new Error("mcp_unavailable_non_tauri");
     if (this.initPromise) return this.initPromise;
     const gen = this.generation;
-    this.state = "starting";
+    this.lifecycle = "STARTING";
     this.lastStartAt = Date.now();
     this.emitStatus();
     this.initPromise = (async () => {
@@ -100,10 +93,16 @@ class TaqwinMcpService {
               this.client = client;
               const loaded = await mcpHostConfigService.load();
               const effective = loaded ?? mcpHostConfigService.getDefault();
+              const enabledServers = Object.values(effective.config.servers).filter((s) => s && (s.enabled ?? true));
               const selected =
-                effective.config.servers["taqwin"] ??
-                Object.values(effective.config.servers)[0];
+                (effective.config.servers["taqwin"] && (effective.config.servers["taqwin"].enabled ?? true)
+                  ? effective.config.servers["taqwin"]
+                  : null) ??
+                enabledServers[0] ??
+                null;
+              if (!selected) throw new Error("mcp_no_enabled_servers");
               const server = normalizeTaqwinMcpServer(selected);
+              this.serverId = server.id;
               server.env = {
                 ...(server.env ?? {}),
                 KNEZ_MCP_CLIENT_FRAMING: this.framingPreference,
@@ -121,8 +120,9 @@ class TaqwinMcpService {
                 await client.notifyInitialized?.();
               } catch {}
               this.initialized = true;
+              this.lifecycle = "INITIALIZED";
             }
-            this.state = "running";
+            this.lifecycle = this.toolsCache ? "READY" : "INITIALIZED";
             this.lastOkAt = Date.now();
             this.emitStatus();
             this.consecutiveFailures = 0;
@@ -161,13 +161,14 @@ class TaqwinMcpService {
         this.lastRawError = raw;
         this.lastDebugState = client?.getDebugState?.() ?? null;
         this.lastNormalizedError = this.normalizeError(err).message;
-        this.state = "error";
+        this.lifecycle = "ERROR";
         this.emitStatus();
         try {
           await client?.stop?.();
         } catch {}
         if (this.client === client) this.client = null;
         this.initialized = false;
+        this.serverId = null;
         this.toolsCache = null;
         this.toolsCacheAt = null;
         this.consecutiveFailures = Math.min(20, this.consecutiveFailures + 1);
@@ -177,11 +178,6 @@ class TaqwinMcpService {
       }
     })();
     return this.initPromise;
-  }
-
-  private shouldRetry(err: any): boolean {
-    const msg = String(err?.message ?? err);
-    return /mcp_process_closed_|mcp_not_started|mcp_request_timeout/i.test(msg);
   }
 
   private normalizeError(err: any): Error {
@@ -237,10 +233,12 @@ class TaqwinMcpService {
   getStatus() {
     const debug = this.lastDebugState ?? this.client?.getDebugState?.() ?? null;
     return {
-      state: this.state,
+      state: this.lifecycle,
       processAlive: !!this.client,
       lastStartAt: this.lastStartAt,
       lastOkAt: this.lastOkAt,
+      serverId: this.serverId,
+      trust: this.initialized ? "trusted" : "untrusted",
       framing: (debug as any)?.requestFraming ?? this.framingPreference,
       toolsCached: this.toolsCache?.length ?? 0,
       toolsCacheAt: this.toolsCacheAt,
@@ -273,9 +271,10 @@ class TaqwinMcpService {
     } catch {}
     this.client = null;
     this.initialized = false;
+    this.serverId = null;
     this.toolsCache = null;
     this.toolsCacheAt = null;
-    this.state = "down";
+    this.lifecycle = "IDLE";
     this.emitStatus();
   }
 
@@ -294,56 +293,29 @@ class TaqwinMcpService {
       const startedAt = performance.now();
       try {
         const client = await this.getClient();
+        this.lifecycle = "LISTING_TOOLS";
+        this.emitStatus();
         const tools = await client.listTools();
         this.toolsCache = tools;
         this.toolsCacheAt = Date.now();
         const durationMs = Math.round(performance.now() - startedAt);
         this.lastOkAt = Date.now();
+        this.lifecycle = "READY";
         this.emitStatus();
         logger.info("mcp", "TAQWIN MCP tools/list ok", { durationMs, tools: tools.length });
         logger.info("mcp_audit", "tools/list", { ok: true, durationMs, tools: tools.length });
         return tools;
       } catch (err) {
-        if (!this.shouldRetry(err)) throw err;
-        await this.backoffDelay();
-        try {
-          const dbg = this.client?.getDebugState?.() ?? this.lastDebugState;
-          const lastTimeout = dbg?.lastTimeout;
-          if (
-            String((err as any)?.message ?? err).includes("mcp_request_timeout") &&
-            lastTimeout?.method === "tools/list" &&
-            lastTimeout?.stdoutBytes === 0
-          ) {
-            this.framingPreference = this.framingPreference === "line" ? "content-length" : "line";
-            logger.warn("mcp", "TAQWIN MCP switching client framing after tools/list stall", {
-              nextFraming: this.framingPreference
-            });
-          }
-        } catch {}
-        logger.warn("mcp", "TAQWIN MCP listTools failed; restarting and retrying", { error: String((err as any)?.message ?? err) });
-        await this.stopInternal();
-        try {
-          const client = await this.getClient();
-          const tools = await client.listTools();
-          this.toolsCache = tools;
-          this.toolsCacheAt = Date.now();
-          const durationMs = Math.round(performance.now() - startedAt);
-          this.lastOkAt = Date.now();
-          this.emitStatus();
-          logger.info("mcp", "TAQWIN MCP tools/list ok (after retry)", { durationMs, tools: tools.length });
-          logger.info("mcp_audit", "tools/list", { ok: true, durationMs, tools: tools.length, afterRetry: true });
-          return tools;
-        } catch (err2) {
-          const durationMs = Math.round(performance.now() - startedAt);
-          logger.error("mcp", "TAQWIN MCP listTools failed after retry", { error: String((err2 as any)?.message ?? err2) });
-          logger.error("mcp", "TAQWIN MCP tools/list audit", { durationMs, ok: false });
-          logger.error("mcp_audit", "tools/list", { ok: false, durationMs, error: String((err2 as any)?.message ?? err2), afterRetry: true });
-          const normalized = this.normalizeError(err2);
-          this.lastRawError = String((err2 as any)?.message ?? err2);
-          this.lastNormalizedError = normalized.message;
-          this.lastDebugState = (this.client as any)?.getDebugState?.() ?? this.lastDebugState;
-          throw normalized;
-        }
+        const durationMs = Math.round(performance.now() - startedAt);
+        logger.error("mcp", "TAQWIN MCP tools/list failed", { error: String((err as any)?.message ?? err), durationMs });
+        logger.error("mcp_audit", "tools/list", { ok: false, durationMs, error: String((err as any)?.message ?? err) });
+        const normalized = this.normalizeError(err);
+        this.lastRawError = String((err as any)?.message ?? err);
+        this.lastNormalizedError = normalized.message;
+        this.lastDebugState = (this.client as any)?.getDebugState?.() ?? this.lastDebugState;
+        this.lifecycle = this.initialized ? "INITIALIZED" : "ERROR";
+        this.emitStatus();
+        throw normalized;
       }
     });
   }
@@ -368,42 +340,16 @@ class TaqwinMcpService {
         logger.info("mcp_audit", "tools/call", { ok: true, tool: name, durationMs, argsBytes, resultBytes: bytes });
         return res;
       } catch (err) {
-        if (!this.shouldRetry(err)) throw err;
-        await this.backoffDelay();
-        logger.warn("mcp", "TAQWIN MCP callTool failed; restarting and retrying", {
-          tool: name,
-          error: String((err as any)?.message ?? err)
-        });
-        await this.stopInternal();
-        try {
-          const client = await this.getClient();
-          const res = await client.callTool(name, args);
-          const durationMs = Math.round(performance.now() - startedAt);
-          this.lastOkAt = Date.now();
-          this.emitStatus();
-          const bytes = (() => {
-            try { return JSON.stringify(res).length; } catch { return null; }
-          })();
-          const argsBytes = (() => {
-            try { return JSON.stringify(args ?? {}).length; } catch { return null; }
-          })();
-          logger.info("mcp", "TAQWIN MCP tools/call ok (after retry)", { tool: name, durationMs, bytes });
-          logger.info("mcp_audit", "tools/call", { ok: true, tool: name, durationMs, argsBytes, resultBytes: bytes, afterRetry: true });
-          return res;
-        } catch (err2) {
-          const durationMs = Math.round(performance.now() - startedAt);
-          logger.error("mcp", "TAQWIN MCP callTool failed after retry", {
-            tool: name,
-            error: String((err2 as any)?.message ?? err2)
-          });
-          logger.error("mcp", "TAQWIN MCP tools/call audit", { tool: name, durationMs, ok: false });
-          logger.error("mcp_audit", "tools/call", { ok: false, tool: name, durationMs, error: String((err2 as any)?.message ?? err2), afterRetry: true });
-          const normalized = this.normalizeError(err2);
-          this.lastRawError = String((err2 as any)?.message ?? err2);
-          this.lastNormalizedError = normalized.message;
-          this.lastDebugState = (this.client as any)?.getDebugState?.() ?? this.lastDebugState;
-          throw normalized;
-        }
+        const durationMs = Math.round(performance.now() - startedAt);
+        logger.error("mcp", "TAQWIN MCP tools/call failed", { tool: name, durationMs, error: String((err as any)?.message ?? err) });
+        logger.error("mcp_audit", "tools/call", { ok: false, tool: name, durationMs, error: String((err as any)?.message ?? err) });
+        const normalized = this.normalizeError(err);
+        this.lastRawError = String((err as any)?.message ?? err);
+        this.lastNormalizedError = normalized.message;
+        this.lastDebugState = (this.client as any)?.getDebugState?.() ?? this.lastDebugState;
+        this.lifecycle = this.initialized ? this.lifecycle : "ERROR";
+        this.emitStatus();
+        throw normalized;
       }
     });
   }
@@ -445,7 +391,7 @@ class TaqwinMcpService {
     const startedAt = performance.now();
     try {
       const t0 = performance.now();
-      await this.start(true);
+        await this.start(false);
       steps.push({ step: "start", ok: true, durationMs: Math.round(performance.now() - t0) });
 
       const t1 = performance.now();

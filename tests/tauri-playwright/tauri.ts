@@ -108,8 +108,6 @@ export async function connectTauri(): Promise<{ browser: Browser; page: Page }> 
     return cached;
   }
   console.log(`[E2E] Connected via CDP ${cdpUrl}`);
-  const contexts = browser.contexts();
-  const pages = contexts.flatMap((c) => c.pages()).filter((p) => !p.isClosed());
   const isTauriPage = async (p: Page): Promise<boolean> => {
     try {
       return await withTimeout(
@@ -124,28 +122,24 @@ export async function connectTauri(): Promise<{ browser: Browser; page: Page }> 
       return false;
     }
   };
-  let page: Page | undefined;
-  const candidates = pages.filter((p) => p.url().includes(":5173/"));
-  console.log(`[E2E] CDP pages total=${pages.length} candidates5173=${candidates.length}`);
-  for (const p of candidates) {
-    const url = p.url();
-    const ok = await isTauriPage(p);
-    console.log(`[E2E] page url=${url} tauri=${ok}`);
-    if (ok) {
-      page = p;
-      break;
+  const pickTauriAppPage = async (): Promise<Page> => {
+    for (let attempt = 0; attempt < 80; attempt++) {
+      const contexts = browser.contexts();
+      const pages = contexts.flatMap((c) => c.pages()).filter((p) => !p.isClosed());
+      const candidates = pages.filter((p) => p.url().includes(":5173/"));
+      if (attempt % 8 === 0) console.log(`[E2E] CDP pages total=${pages.length} candidates5173=${candidates.length}`);
+      for (const p of candidates) {
+        const url = p.url();
+        const ok = await isTauriPage(p);
+        if (attempt % 8 === 0) console.log(`[E2E] page url=${url} tauri=${ok}`);
+        if (ok) return p;
+      }
+      await new Promise((r) => setTimeout(r, 250));
     }
-  }
-  if (!page) {
-    page =
-      pages.find((p) => p.url().startsWith("http://127.0.0.1:5173/") && !p.url().includes("e2e=1")) ??
-      pages.find((p) => p.url().startsWith("http://localhost:5173/") && !p.url().includes("e2e=1")) ??
-      pages.find((p) => p.url().includes(":5173/") && !p.url().includes("e2e=1")) ??
-      pages.find((p) => !p.url().includes("playwright-report")) ??
-      pages.find((p) => (p.title() || "").toLowerCase().includes("knez")) ??
-      pages[0];
-  }
-  if (!page) throw new Error("tauri_no_page");
+    throw new Error("tauri_app_page_not_ready");
+  };
+
+  const page = await pickTauriAppPage();
   await page.waitForLoadState("domcontentloaded");
   attachPageDiagnostics(page, "main");
   cached = { browser, page, mode: "cdp" };

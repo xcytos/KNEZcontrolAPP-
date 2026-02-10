@@ -116,7 +116,6 @@ export class McpStdioClient {
     const isWin = navigator.userAgent.toLowerCase().includes("windows");
     if (!isWin) throw new Error("mcp_custom_config_windows_only");
     if (!server?.command) throw new Error("mcp_config_missing_command");
-    if (!server?.cwd) throw new Error("mcp_config_missing_cwd");
     const args = Array.isArray(server.args) ? server.args : [];
     const command = server.command;
     const base = command.split(/[\\/]/).pop()?.toLowerCase() ?? "";
@@ -237,6 +236,13 @@ export class McpStdioClient {
       typeof chunk === "string" ? this.encoder.encode(chunk) : chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
     this.appendStdout(bytes);
     while (true) {
+      const clPrefix = new Uint8Array([67, 111, 110, 116, 101, 110, 116, 45, 76, 101, 110, 103, 116, 104, 58]); // "Content-Length:"
+      const clAt = this.indexOfBytes(this.stdoutBuffer, clPrefix);
+      if (clAt > 0) {
+        this.consume(clAt);
+        continue;
+      }
+
       const headerDelimCrlf = new Uint8Array([13, 10, 13, 10]);
       const headerDelimLf = new Uint8Array([10, 10]);
       const headerEndCrlf = this.indexOfBytes(this.stdoutBuffer, headerDelimCrlf);
@@ -267,7 +273,17 @@ export class McpStdioClient {
           const bodyText = this.decoder.decode(bodyBytes);
           const parsed = JSON.parse(bodyText) as McpResponse;
           this.onMessage(parsed);
-        } catch {
+        } catch (e) {
+          try {
+            const preview = (() => {
+              try {
+                return this.decoder.decode(bodyBytes.slice(0, Math.min(240, bodyBytes.length))).replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+              } catch {
+                return "";
+              }
+            })();
+            logger.warn("mcp", "MCP response parse failed", { framing: "content-length", bytes: bodyBytes.length, preview });
+          } catch {}
           continue;
         }
         continue;
@@ -301,6 +317,13 @@ export class McpStdioClient {
     if (tail) {
       logger.debugThrottled("mcp_stderr_tail", 500, "mcp", "TAQWIN MCP stderr", { tail });
     }
+    try {
+      const trimmed = text.trim();
+      if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+        const obj = JSON.parse(trimmed);
+        logger.info("mcp_server_log", "Server Internal Log", obj);
+      }
+    } catch {}
   }
 
   private onMessage(msg: McpResponse) {

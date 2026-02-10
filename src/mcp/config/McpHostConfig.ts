@@ -13,6 +13,22 @@ export type McpHostConfig = {
   servers: Record<string, McpServerConfig>;
 };
 
+export type NormalizedMcpServerConfig = {
+  id: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  cwd?: string;
+  enabled: boolean;
+  tags: string[];
+};
+
+export type NormalizedMcpConfig = {
+  schema_version?: string;
+  servers: Record<string, NormalizedMcpServerConfig>;
+  sourceSchema: "servers" | "mcpServers" | "unknown";
+};
+
 export type McpConfigIssue = {
   level: "error" | "warn";
   message: string;
@@ -38,59 +54,73 @@ function toRecord(v: any): Record<string, string> {
   return out;
 }
 
-export function parseMcpHostConfigJson(raw: string): McpHostConfig {
-  const parsed = JSON.parse(raw);
+function dirname(p: string): string {
+  const s = String(p ?? "");
+  const idx = Math.max(s.lastIndexOf("\\"), s.lastIndexOf("/"));
+  if (idx <= 0) return "";
+  return s.slice(0, idx).replace(/[\\/]+$/, "");
+}
 
-  const parseServerMap = (serversRaw: any, keyName: string): Record<string, McpServerConfig> => {
-    if (!serversRaw || typeof serversRaw !== "object" || Array.isArray(serversRaw)) {
-      throw new Error(`mcp_config_invalid: ${keyName} must be an object`);
-    }
-    const servers: Record<string, McpServerConfig> = {};
-    for (const [name, entry] of Object.entries(serversRaw)) {
-      if (!name) continue;
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-      const command = String((entry as any).command ?? "");
-      const args = Array.isArray((entry as any).args) ? (entry as any).args.map((a: any) => String(a)) : [];
-      const env = toRecord((entry as any).env);
-      const cwd =
-        (entry as any).cwd
-          ? String((entry as any).cwd)
-          : (entry as any).working_directory
-            ? String((entry as any).working_directory)
-            : (entry as any).workingDirectory
-              ? String((entry as any).workingDirectory)
-              : undefined;
-      const enabled = typeof (entry as any).enabled === "boolean" ? (entry as any).enabled : undefined;
-      const tags = Array.isArray((entry as any).tags) ? (entry as any).tags.map((t: any) => String(t)) : undefined;
-      servers[name] = { id: name, command, args, env, cwd, enabled, tags };
-    }
-    return servers;
-  };
-
-  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-    const schema = (parsed as any).schema_version ? String((parsed as any).schema_version) : undefined;
-    if ((parsed as any).servers) {
-      return { schema_version: schema, servers: parseServerMap((parsed as any).servers, "servers") };
-    }
-    if ((parsed as any).mcpServers) {
-      return { schema_version: schema, servers: parseServerMap((parsed as any).mcpServers, "mcpServers") };
-    }
+export function normalizeMcpConfig(input: any): NormalizedMcpConfig {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("mcp_config_invalid: expected object");
+  }
+  const schema_version = (input as any).schema_version ? String((input as any).schema_version) : undefined;
+  const hasServers = !!(input as any).servers;
+  const hasMcpServers = !!(input as any).mcpServers;
+  const sourceSchema: NormalizedMcpConfig["sourceSchema"] = hasServers ? "servers" : hasMcpServers ? "mcpServers" : "unknown";
+  const serversRaw = hasServers ? (input as any).servers : hasMcpServers ? (input as any).mcpServers : null;
+  if (!serversRaw || typeof serversRaw !== "object" || Array.isArray(serversRaw)) {
+    throw new Error("mcp_config_invalid: expected {servers:{...}} or {mcpServers:{...}}");
   }
 
-  throw new Error("mcp_config_invalid: expected {servers:{...}} or {mcpServers:{...}}");
+  const servers: Record<string, NormalizedMcpServerConfig> = {};
+  for (const [name, entry] of Object.entries(serversRaw)) {
+    if (!name) continue;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const command = String((entry as any).command ?? "");
+    const args = Array.isArray((entry as any).args) ? (entry as any).args.map((a: any) => String(a)) : [];
+    const env = toRecord((entry as any).env);
+    let cwd =
+      (entry as any).cwd
+        ? String((entry as any).cwd)
+        : (entry as any).working_directory
+          ? String((entry as any).working_directory)
+          : (entry as any).workingDirectory
+            ? String((entry as any).workingDirectory)
+            : undefined;
+    const enabled = typeof (entry as any).enabled === "boolean" ? (entry as any).enabled : true;
+    const tags = Array.isArray((entry as any).tags) ? (entry as any).tags.map((t: any) => String(t)) : [];
+
+    if (!cwd) {
+      const main = args.find((a: string) => /main\.py$/i.test(a)) ?? "";
+      if (main && isAbsolutePath(main)) cwd = dirname(main) || undefined;
+    }
+
+    servers[name] = { id: name, command, args, env, cwd, enabled, tags };
+  }
+  return { schema_version, servers, sourceSchema };
+}
+
+export function parseMcpHostConfigJson(raw: string): McpHostConfig {
+  const parsed = JSON.parse(raw);
+  const normalized = normalizeMcpConfig(parsed);
+  const servers: Record<string, McpServerConfig> = {};
+  for (const [k, s] of Object.entries(normalized.servers)) {
+    servers[k] = { ...s };
+  }
+  return { schema_version: normalized.schema_version, servers };
 }
 
 export function validateTaqwinMcpServer(server: McpServerConfig): McpConfigIssue[] {
   const issues: McpConfigIssue[] = [];
 
   if (!server.command) issues.push({ level: "error", message: "command is required", field: "command" });
-  if (server.command && !isAbsolutePath(server.command)) {
-    issues.push({ level: "error", message: "command must be an absolute path", field: "command" });
+  if (server.command && !isAbsolutePath(server.command) && server.command.toLowerCase() !== "python") {
+    issues.push({ level: "warn", message: "command is not an absolute path", field: "command" });
   }
-  if (!server.cwd) {
-    issues.push({ level: "error", message: "cwd is required and must point to TAQWIN_V1", field: "cwd" });
-  } else if (!isAbsolutePath(server.cwd)) {
-    issues.push({ level: "error", message: "cwd must be an absolute path", field: "cwd" });
+  if (server.cwd && !isAbsolutePath(server.cwd)) {
+    issues.push({ level: "warn", message: "cwd is not an absolute path", field: "cwd" });
   }
   if (!Array.isArray(server.args)) issues.push({ level: "error", message: "args must be an array", field: "args" });
 
@@ -98,9 +128,9 @@ export function validateTaqwinMcpServer(server: McpServerConfig): McpConfigIssue
   if (!hasU) issues.push({ level: "error", message: "args must include -u (unbuffered)", field: "args" });
 
   const hasMain = server.args.some((a) => /main\.py$/i.test(a));
-  if (!hasMain) issues.push({ level: "error", message: "args must include an absolute path to main.py", field: "args" });
+  if (!hasMain) issues.push({ level: "error", message: "args must include main.py", field: "args" });
   const mainArg = server.args.find((a) => /main\.py$/i.test(a)) ?? "";
-  if (mainArg && !isAbsolutePath(mainArg)) issues.push({ level: "error", message: "main.py path must be absolute", field: "args" });
+  if (mainArg && !isAbsolutePath(mainArg)) issues.push({ level: "warn", message: "main.py path is not absolute", field: "args" });
 
   const env = server.env ?? {};
   if (String(env.PYTHONUNBUFFERED ?? "") !== "1") {

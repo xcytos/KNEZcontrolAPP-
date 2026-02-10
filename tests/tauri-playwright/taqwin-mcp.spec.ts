@@ -17,6 +17,12 @@ test.describe("TAQWIN MCP", () => {
   test("starts MCP and runs get_server_status", async () => {
     const { page, label } = await openE2EWindow();
     try {
+      const isTauri = await page.evaluate(() => {
+        const w: any = window as any;
+        return !!(w.__TAURI__?.core?.invoke ?? w.__TAURI__?.invoke ?? w.__TAURI_INTERNALS__ ?? w.__TAURI_IPC__);
+      });
+      expect(isTauri).toBe(true);
+
       await page.waitForTimeout(400);
 
       await page.keyboard.press("Escape");
@@ -32,9 +38,34 @@ test.describe("TAQWIN MCP", () => {
       await expect(page.getByRole("button", { name: "Save" })).toBeVisible({ timeout: 30000 });
       await page.getByRole("button", { name: "Save" }).click();
 
+      await expect(page.getByRole("button", { name: /Start TAQWIN MCP|Retry TAQWIN MCP|Restart TAQWIN MCP/ })).toBeVisible({
+        timeout: 30000
+      });
+      await page.getByRole("button", { name: /Start TAQWIN MCP|Retry TAQWIN MCP/ }).click();
+
+      const status = page.locator('[data-testid="mcp-status"]');
+      await expect(status).toContainText("mcp_state=READY", { timeout: 60000 });
+      await expect(status).toContainText("mcp_trust=trusted", { timeout: 60000 });
+
       await page.getByRole("button", { name: "Advanced" }).click();
       await expect(page.getByRole("button", { name: "Self-Test" })).toBeVisible({ timeout: 30000 });
       await page.getByRole("button", { name: "Self-Test" }).click();
+
+      await expect(status).toContainText("mcp_trust=trusted", { timeout: 60000 });
+
+      const diagMid = getPageDiagnostics(page);
+      const forbidden = /(switching client framing|fallback|request timeout)/i;
+      expect(diagMid.some((l) => forbidden.test(l))).toBe(false);
+
+      const pidRe = /\bpid:\s*(\d+)/g;
+      const pids = new Set<string>();
+      for (const line of diagMid) {
+        for (const m of line.matchAll(pidRe)) {
+          if (m[1]) pids.add(m[1]);
+        }
+      }
+      expect(pids.size).toBe(1);
+
       await page.keyboard.press("Escape");
 
       const diag = getPageDiagnostics(page);
