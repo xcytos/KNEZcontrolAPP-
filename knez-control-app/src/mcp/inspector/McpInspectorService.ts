@@ -1,7 +1,9 @@
 import { McpStdioClient } from "../client/McpStdioClient";
+import { McpHttpClient } from "../client/McpHttpClient";
 import { mcpHostConfigService } from "../config/McpHostConfigService";
 import type { McpConfigIssue, McpServerConfig, NormalizedMcpConfig, NormalizedMcpServerConfig } from "../config/McpHostConfig";
 import { normalizeMcpConfig } from "../config/McpHostConfig";
+import { extractServerInputRefs, listInputsById, substituteServerInputRefs } from "../config/McpInputs";
 import type { McpToolDefinition } from "../../services/McpTypes";
 import { knezClient } from "../../services/KnezClient";
 
@@ -11,14 +13,17 @@ export type McpInspectorServerStatus = {
   id: string;
   enabled: boolean;
   tags: string[];
-  command: string;
-  args: string[];
+  type: "stdio" | "http";
+  command?: string;
+  args?: string[];
   cwd?: string;
-  env: Record<string, string>;
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
   state: McpInspectorLifecycle;
   pid: number | null;
   running: boolean;
-  framing: "content-length" | "line";
+  framing: "content-length" | "line" | "http";
   lastOkAt: number | null;
   initializedAt: number | null;
   initializeDurationMs: number | null;
@@ -47,7 +52,7 @@ export type KnezHealthSnapshot = {
 
 type ServerSession = {
   server: NormalizedMcpServerConfig;
-  client: McpStdioClient;
+  client: McpStdioClient | McpHttpClient;
   state: McpInspectorLifecycle;
   lastOkAt: number | null;
   initializedAt: number | null;
@@ -66,6 +71,7 @@ export class McpInspectorService {
   private selectedId: string | null = null;
   private opChains = new Map<string, Promise<void>>();
   private knezHealth: KnezHealthSnapshot = { endpoint: "", checkedAt: null, ok: null, error: null };
+  private inputValues = new Map<string, string>();
 
   subscribe(fn: () => void): () => void {
     this.subscribers.add(fn);
@@ -97,6 +103,40 @@ export class McpInspectorService {
     return this.config;
   }
 
+  getInputs() {
+    return (this.config.normalized?.inputs ?? []).slice();
+  }
+
+  getResolvedInputIds(): string[] {
+    return Array.from(this.inputValues.keys()).sort();
+  }
+
+  setInputValue(id: string, value: string) {
+    const key = String(id ?? "").trim();
+    if (!key) return;
+    this.inputValues.set(key, String(value ?? ""));
+    this.emit();
+  }
+
+  clearInputValue(id: string) {
+    const key = String(id ?? "").trim();
+    if (!key) return;
+    this.inputValues.delete(key);
+    this.emit();
+  }
+
+  clearAllInputValues() {
+    this.inputValues.clear();
+    this.emit();
+  }
+
+  getRequiredInputsForServer(serverId: string): string[] {
+    const s = this.sessions.get(serverId);
+    if (!s) return [];
+    const cfg = this.toServerConfig(s.server);
+    return extractServerInputRefs(cfg);
+  }
+
   getKnezHealth(): KnezHealthSnapshot {
     const endpoint = knezClient.getProfile().endpoint;
     if (this.knezHealth.endpoint !== endpoint) {
@@ -122,9 +162,11 @@ export class McpInspectorService {
 
   private requiresKnez(server: NormalizedMcpServerConfig): boolean {
     if (server.id === "taqwin") return true;
-    const env = server.env ?? {};
-    if (env.TAQWIN_GOVERNANCE_SNAPSHOT_URL) return true;
-    if (env.KNEZ_ENDPOINT) return true;
+    if (server.type === "stdio") {
+      const env = server.env ?? {};
+      if (env.TAQWIN_GOVERNANCE_SNAPSHOT_URL) return true;
+      if (env.KNEZ_ENDPOINT) return true;
+    }
     return false;
   }
 
@@ -166,7 +208,7 @@ export class McpInspectorService {
     this.emit();
   }
 
-  getClientInstance(serverId: string): McpStdioClient | null {
+  getClientInstance(serverId: string): McpStdioClient | McpHttpClient | null {
     return this.sessions.get(serverId)?.client ?? null;
   }
 
@@ -189,8 +231,10 @@ export class McpInspectorService {
 
   async saveConfig(raw: string): Promise<void> {
     const { config } = await mcpHostConfigService.save(raw);
-    const normalized = normalizeMcpConfig({ schema_version: config.schema_version, servers: config.servers });
-    this.applyConfig(JSON.stringify({ schema_version: normalized.schema_version ?? "1", servers: normalized.servers }, null, 2));
+    const normalized = normalizeMcpConfig({ schema_version: config.schema_version, inputs: config.inputs ?? [], servers: config.servers });
+    this.applyConfig(
+      JSON.stringify({ schema_version: normalized.schema_version ?? "1", inputs: normalized.inputs ?? [], servers: normalized.servers }, null, 2)
+    );
   }
 
   getServers(): NormalizedMcpServerConfig[] {
@@ -229,7 +273,8 @@ export class McpInspectorService {
       s.toolsPending = false;
       this.emit();
       try {
-        await s.client.startWithConfig(this.toServerConfig(s.server));
+        const cfg = await this.resolveInputsForServer(this.toServerConfig(s.server));
+        await s.client.startWithConfig(cfg);
         s.state = "IDLE";
         s.lastError = null;
         this.emit();
@@ -281,7 +326,8 @@ export class McpInspectorService {
       if (s.client.getDebugState().running) return;
       s.state = "STARTING";
       this.emit();
-      await s.client.startWithConfig(this.toServerConfig(s.server));
+      const cfg = await this.resolveInputsForServer(this.toServerConfig(s.server));
+      await s.client.startWithConfig(cfg);
       s.state = "IDLE";
       this.emit();
     });
@@ -298,7 +344,8 @@ export class McpInspectorService {
         s.tools = [];
         s.toolsPending = false;
         this.emit();
-        await s.client.startWithConfig(this.toServerConfig(s.server));
+        const cfg = await this.resolveInputsForServer(this.toServerConfig(s.server));
+        await s.client.startWithConfig(cfg);
       }
       const startedAt = performance.now();
       s.state = "STARTING";
@@ -383,23 +430,55 @@ export class McpInspectorService {
   }
 
   private toServerConfig(s: NormalizedMcpServerConfig): McpServerConfig {
-    return { id: s.id, command: s.command, args: s.args, env: s.env, cwd: s.cwd, enabled: s.enabled, tags: s.tags };
+    if (s.type === "http") {
+      return { id: s.id, type: "http", url: s.url, headers: s.headers, enabled: s.enabled, tags: s.tags };
+    }
+    return { id: s.id, type: "stdio", command: s.command, args: s.args, env: s.env, cwd: s.cwd, enabled: s.enabled, tags: s.tags };
+  }
+
+  private async resolveInputsForServer(server: McpServerConfig): Promise<McpServerConfig> {
+    const cfg = this.config.normalized;
+    const inputs = listInputsById(cfg?.inputs ?? []);
+    const refs = extractServerInputRefs(server);
+    if (!refs.length) return server;
+    const resolved: Record<string, string> = {};
+    const missing: string[] = [];
+    for (const id of refs) {
+      const cached = this.inputValues.get(id);
+      if (cached === undefined) {
+        missing.push(id);
+        continue;
+      }
+      resolved[id] = cached;
+    }
+    if (missing.length) {
+      const labels = missing.map((id) => {
+        const meta = inputs[id];
+        return meta?.description ? `${id} (${meta.description})` : id;
+      });
+      throw new Error(`mcp_input_required:${labels.join(",")}`);
+    }
+    return substituteServerInputRefs(server, resolved);
   }
 
   private buildStatus(s: ServerSession): McpInspectorServerStatus {
     const dbg = s.client.getDebugState();
+    const framing = String((dbg as any)?.requestFraming ?? "http");
     return {
       id: s.server.id,
       enabled: s.server.enabled,
       tags: s.server.tags,
-      command: s.server.command,
-      args: s.server.args,
-      cwd: s.server.cwd,
-      env: s.server.env,
+      type: s.server.type,
+      command: s.server.type === "stdio" ? s.server.command : undefined,
+      args: s.server.type === "stdio" ? s.server.args : undefined,
+      cwd: s.server.type === "stdio" ? s.server.cwd : undefined,
+      env: s.server.type === "stdio" ? s.server.env : undefined,
+      url: s.server.type === "http" ? s.server.url : undefined,
+      headers: s.server.type === "http" ? s.server.headers : undefined,
       state: s.state,
       pid: dbg.pid ?? null,
       running: dbg.running,
-      framing: dbg.requestFraming,
+      framing: framing === "line" || framing === "content-length" ? framing : "http",
       lastOkAt: s.lastOkAt,
       initializedAt: s.initializedAt,
       initializeDurationMs: s.initializeDurationMs,
@@ -425,7 +504,7 @@ export class McpInspectorService {
         } else {
           next.set(srv.id, {
             server: srv,
-            client: new McpStdioClient(),
+            client: srv.type === "http" ? new McpHttpClient() : new McpStdioClient(),
             state: "IDLE",
             lastOkAt: null,
             initializedAt: null,
@@ -461,6 +540,11 @@ function validateNormalizedServers(cfg: NormalizedMcpConfig): Record<string, Mcp
 
 function validateGeneralServer(server: NormalizedMcpServerConfig): McpConfigIssue[] {
   const issues: McpConfigIssue[] = [];
+  if (server.type === "http") {
+    if (!server.url) issues.push({ level: "error", message: "url is required", field: "url" });
+    return issues;
+  }
+
   if (!server.command) issues.push({ level: "error", message: "command is required", field: "command" });
   if (!Array.isArray(server.args)) issues.push({ level: "error", message: "args must be an array", field: "args" });
   const base = String(server.command ?? "").split(/[\\/]/).pop()?.toLowerCase() ?? "";

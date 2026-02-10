@@ -123,7 +123,7 @@ function escapePowerShellSingleQuoted(s: string): string {
   return s.replace(/'/g, "''");
 }
 
-async function healthViaShell(url: string, timeoutMs: number): Promise<KnezHealthResponse> {
+async function healthViaPowerShell(url: string, timeoutMs: number): Promise<KnezHealthResponse> {
   const { Command } = await import("@tauri-apps/plugin-shell");
   const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
   const script = [
@@ -144,7 +144,7 @@ async function healthViaShell(url: string, timeoutMs: number): Promise<KnezHealt
   return data;
 }
 
-async function postJsonViaShell<T>(url: string, payload: any, timeoutMs: number): Promise<T> {
+async function postJsonViaPowerShell<T>(url: string, payload: any, timeoutMs: number): Promise<T> {
   const { Command } = await import("@tauri-apps/plugin-shell");
   const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
   const body = JSON.stringify(payload ?? {});
@@ -165,6 +165,48 @@ async function postJsonViaShell<T>(url: string, payload: any, timeoutMs: number)
     throw new AppError("KNEZ_FETCH_FAILED", `Shell POST invalid JSON: ${url}`, { url, stdout: out.stdout });
   }
   return data;
+}
+
+async function healthViaShell(url: string, timeoutMs: number): Promise<KnezHealthResponse> {
+  const { Command } = await import("@tauri-apps/plugin-shell");
+  const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
+  const out = await Command.create("cmd", ["/d", "/s", "/c", "curl", "-sS", "--max-time", String(timeoutSec), url]).execute();
+  if (out.code === 0) {
+    const data = safeJsonParse<KnezHealthResponse>(out.stdout);
+    if (!data) {
+      throw new AppError("KNEZ_HEALTH_FAILED", `Health check invalid JSON (cmd)`, { url, stdout: out.stdout });
+    }
+    return data;
+  }
+  return await healthViaPowerShell(url, timeoutMs);
+}
+
+async function postJsonViaShell<T>(url: string, payload: any, timeoutMs: number): Promise<T> {
+  const { Command } = await import("@tauri-apps/plugin-shell");
+  const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
+  const body = JSON.stringify(payload ?? {});
+  const out = await Command.create("cmd", [
+    "/d",
+    "/s",
+    "/c",
+    "curl",
+    "-sS",
+    "--max-time",
+    String(timeoutSec),
+    "-H",
+    "Content-Type: application/json",
+    "-d",
+    body,
+    url,
+  ]).execute();
+  if (out.code === 0) {
+    const data = safeJsonParse<T>(out.stdout);
+    if (!data) {
+      throw new AppError("KNEZ_FETCH_FAILED", `Shell POST invalid JSON (cmd): ${url}`, { url, stdout: out.stdout });
+    }
+    return data;
+  }
+  return await postJsonViaPowerShell<T>(url, payload, timeoutMs);
 }
 
 function newSessionId(): string {

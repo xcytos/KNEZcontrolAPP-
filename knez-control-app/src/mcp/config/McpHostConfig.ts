@@ -1,5 +1,13 @@
-export type McpServerConfig = {
+export type McpConfigInput = {
+  type: "promptString";
   id: string;
+  description?: string;
+  password?: boolean;
+};
+
+export type McpStdioServerConfig = {
+  id: string;
+  type?: "stdio";
   command: string;
   args: string[];
   env: Record<string, string>;
@@ -8,13 +16,26 @@ export type McpServerConfig = {
   tags?: string[];
 };
 
+export type McpHttpServerConfig = {
+  id: string;
+  type: "http";
+  url: string;
+  headers?: Record<string, string>;
+  enabled?: boolean;
+  tags?: string[];
+};
+
+export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
+
 export type McpHostConfig = {
   schema_version?: string;
+  inputs?: McpConfigInput[];
   servers: Record<string, McpServerConfig>;
 };
 
-export type NormalizedMcpServerConfig = {
+export type NormalizedMcpStdioServerConfig = {
   id: string;
+  type: "stdio";
   command: string;
   args: string[];
   env: Record<string, string>;
@@ -23,8 +44,20 @@ export type NormalizedMcpServerConfig = {
   tags: string[];
 };
 
+export type NormalizedMcpHttpServerConfig = {
+  id: string;
+  type: "http";
+  url: string;
+  headers: Record<string, string>;
+  enabled: boolean;
+  tags: string[];
+};
+
+export type NormalizedMcpServerConfig = NormalizedMcpStdioServerConfig | NormalizedMcpHttpServerConfig;
+
 export type NormalizedMcpConfig = {
   schema_version?: string;
+  inputs: McpConfigInput[];
   servers: Record<string, NormalizedMcpServerConfig>;
   sourceSchema: "servers" | "mcpServers" | "unknown";
 };
@@ -66,6 +99,17 @@ export function normalizeMcpConfig(input: any): NormalizedMcpConfig {
     throw new Error("mcp_config_invalid: expected object");
   }
   const schema_version = (input as any).schema_version ? String((input as any).schema_version) : undefined;
+  const inputs: McpConfigInput[] = Array.isArray((input as any).inputs)
+    ? (input as any).inputs
+        .filter((v: any) => v && typeof v === "object" && !Array.isArray(v))
+        .map((v: any) => ({
+          type: "promptString",
+          id: String(v.id ?? "").trim(),
+          description: v.description ? String(v.description) : undefined,
+          password: typeof v.password === "boolean" ? v.password : undefined,
+        }))
+        .filter((v: McpConfigInput) => !!v.id)
+    : [];
   const hasServers = !!(input as any).servers;
   const hasMcpServers = !!(input as any).mcpServers;
   const sourceSchema: NormalizedMcpConfig["sourceSchema"] = hasServers ? "servers" : hasMcpServers ? "mcpServers" : "unknown";
@@ -78,6 +122,20 @@ export function normalizeMcpConfig(input: any): NormalizedMcpConfig {
   for (const [name, entry] of Object.entries(serversRaw)) {
     if (!name) continue;
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const enabled = typeof (entry as any).enabled === "boolean" ? (entry as any).enabled : true;
+    const tags = Array.isArray((entry as any).tags) ? (entry as any).tags.map((t: any) => String(t)) : [];
+
+    const rawType = String((entry as any).type ?? "").trim().toLowerCase();
+    const hasUrl = typeof (entry as any).url === "string" && String((entry as any).url).trim().length > 0;
+    const isHttp = rawType === "http" || hasUrl;
+
+    if (isHttp) {
+      const url = String((entry as any).url ?? "").trim();
+      const headers = toRecord((entry as any).headers);
+      servers[name] = { id: name, type: "http", url, headers, enabled, tags };
+      continue;
+    }
+
     const command = String((entry as any).command ?? "");
     const args = Array.isArray((entry as any).args) ? (entry as any).args.map((a: any) => String(a)) : [];
     const env = toRecord((entry as any).env);
@@ -89,17 +147,15 @@ export function normalizeMcpConfig(input: any): NormalizedMcpConfig {
           : (entry as any).workingDirectory
             ? String((entry as any).workingDirectory)
             : undefined;
-    const enabled = typeof (entry as any).enabled === "boolean" ? (entry as any).enabled : true;
-    const tags = Array.isArray((entry as any).tags) ? (entry as any).tags.map((t: any) => String(t)) : [];
 
     if (!cwd) {
       const main = args.find((a: string) => /main\.py$/i.test(a)) ?? "";
       if (main && isAbsolutePath(main)) cwd = dirname(main) || undefined;
     }
 
-    servers[name] = { id: name, command, args, env, cwd, enabled, tags };
+    servers[name] = { id: name, type: "stdio", command, args, env, cwd, enabled, tags };
   }
-  return { schema_version, servers, sourceSchema };
+  return { schema_version, inputs, servers, sourceSchema };
 }
 
 export function parseMcpHostConfigJson(raw: string): McpHostConfig {
@@ -109,11 +165,16 @@ export function parseMcpHostConfigJson(raw: string): McpHostConfig {
   for (const [k, s] of Object.entries(normalized.servers)) {
     servers[k] = { ...s };
   }
-  return { schema_version: normalized.schema_version, servers };
+  return { schema_version: normalized.schema_version, inputs: normalized.inputs, servers };
 }
 
 export function validateTaqwinMcpServer(server: McpServerConfig): McpConfigIssue[] {
   const issues: McpConfigIssue[] = [];
+
+  if ((server as any)?.type === "http") {
+    issues.push({ level: "error", message: "TAQWIN must be configured as a stdio server", field: "type" });
+    return issues;
+  }
 
   if (!server.command) issues.push({ level: "error", message: "command is required", field: "command" });
   if (server.command && !isAbsolutePath(server.command) && server.command.toLowerCase() !== "python") {
@@ -141,6 +202,7 @@ export function validateTaqwinMcpServer(server: McpServerConfig): McpConfigIssue
 }
 
 export function normalizeTaqwinMcpServer(server: McpServerConfig): McpServerConfig {
+  if ((server as any)?.type === "http") return server;
   const env = { ...(server.env ?? {}) };
   if (!env.PYTHONUNBUFFERED) env.PYTHONUNBUFFERED = "1";
   const args = Array.isArray(server.args) ? server.args.slice() : [];

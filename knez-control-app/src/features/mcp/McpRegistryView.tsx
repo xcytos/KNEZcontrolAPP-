@@ -25,6 +25,32 @@ export const McpRegistryView: React.FC<{
 
   const localServerIds = useMemo(() => new Set(mcpInspectorService.getServers().map((s) => s.id)), [tick]);
   const inspectorStatusById = useMemo(() => mcpInspectorService.getStatusById(), [tick]);
+  const items = useMemo(() => {
+    const knezItems = (snapshot as any)?.supported ? ((snapshot as any).items ?? []) : [];
+    const byId = new Map<string, any>();
+    for (const it of knezItems) {
+      if (!it?.id) continue;
+      byId.set(it.id, { ...it });
+    }
+    const localServers = mcpInspectorService.getServers();
+    for (const s of localServers) {
+      if (!s?.id) continue;
+      if (byId.has(s.id)) continue;
+      const st = inspectorStatusById[s.id];
+      byId.set(s.id, {
+        id: s.id,
+        provider: "local_config",
+        status: "inactive",
+        capabilities: [],
+        enabled: s.enabled,
+        last_error: st?.lastError ?? null,
+        last_ok: st?.lastOkAt ? Math.floor(st.lastOkAt / 1000) : null,
+      });
+    }
+    const out = Array.from(byId.values());
+    out.sort((a, b) => String(a.id ?? "").localeCompare(String(b.id ?? "")));
+    return out;
+  }, [snapshot, tick, inspectorStatusById]);
 
   if (!snapshot) return <div className="p-8 text-center text-zinc-500">Loading MCP Registry...</div>;
   if (!snapshot.supported) {
@@ -96,7 +122,7 @@ export const McpRegistryView: React.FC<{
 
       {tab === "registry" ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {snapshot.items?.map((item) => (
+          {items?.map((item) => (
             <div key={item.id} className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 relative overflow-hidden">
               <div className={`absolute top-0 left-0 w-1 h-full ${item.status === 'active' ? 'bg-green-500' : 'bg-zinc-700'}`} />
               
