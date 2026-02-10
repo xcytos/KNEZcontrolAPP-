@@ -41,7 +41,7 @@ const AddServerModal: React.FC<{
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" role="dialog" aria-modal="true">
-      <div className="bg-zinc-900 border border-zinc-700 rounded-lg w-[600px] max-w-full shadow-xl flex flex-col max-h-[90vh]">
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg w-full max-w-lg shadow-xl flex flex-col max-h-[90vh] mx-4">
         <div className="flex justify-between items-center p-4 border-b border-zinc-800">
           <h3 className="text-lg font-bold text-zinc-100">Add MCP Server</h3>
           <button onClick={onClose} className="text-zinc-400 hover:text-white" aria-label="Close">✕</button>
@@ -301,8 +301,8 @@ export const McpRegistryView: React.FC<{
               
               <div className="pl-3">
                 <div className="flex justify-between items-start mb-3">
-                  <div>
-                    <div className="font-mono text-sm text-zinc-200">{item.id}</div>
+                  <div className="min-w-0 flex-1 mr-2">
+                    <div className="font-mono text-sm text-zinc-200 break-all">{item.id}</div>
                     <div className="text-xs text-zinc-500">{item.provider}</div>
                     <div className="mt-1 flex items-center gap-2 flex-wrap">
                       <span className={`px-1.5 py-0.5 rounded text-[10px] border ${

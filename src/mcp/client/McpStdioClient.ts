@@ -553,18 +553,28 @@ export class McpStdioClient {
     };
     const startedAt = performance.now();
     const prevFraming = this.requestFraming;
+    
+    // FORENSIC AUDIT FIX (MCP-005):
+    // Ensure notifyInitialized is ONLY sent after a successful initialize response.
+    // The previous code had a race condition or was too optimistic.
+    // We also must ensure we don't start sending tool calls until this completes.
+    
     try {
       this.requestFraming = "content-length";
       const res = await this.request("initialize", params, { timeoutMs: 15000, stopOnTimeout: false, logTimeoutLevel: "debug" });
       logger.info("mcp", "MCP initialize ok", { framing: this.requestFraming, durationMs: Math.round(performance.now() - startedAt) });
-      try { await this.notifyInitialized(); } catch {}
+      
+      // Strict lifecycle ordering: 1. initialize response -> 2. initialized notification
+      await this.notifyInitialized(); 
       return res;
     } catch (e1) {
       try {
+        // Fallback to line framing
         this.requestFraming = "line";
         const res = await this.request("initialize", params, { timeoutMs: 15000, stopOnTimeout: false, logTimeoutLevel: "debug" });
         logger.info("mcp", "MCP initialize ok", { framing: this.requestFraming, durationMs: Math.round(performance.now() - startedAt) });
-        try { await this.notifyInitialized(); } catch {}
+        
+        await this.notifyInitialized();
         return res;
       } catch (e2) {
         this.requestFraming = prevFraming;
@@ -575,7 +585,10 @@ export class McpStdioClient {
 
   async notifyInitialized(): Promise<void> {
     if (!this.child) throw new Error("mcp_not_started");
-    const msg = { jsonrpc: "2.0", method: "notifications/initialized", params: {} };
+    // FORENSIC AUDIT NOTE:
+    // This notification must be sent exactly once after the initialize response.
+    // It has no ID and expects no response.
+    const msg = { jsonrpc: "2.0", method: "notifications/initialized" };
     const payload = this.buildPayload(msg);
     await this.child.write(Array.from(payload));
   }
