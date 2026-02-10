@@ -71,7 +71,7 @@ export class McpHostConfigService {
     const config = parseMcpHostConfigJson(raw);
     const issues: Record<string, ReturnType<typeof validateTaqwinMcpServer>> = {};
     for (const [name, server] of Object.entries(config.servers)) {
-      issues[name] = validateTaqwinMcpServer(server);
+      issues[name] = name === "taqwin" ? validateTaqwinMcpServer(server) : [];
     }
     await writeTextFile(APP_LOCAL_FILE_NAME, raw, { baseDir: BaseDirectory.AppLocalData });
     return { config, issues };

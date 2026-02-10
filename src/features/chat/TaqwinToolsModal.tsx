@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Command } from "@tauri-apps/plugin-shell";
 import { taqwinMcpService } from "../../mcp/taqwin/TaqwinMcpService";
 import { getTaqwinToolPermissions, isTaqwinToolAllowed, setTaqwinToolEnabled } from "../../services/TaqwinToolPermissions";
 import { McpToolDefinition } from "../../services/McpTypes";
@@ -144,7 +143,7 @@ export const TaqwinToolsModal: React.FC<{
         setConfigText(effective.raw);
         const issues: Record<string, ReturnType<typeof validateTaqwinMcpServer>> = {};
         for (const [name, server] of Object.entries(effective.config.servers)) {
-          issues[name] = validateTaqwinMcpServer(server);
+          issues[name] = name === "taqwin" ? validateTaqwinMcpServer(server) : [];
         }
         setConfigIssues(issues);
       } catch {}
@@ -241,24 +240,8 @@ export const TaqwinToolsModal: React.FC<{
       const w = window as any;
       const isTauri = !!(w.__TAURI__?.core?.invoke ?? w.__TAURI__?.invoke ?? w.__TAURI_INTERNALS__ ?? w.__TAURI_IPC__);
       if (!isTauri) throw new Error("mcp_unavailable_non_tauri");
-      const script =
-        "$ErrorActionPreference='SilentlyContinue';" +
-        "$py='python';" +
-        "$c=@(" +
-        "\"$env:USERPROFILE\\\\Downloads\\\\ASSETS\\\\controlAPP\\\\TAQWIN_V1\"," +
-        "\"$env:USERPROFILE\\\\Downloads\\\\TAQWIN_V1\"," +
-        "\"$env:USERPROFILE\\\\Desktop\\\\TAQWIN_V1\"," +
-        "\"$env:USERPROFILE\\\\Documents\\\\TAQWIN_V1\"" +
-        ");" +
-        "$t=$c | Where-Object { Test-Path (Join-Path $_ 'main.py') } | Select-Object -First 1;" +
-        "@{ python=$py; taqwin=$t } | ConvertTo-Json -Compress";
-      const proc = await Command.create("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], {
-        encoding: "utf-8"
-      }).execute();
-      const stdout = String((proc as any)?.stdout ?? "").trim();
-      const detected = stdout ? JSON.parse(stdout) : {};
-      const python = typeof detected?.python === "string" && detected.python ? detected.python : null;
-      const taqwin = typeof detected?.taqwin === "string" && detected.taqwin ? detected.taqwin : null;
+      const python = "python";
+      const taqwin = "..\\\\TAQWIN_V1";
 
       const next = {
         schema_version: "1",
@@ -698,8 +681,18 @@ export const TaqwinToolsModal: React.FC<{
                             setConfigError("");
                             try {
                               const cfg = parseMcpHostConfigJson(configText);
-                              const normalized: any = { schema_version: "1", servers: {} as Record<string, any> };
+                              const normalized: any = { schema_version: "1", inputs: (cfg as any).inputs ?? [], servers: {} as Record<string, any> };
                               for (const [name, server] of Object.entries(cfg.servers)) {
+                                if ((server as any)?.type === "http") {
+                                  normalized.servers[name] = {
+                                    type: "http",
+                                    url: String((server as any)?.url ?? ""),
+                                    headers: (server as any)?.headers ?? {},
+                                    enabled: (server as any)?.enabled ?? true,
+                                    tags: (server as any)?.tags
+                                  };
+                                  continue;
+                                }
                                 const next = normalizeTaqwinMcpServer(server);
                                 normalized.servers[name] = {
                                   command: next.command,

@@ -16,6 +16,15 @@ This registry reflects the TAQWIN_V1 folder on disk and the actual MCP server be
 - tools/call response: `{ result: { content: Array<{ type: "text"; text: string }> } }`
   - If a tool returns a dict, TAQWIN formats it as pretty-printed JSON string inside `content[0].text`.
 
+## MCP Host Config Extensions (Control App)
+
+The Control App MCP host must support both stdio servers (TAQWIN-style) and HTTP servers (remote MCP), with safe secret handling:
+- STDIO servers: `command`, `args`, `env`, `cwd/working_directory`
+- HTTP servers: `type: "http"`, `url`, `headers`
+- Inputs: `${input:<id>}` substitution for `env` and `headers`, prompting at runtime for missing values (secrets must not be stored by default).
+
+Reference: `.taqwin/memory/github-mcp-server.md`
+
 ## MCP Servers Present
 
 ### TAQWIN Core MCP Server (recommended)

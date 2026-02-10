@@ -28,6 +28,15 @@ function asText(evt: McpTrafficEvent): string {
   return "";
 }
 
+function maskHeaderValue(name: string, value: string): string {
+  const k = String(name ?? "").toLowerCase();
+  const v = String(value ?? "");
+  if (k === "authorization" || k.endsWith("-authorization")) return "Bearer …";
+  if (/\$\{input:[^}]+\}/.test(v)) return v;
+  if (v.length <= 64) return v;
+  return `${v.slice(0, 16)}…`;
+}
+
 export const McpInspectorPanel: React.FC = () => {
   const svc = useMcpInspector();
   const cfg = svc.getConfig();
@@ -37,7 +46,11 @@ export const McpInspectorPanel: React.FC = () => {
   const selected = selectedId ? statusById[selectedId] : null;
   const isTauri = isTauriRuntime();
   const knez = svc.getKnezHealth();
-  const knezNeeded = !!selected && (selected.id === "taqwin" || !!(selected.env as any)?.TAQWIN_GOVERNANCE_SNAPSHOT_URL || !!(selected.env as any)?.KNEZ_ENDPOINT);
+  const knezNeeded =
+    !!selected &&
+    (selected.id === "taqwin" ||
+      (selected.type === "stdio" &&
+        (!!(selected.env as any)?.TAQWIN_GOVERNANCE_SNAPSHOT_URL || !!(selected.env as any)?.KNEZ_ENDPOINT)));
 
   const [rawDraft, setRawDraft] = useState(cfg.raw);
   const [saving, setSaving] = useState(false);
@@ -55,6 +68,10 @@ export const McpInspectorPanel: React.FC = () => {
   const [logSearch, setLogSearch] = useState("");
   const [autoScroll, setAutoScroll] = useState(true);
   const logsRef = useRef<HTMLDivElement | null>(null);
+  const [showAddServer, setShowAddServer] = useState(false);
+  const [addServerText, setAddServerText] = useState("");
+  const [addServerError, setAddServerError] = useState<string>("");
+  const [inputDrafts, setInputDrafts] = useState<Record<string, string>>({});
 
   useEffect(() => {
     void svc.loadConfig();
@@ -106,6 +123,92 @@ export const McpInspectorPanel: React.FC = () => {
       el.scrollTop = el.scrollHeight;
     } catch {}
   }, [autoScroll, traffic.length, logTab]);
+
+  const mergeServerConfigIntoDraft = (draftRaw: string, insertRaw: string): string => {
+    const parsedDraft = JSON.parse(draftRaw);
+    const insert = JSON.parse(insertRaw);
+    const hasServers = insert && typeof insert === "object" && !Array.isArray(insert) && ((insert as any).servers || (insert as any).mcpServers);
+    if (hasServers) {
+      const next = insert as any;
+      if (!next.schema_version) next.schema_version = "1";
+      if (!Array.isArray(next.inputs)) next.inputs = [];
+      if (!next.servers && next.mcpServers) {
+        next.servers = next.mcpServers;
+        delete next.mcpServers;
+      }
+      return JSON.stringify(next, null, 2);
+    }
+
+    const draftObj: any = parsedDraft && typeof parsedDraft === "object" && !Array.isArray(parsedDraft) ? parsedDraft : { schema_version: "1", servers: {} };
+    if (!draftObj.schema_version) draftObj.schema_version = "1";
+    if (!draftObj.servers && draftObj.mcpServers) {
+      draftObj.servers = draftObj.mcpServers;
+      delete draftObj.mcpServers;
+    }
+    if (!draftObj.servers || typeof draftObj.servers !== "object" || Array.isArray(draftObj.servers)) {
+      draftObj.servers = {};
+    }
+    if (!Array.isArray(draftObj.inputs)) draftObj.inputs = [];
+
+    if (insert && typeof insert === "object" && !Array.isArray(insert) && typeof (insert as any).id === "string" && (insert as any).id.trim()) {
+      const id = String((insert as any).id).trim();
+      const entry = { ...(insert as any) };
+      delete entry.id;
+      draftObj.servers[id] = entry;
+      return JSON.stringify(draftObj, null, 2);
+    }
+
+    if (insert && typeof insert === "object" && !Array.isArray(insert)) {
+      const keys = Object.keys(insert);
+      const looksLikeServerEntry =
+        typeof (insert as any).command === "string" ||
+        typeof (insert as any).url === "string" ||
+        typeof (insert as any).type === "string";
+      if (!looksLikeServerEntry && keys.length > 0) {
+        for (const k of keys) {
+          if (!k) continue;
+          const v = (insert as any)[k];
+          if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+          draftObj.servers[k] = v;
+        }
+        return JSON.stringify(draftObj, null, 2);
+      }
+    }
+
+    throw new Error("add_server_invalid_json");
+  };
+
+  const githubRemoteTemplate = () =>
+    JSON.stringify(
+      {
+        id: "github_remote",
+        type: "http",
+        url: "https://api.githubcopilot.com/mcp/",
+        headers: {
+          Authorization: "Bearer ${input:github_mcp_pat}",
+          "X-MCP-Toolsets": "repos,issues,pull_requests",
+          "X-MCP-Readonly": "true"
+        },
+        enabled: true,
+        tags: ["github", "mcp", "remote"]
+      },
+      null,
+      2
+    );
+
+  const githubLocalTemplate = () =>
+    JSON.stringify(
+      {
+        id: "github_local",
+        command: "docker",
+        args: ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN", "-e", "GITHUB_READ_ONLY", "ghcr.io/github/github-mcp-server"],
+        env: { GITHUB_PERSONAL_ACCESS_TOKEN: "${input:github_mcp_pat}", GITHUB_READ_ONLY: "1" },
+        enabled: true,
+        tags: ["github", "mcp", "local", "docker"]
+      },
+      null,
+      2
+    );
 
   return (
     <div className="p-4">
@@ -226,7 +329,19 @@ export const McpInspectorPanel: React.FC = () => {
           )}
 
           <div className="mt-3">
-            <div className="text-xs text-zinc-300 font-semibold mb-2">Servers</div>
+            <div className="text-xs text-zinc-300 font-semibold mb-2 flex items-center justify-between gap-2">
+              <div>Servers</div>
+              <button
+                className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+                onClick={() => {
+                  setAddServerError("");
+                  setShowAddServer(true);
+                  if (!addServerText.trim()) setAddServerText(githubRemoteTemplate());
+                }}
+              >
+                +
+              </button>
+            </div>
             <div className="space-y-2 max-h-[260px] overflow-auto pr-1">
               {servers.map((s) => {
                 const st = statusById[s.id];
@@ -243,7 +358,7 @@ export const McpInspectorPanel: React.FC = () => {
                       <div className="font-mono text-[11px] text-zinc-200">{s.id}</div>
                       <div className="text-[10px] text-zinc-500">{st?.state ?? "IDLE"}</div>
                     </div>
-                    <div className="text-[10px] text-zinc-500 truncate">{s.command}</div>
+                    <div className="text-[10px] text-zinc-500 truncate">{s.type === "http" ? s.url : s.command}</div>
                   </button>
                 );
               })}
@@ -269,7 +384,7 @@ export const McpInspectorPanel: React.FC = () => {
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors disabled:opacity-50"
-                  disabled={!isTauri}
+                  disabled={selected.type === "stdio" ? !isTauri : false}
                   onClick={() => {
                     void svc.start(selectedId).catch(() => {});
                   }}
@@ -278,7 +393,7 @@ export const McpInspectorPanel: React.FC = () => {
                 </button>
                 <button
                   className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors disabled:opacity-50"
-                  disabled={!isTauri}
+                  disabled={selected.type === "stdio" ? !isTauri : false}
                   onClick={() => {
                     void svc.stop(selectedId).catch(() => {});
                   }}
@@ -287,7 +402,7 @@ export const McpInspectorPanel: React.FC = () => {
                 </button>
                 <button
                   className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors disabled:opacity-50"
-                  disabled={!isTauri}
+                  disabled={selected.type === "stdio" ? !isTauri : false}
                   onClick={() => {
                     void svc.restart(selectedId).catch(() => {});
                   }}
@@ -296,7 +411,7 @@ export const McpInspectorPanel: React.FC = () => {
                 </button>
                 <button
                   className="text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors disabled:opacity-50"
-                  disabled={!isTauri}
+                  disabled={selected.type === "stdio" ? !isTauri : false}
                   onClick={() => {
                     void svc.initialize(selectedId).catch(() => {});
                   }}
@@ -304,8 +419,22 @@ export const McpInspectorPanel: React.FC = () => {
                   Initialize
                 </button>
                 <button
+                  className="text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors disabled:opacity-50"
+                  disabled={selected.type === "stdio" ? !isTauri : false}
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        await svc.initialize(selectedId);
+                        await svc.listTools(selectedId, { waitForResult: true, timeoutMs: toolsListTimeoutMs });
+                      } catch {}
+                    })();
+                  }}
+                >
+                  Test Connect
+                </button>
+                <button
                   className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors disabled:opacity-50"
-                  disabled={!isTauri}
+                  disabled={selected.type === "stdio" ? !isTauri : false}
                   onClick={() => {
                     void svc.listTools(selectedId, { waitForResult: false, timeoutMs: toolsListTimeoutMs }).catch(() => {});
                   }}
@@ -319,6 +448,97 @@ export const McpInspectorPanel: React.FC = () => {
                   title="tools/list timeout (ms)"
                 />
               </div>
+
+              <div className="mt-3 text-[11px] text-zinc-400 font-mono space-y-1">
+                {selected.type === "http" ? (
+                  <>
+                    <div>type=http</div>
+                    <div className="break-all">url={selected.url ?? ""}</div>
+                    {selected.headers && Object.keys(selected.headers).length > 0 && (
+                      <div className="space-y-1">
+                        <div>headers:</div>
+                        {Object.entries(selected.headers)
+                          .sort((a, b) => a[0].localeCompare(b[0]))
+                          .slice(0, 24)
+                          .map(([k, v]) => (
+                            <div key={k} className="break-all">
+                              {k}={maskHeaderValue(k, v)}
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div>type=stdio</div>
+                    <div className="break-all">command={selected.command ?? ""}</div>
+                    <div className="break-all">cwd={selected.cwd ?? ""}</div>
+                  </>
+                )}
+              </div>
+
+              {selectedId && (() => {
+                const required = svc.getRequiredInputsForServer(selectedId);
+                if (!required.length) return null;
+                const resolved = new Set(svc.getResolvedInputIds());
+                const metaById = new Map((svc.getInputs() ?? []).map((m: any) => [String(m.id), m]));
+                return (
+                  <div className="mt-3 border border-zinc-800 rounded p-2 bg-zinc-950">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="text-xs text-zinc-300 font-semibold">Inputs Vault</div>
+                      <button
+                        className="text-[11px] px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+                        onClick={() => {
+                          svc.clearAllInputValues();
+                          setInputDrafts({});
+                        }}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {required.map((id) => {
+                        const meta: any = metaById.get(id) ?? null;
+                        const isSet = resolved.has(id);
+                        const draft = inputDrafts[id] ?? "";
+                        const label = meta?.description ? `${id} (${meta.description})` : id;
+                        return (
+                          <div key={id} className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
+                            <div className={`text-[11px] font-mono ${isSet ? "text-emerald-300" : "text-yellow-200"}`}>{label}</div>
+                            <input
+                              value={draft}
+                              onChange={(e) => setInputDrafts((prev) => ({ ...prev, [id]: e.target.value }))}
+                              placeholder={isSet ? "set" : "required"}
+                              type={meta?.password ? "password" : "text"}
+                              className="md:col-span-1 text-[11px] px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-zinc-200 w-full"
+                            />
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                className="text-[11px] px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+                                onClick={() => {
+                                  svc.setInputValue(id, draft);
+                                  setInputDrafts((prev) => ({ ...prev, [id]: "" }));
+                                }}
+                              >
+                                Set
+                              </button>
+                              <button
+                                className="text-[11px] px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+                                onClick={() => {
+                                  svc.clearInputValue(id);
+                                  setInputDrafts((prev) => ({ ...prev, [id]: "" }));
+                                }}
+                              >
+                                Unset
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div className="mt-3 text-[11px] text-zinc-500 font-mono space-y-1">
                 <div>state={selected.state} running={String(selected.running)} enabled={String(selected.enabled)} tools={selected.toolsCached} pending={String(selected.toolsPending)}</div>
@@ -398,7 +618,7 @@ export const McpInspectorPanel: React.FC = () => {
                     />
                     <div className="text-[11px] text-zinc-500">timeout ms</div>
                     <button
-                      disabled={!isTauri || !selectedId || !selectedTool}
+                      disabled={((selected?.type ?? "stdio") === "stdio" ? !isTauri : false) || !selectedId || !selectedTool}
                       className="ml-auto text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors disabled:opacity-50"
                       onClick={() => {
                         setToolResult("");
@@ -498,6 +718,76 @@ export const McpInspectorPanel: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {showAddServer && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-2xl rounded-lg border border-zinc-800 bg-zinc-950 shadow-xl">
+            <div className="flex items-center justify-between gap-3 p-3 border-b border-zinc-800">
+              <div className="text-sm font-semibold text-zinc-200">Add MCP Server (JSON)</div>
+              <button
+                className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+                onClick={() => {
+                  setShowAddServer(false);
+                }}
+              >
+                Close
+              </button>
+            </div>
+            <div className="p-3 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+                  onClick={() => {
+                    setAddServerError("");
+                    setAddServerText(githubRemoteTemplate());
+                  }}
+                >
+                  GitHub Remote
+                </button>
+                <button
+                  className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+                  onClick={() => {
+                    setAddServerError("");
+                    setAddServerText(githubLocalTemplate());
+                  }}
+                >
+                  GitHub Local
+                </button>
+              </div>
+              <textarea
+                value={addServerText}
+                onChange={(e) => setAddServerText(e.target.value)}
+                className="w-full h-[240px] bg-zinc-900 border border-zinc-800 rounded p-2 text-[11px] font-mono text-zinc-200"
+                spellCheck={false}
+              />
+              {addServerError && (
+                <div className="border border-red-900/40 bg-red-900/10 rounded p-2 text-red-300 text-xs whitespace-pre-wrap break-words">
+                  {addServerError}
+                </div>
+              )}
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+                  onClick={() => {
+                    setAddServerError("");
+                    try {
+                      const nextRaw = mergeServerConfigIntoDraft(rawDraft, addServerText);
+                      setRawDraft(nextRaw);
+                      svc.applyConfig(nextRaw);
+                      setShowAddServer(false);
+                    } catch (e: any) {
+                      const msg = String(e?.message ?? e);
+                      setAddServerError(msg === "add_server_invalid_json" ? "Invalid JSON. Paste a full config or a server object with id." : msg);
+                    }
+                  }}
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
