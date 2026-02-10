@@ -1,11 +1,34 @@
 import { McpToolDefinition } from "../../services/McpTypes";
 import { logger } from "../../services/LogService";
+import { knezClient } from "../../services/KnezClient";
+import { redactAny } from "../../utils/redact";
 import { mcpHostConfigService } from "../config/McpHostConfigService";
 import { normalizeTaqwinMcpServer } from "../config/McpHostConfig";
+import { mcpInspectorService } from "../inspector/McpInspectorService";
 
 function isTauriRuntime(): boolean {
   const w = window as any;
   return !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
+}
+
+function newHexId(): string {
+  try {
+    return crypto.randomUUID().replace(/-/g, "");
+  } catch {
+    return `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+  }
+}
+
+function safePreview(value: any, maxChars: number): string | undefined {
+  try {
+    const redacted = redactAny(value);
+    const raw = JSON.stringify(redacted);
+    if (!raw) return undefined;
+    if (raw.length <= maxChars) return raw;
+    return raw.slice(0, maxChars) + "…";
+  } catch {
+    return undefined;
+  }
 }
 
 export function resolveTaqwinActivationToolName(
@@ -16,6 +39,10 @@ export function resolveTaqwinActivationToolName(
   if (names.has("taqwin_activate")) return "taqwin_activate";
   return null;
 }
+
+type McpLifecycleState = "IDLE" | "STARTING" | "INITIALIZED" | "DISCOVERING" | "READY" | "ERROR";
+type McpTrust = "untrusted" | "trusted";
+type CapabilityTrust = "unknown" | "pending" | "trusted" | "failed";
 
 class TaqwinMcpService {
   private client: import("../client/McpStdioClient").McpStdioClient | null = null;
@@ -32,9 +59,12 @@ class TaqwinMcpService {
   private lastDebugState: any | null = null;
   private generation = 0;
   private framingPreference: "line" | "content-length" = "line";
-  private lifecycle: "IDLE" | "STARTING" | "INITIALIZED" | "LISTING_TOOLS" | "READY" | "ERROR" = "IDLE";
+  private lifecycle: McpLifecycleState = "IDLE";
   private lastStartAt: number | null = null;
   private lastOkAt: number | null = null;
+  private mcpTrust: McpTrust = "untrusted";
+  private capabilityTrust: CapabilityTrust = "unknown";
+  private toolsPending = false;
   private listeners = new Set<(status: ReturnType<TaqwinMcpService["getStatus"]>) => void>();
 
   subscribe(listener: (status: ReturnType<TaqwinMcpService["getStatus"]>) => void): () => void {
@@ -65,6 +95,14 @@ class TaqwinMcpService {
     return p;
   }
 
+  private setLifecycle(next: McpLifecycleState) {
+    if (this.lifecycle === next) {
+      return;
+    }
+    this.lifecycle = next;
+    this.emitStatus();
+  }
+
   private async awaitInitSettled(): Promise<void> {
     const p = this.initPromise;
     if (!p) return;
@@ -78,9 +116,8 @@ class TaqwinMcpService {
     if (!isTauriRuntime()) throw new Error("mcp_unavailable_non_tauri");
     if (this.initPromise) return this.initPromise;
     const gen = this.generation;
-    this.lifecycle = "STARTING";
+    this.setLifecycle("STARTING");
     this.lastStartAt = Date.now();
-    this.emitStatus();
     this.initPromise = (async () => {
       let client = this.client;
       try {
@@ -88,9 +125,9 @@ class TaqwinMcpService {
         for (let attempt = 0; attempt < 2; attempt++) {
           try {
             if (!client) {
-              const { McpStdioClient } = await import("../client/McpStdioClient");
-              client = new McpStdioClient();
-              this.client = client;
+              if (!mcpInspectorService.hasLoadedConfig()) {
+                await mcpInspectorService.loadConfig();
+              }
               const loaded = await mcpHostConfigService.load();
               const effective = loaded ?? mcpHostConfigService.getDefault();
               const enabledServers = Object.values(effective.config.servers).filter((s) => s && (s.enabled ?? true));
@@ -106,53 +143,93 @@ class TaqwinMcpService {
               server.env = {
                 ...(server.env ?? {}),
                 KNEZ_MCP_CLIENT_FRAMING: this.framingPreference,
-                TAQWIN_MCP_OUTPUT_MODE: this.framingPreference
+                TAQWIN_MCP_OUTPUT_MODE: this.framingPreference,
+                TAQWIN_GOVERNANCE_ENFORCE: "1",
+                TAQWIN_GOVERNANCE_SNAPSHOT_URL: `${knezClient.getProfile().endpoint.replace(/\/$/, "")}/governance/snapshot`
               };
-              await client.startWithConfig(server);
+              mcpInspectorService.patchServer(server.id, {
+                command: server.command,
+                args: server.args,
+                cwd: server.cwd,
+                env: server.env
+              });
+              await mcpInspectorService.start(server.id);
+              client = mcpInspectorService.getClientInstance(server.id);
+              if (!client) throw new Error("mcp_client_missing");
+              this.client = client;
               this.initialized = false;
+              this.mcpTrust = "untrusted";
               this.toolsCache = null;
               this.toolsCacheAt = null;
+              this.toolsPending = false;
+              this.capabilityTrust = "unknown";
             }
             if (!this.initialized) {
               if (gen !== this.generation) throw new Error("mcp_restart_in_progress");
-              await client.initialize();
-              try {
-                await client.notifyInitialized?.();
-              } catch {}
+              const initializeStartedAt = performance.now();
+              const initializePromise = mcpInspectorService.initialize(this.serverId!);
+              const initializeBudgetMs = 100;
+              const initializeResult = await Promise.race([
+                initializePromise.then(
+                  (value) => ({ kind: "ok", value } as const),
+                  (error) => ({ kind: "error", error } as const)
+                ),
+                new Promise<{ kind: "timeout" }>((resolve) => {
+                  setTimeout(() => resolve({ kind: "timeout" }), initializeBudgetMs);
+                })
+              ]);
+              if (initializeResult.kind === "error") {
+                throw initializeResult.error;
+              }
+              if (initializeResult.kind === "timeout") {
+                await initializePromise;
+                this.lastOkAt = Date.now();
+                this.initialized = true;
+                this.mcpTrust = "trusted";
+                this.capabilityTrust = "trusted";
+                this.toolsPending = false;
+                this.setLifecycle("READY");
+                this.consecutiveFailures = 0;
+                this.lastRawError = null;
+                this.lastNormalizedError = null;
+                this.lastDebugState = client.getDebugState?.() ?? null;
+                if (this.serverId) {
+                  try {
+                    await knezClient.reportMcpRuntime({ id: this.serverId, running: true, last_ok: Date.now() / 1000, last_error: null });
+                  } catch {}
+                }
+                return client;
+              }
+              const initializeDurationMs = Math.round(performance.now() - initializeStartedAt);
               this.initialized = true;
-              this.lifecycle = "INITIALIZED";
+              this.mcpTrust = "trusted";
+              this.capabilityTrust = "trusted";
+              this.toolsPending = false;
+              this.setLifecycle("READY");
+              this.lastOkAt = Date.now();
+              this.consecutiveFailures = 0;
+              this.lastRawError = null;
+              this.lastNormalizedError = null;
+              this.lastDebugState = client.getDebugState?.() ?? null;
+              logger.info("mcp", "TAQWIN MCP initialize ok", { durationMs: initializeDurationMs });
+              if (this.serverId) {
+                try {
+                  await knezClient.reportMcpRuntime({ id: this.serverId, running: true, last_ok: Date.now() / 1000, last_error: null });
+                } catch {}
+              }
             }
-            this.lifecycle = this.toolsCache ? "READY" : "INITIALIZED";
-            this.lastOkAt = Date.now();
-            this.emitStatus();
-            this.consecutiveFailures = 0;
-            this.lastRawError = null;
-            this.lastNormalizedError = null;
-            this.lastDebugState = client.getDebugState?.() ?? null;
+            if (this.toolsCache && this.toolsCache.length > 0) {
+              this.capabilityTrust = "trusted";
+              this.toolsPending = false;
+              this.setLifecycle("READY");
+            } else {
+              this.capabilityTrust = this.toolsPending ? "pending" : this.initialized ? "trusted" : "unknown";
+              this.setLifecycle("READY");
+            }
             return client;
           } catch (err) {
             lastErr = err;
-            const raw = String((err as any)?.message ?? err);
-            const dbg = client?.getDebugState?.() ?? this.lastDebugState;
-            const lastTimeout = dbg?.lastTimeout;
-            const canFlip =
-              attempt === 0 &&
-              raw.includes("mcp_request_timeout") &&
-              lastTimeout?.method === "initialize" &&
-              lastTimeout?.stdoutBytes === 0;
-            if (!canFlip) throw err;
-            this.framingPreference = this.framingPreference === "line" ? "content-length" : "line";
-            logger.warn("mcp", "TAQWIN MCP switching client framing after initialize stall", {
-              nextFraming: this.framingPreference
-            });
-            try {
-              await client?.stop?.();
-            } catch {}
-            if (this.client === client) this.client = null;
-            client = null;
-            this.initialized = false;
-            this.toolsCache = null;
-            this.toolsCacheAt = null;
+            throw err;
           }
         }
         throw lastErr;
@@ -161,16 +238,19 @@ class TaqwinMcpService {
         this.lastRawError = raw;
         this.lastDebugState = client?.getDebugState?.() ?? null;
         this.lastNormalizedError = this.normalizeError(err).message;
-        this.lifecycle = "ERROR";
-        this.emitStatus();
+        this.mcpTrust = "untrusted";
+        this.capabilityTrust = "failed";
+        this.setLifecycle("ERROR");
         try {
-          await client?.stop?.();
+          if (this.serverId) await mcpInspectorService.stop(this.serverId);
+          else await client?.stop?.();
         } catch {}
         if (this.client === client) this.client = null;
         this.initialized = false;
         this.serverId = null;
         this.toolsCache = null;
         this.toolsCacheAt = null;
+        this.toolsPending = false;
         this.consecutiveFailures = Math.min(20, this.consecutiveFailures + 1);
         throw err;
       } finally {
@@ -209,13 +289,14 @@ class TaqwinMcpService {
 
     if (/mcp_request_timeout/i.test(raw)) {
       const dbg = this.lastDebugState ?? this.client?.getDebugState?.() ?? null;
-      const m = String(dbg?.lastTimeout?.method ?? "").trim();
+      const m = String(dbg?.lastTimeout?.method ?? dbg?.lastWrite?.method ?? "").trim();
       const pid = dbg?.childPid ?? dbg?.pid ?? null;
       const framing = String(dbg?.requestFraming ?? this.framingPreference);
+      const timeoutMs = dbg?.lastTimeout?.timeoutMs ?? null;
       const tail = String(dbg?.stderrTail ?? dbg?.stdoutTail ?? "").trim();
       const shortTail = tail ? tail.split(/\r?\n/).slice(-4).join(" | ").slice(-220) : "";
       const suffix = shortTail ? ` Last MCP output: ${shortTail}` : "";
-      const meta = ` method=${m || "unknown"} framing=${framing}${pid ? ` pid=${pid}` : ""}`;
+      const meta = ` method=${m || "unknown"} framing=${framing}${pid ? ` pid=${pid}` : ""}${timeoutMs ? ` timeoutMs=${timeoutMs}` : ""}`;
       return new Error(`TAQWIN MCP request timed out (${meta}). Open MCP Logs.${suffix}`);
     }
 
@@ -238,7 +319,9 @@ class TaqwinMcpService {
       lastStartAt: this.lastStartAt,
       lastOkAt: this.lastOkAt,
       serverId: this.serverId,
-      trust: this.initialized ? "trusted" : "untrusted",
+      trust: this.mcpTrust,
+      mcpTrust: this.mcpTrust,
+      capabilityTrust: this.capabilityTrust,
       framing: (debug as any)?.requestFraming ?? this.framingPreference,
       toolsCached: this.toolsCache?.length ?? 0,
       toolsCacheAt: this.toolsCacheAt,
@@ -248,6 +331,7 @@ class TaqwinMcpService {
       consecutiveFailures: this.consecutiveFailures,
       lastRawError: this.lastRawError,
       lastNormalizedError: this.lastNormalizedError,
+      toolsPending: this.toolsPending,
       debug,
     };
   }
@@ -266,16 +350,25 @@ class TaqwinMcpService {
   private async stopInternal() {
     this.generation++;
     await this.awaitInitSettled();
+    const priorServerId = this.serverId;
     try {
-      await this.client?.stop();
+      if (priorServerId) await mcpInspectorService.stop(priorServerId);
+      else await this.client?.stop();
     } catch {}
     this.client = null;
     this.initialized = false;
     this.serverId = null;
     this.toolsCache = null;
     this.toolsCacheAt = null;
-    this.lifecycle = "IDLE";
-    this.emitStatus();
+    this.toolsPending = false;
+    this.mcpTrust = "untrusted";
+    this.capabilityTrust = "unknown";
+    this.setLifecycle("IDLE");
+    if (priorServerId) {
+      try {
+        await knezClient.reportMcpRuntime({ id: priorServerId, running: false, last_ok: null, last_error: null });
+      } catch {}
+    }
   }
 
   async stop() {
@@ -284,24 +377,107 @@ class TaqwinMcpService {
     });
   }
 
-  async listTools(forceRefresh = false): Promise<McpToolDefinition[]> {
+  async listTools(forceRefresh = false, opts?: { waitForResult?: boolean; timeoutMs?: number }): Promise<McpToolDefinition[]> {
     return this.enqueue(async () => {
       if (!isTauriRuntime()) throw new Error("mcp_unavailable_non_tauri");
       if (this.toolsCache && !forceRefresh && this.toolsCacheAt && Date.now() - this.toolsCacheAt < this.toolsCacheTtlMs) {
         return this.toolsCache;
       }
       const startedAt = performance.now();
+      const waitForResult = opts?.waitForResult === true;
       try {
-        const client = await this.getClient();
-        this.lifecycle = "LISTING_TOOLS";
-        this.emitStatus();
-        const tools = await client.listTools();
+        await this.getClient();
+        const sid = this.serverId;
+        if (!sid) throw new Error("mcp_no_server_id");
+        this.toolsPending = true;
+        this.capabilityTrust = "pending";
+        this.setLifecycle("DISCOVERING");
+        const timeoutMs = typeof opts?.timeoutMs === "number" ? opts.timeoutMs : (waitForResult ? 15000 : 300000);
+        const listPromise = mcpInspectorService.listTools(sid, { timeoutMs, waitForResult });
+        if (waitForResult) {
+          const tools = await listPromise;
+          this.toolsCache = tools;
+          this.toolsCacheAt = Date.now();
+          const durationMs = Math.round(performance.now() - startedAt);
+          this.lastOkAt = Date.now();
+          this.toolsPending = false;
+          this.capabilityTrust = "trusted";
+          this.setLifecycle("READY");
+          logger.info("mcp", "TAQWIN MCP tools/list ok", { durationMs, tools: tools.length });
+          logger.info("mcp_audit", "tools/list", { ok: true, durationMs, tools: tools.length });
+          return tools;
+        }
+
+        void listPromise.then(
+          (tools) => {
+            this.toolsCache = tools;
+            this.toolsCacheAt = Date.now();
+            this.lastOkAt = Date.now();
+            this.toolsPending = false;
+            this.capabilityTrust = "trusted";
+            this.setLifecycle("READY");
+            this.emitStatus();
+          },
+          (err) => {
+            const normalized = this.normalizeError(err);
+            this.lastRawError = String((err as any)?.message ?? err);
+            this.lastNormalizedError = normalized.message;
+            this.lastDebugState = (this.client as any)?.getDebugState?.() ?? this.lastDebugState;
+            if (this.initialized) {
+              this.toolsPending = false;
+              this.capabilityTrust = "failed";
+              this.setLifecycle("INITIALIZED");
+            } else {
+              this.mcpTrust = "untrusted";
+              this.toolsPending = false;
+              this.capabilityTrust = "failed";
+              this.setLifecycle("ERROR");
+            }
+            this.emitStatus();
+          }
+        );
+
+        const budgetMs = 50;
+        const result = await Promise.race([
+          listPromise.then(
+            (value) => ({ kind: "ok", value } as const),
+            (error) => ({ kind: "error", error } as const)
+          ),
+          new Promise<{ kind: "timeout" }>((resolve) => {
+            setTimeout(() => resolve({ kind: "timeout" }), budgetMs);
+          })
+        ]);
+        if (result.kind === "error") {
+          const durationMs = Math.round(performance.now() - startedAt);
+          logger.error("mcp", "TAQWIN MCP tools/list failed", { error: String((result.error as any)?.message ?? result.error), durationMs });
+          logger.error("mcp_audit", "tools/list", { ok: false, durationMs, error: String((result.error as any)?.message ?? result.error) });
+          const normalized = this.normalizeError(result.error);
+          this.lastRawError = String((result.error as any)?.message ?? result.error);
+          this.lastNormalizedError = normalized.message;
+          this.lastDebugState = (this.client as any)?.getDebugState?.() ?? this.lastDebugState;
+          this.toolsPending = false;
+          if (this.initialized) {
+            this.capabilityTrust = "failed";
+            this.setLifecycle("INITIALIZED");
+          } else {
+            this.mcpTrust = "untrusted";
+            this.capabilityTrust = "failed";
+            this.setLifecycle("ERROR");
+          }
+          throw normalized;
+        }
+        if (result.kind === "timeout") {
+          this.setLifecycle("READY");
+          return this.toolsCache ?? [];
+        }
+        const tools = result.value;
         this.toolsCache = tools;
         this.toolsCacheAt = Date.now();
         const durationMs = Math.round(performance.now() - startedAt);
         this.lastOkAt = Date.now();
-        this.lifecycle = "READY";
-        this.emitStatus();
+        this.toolsPending = false;
+        this.capabilityTrust = "trusted";
+        this.setLifecycle("READY");
         logger.info("mcp", "TAQWIN MCP tools/list ok", { durationMs, tools: tools.length });
         logger.info("mcp_audit", "tools/list", { ok: true, durationMs, tools: tools.length });
         return tools;
@@ -313,8 +489,14 @@ class TaqwinMcpService {
         this.lastRawError = String((err as any)?.message ?? err);
         this.lastNormalizedError = normalized.message;
         this.lastDebugState = (this.client as any)?.getDebugState?.() ?? this.lastDebugState;
-        this.lifecycle = this.initialized ? "INITIALIZED" : "ERROR";
-        this.emitStatus();
+        if (this.initialized) {
+          this.capabilityTrust = "failed";
+          this.setLifecycle("INITIALIZED");
+        } else {
+          this.mcpTrust = "untrusted";
+          this.capabilityTrust = "failed";
+          this.setLifecycle("ERROR");
+        }
         throw normalized;
       }
     });
@@ -323,12 +505,37 @@ class TaqwinMcpService {
   async callTool(name: string, args: any): Promise<any> {
     return this.enqueue(async () => {
       if (!isTauriRuntime()) throw new Error("mcp_unavailable_non_tauri");
+      const risky = new Set([
+        "delete_file",
+        "scan_database",
+        "web_intelligence",
+        "mcp_taqwin_scan_database",
+        "mcp_taqwin_web_intelligence",
+      ]);
+      if (risky.has(name)) {
+        const trust = knezClient.getProfile().trustLevel;
+        if (trust !== "verified") {
+          throw new Error("mcp_tool_blocked_untrusted_knez");
+        }
+      }
+      const traceId = newHexId();
+      const toolCallId = newHexId();
+      let sessionId: string | null = null;
+      try {
+        sessionId = await knezClient.ensureSession();
+      } catch {}
       const startedAt = performance.now();
       try {
         const client = await this.getClient();
-        const res = await client.callTool(name, args);
+        const sid = this.serverId;
+        const res = sid ? (await mcpInspectorService.callTool(sid, name, args, 180000)).result : await client.callTool(name, args);
         const durationMs = Math.round(performance.now() - startedAt);
         this.lastOkAt = Date.now();
+        if (this.initialized) {
+          this.capabilityTrust = "trusted";
+          this.toolsPending = false;
+          this.setLifecycle("READY");
+        }
         this.emitStatus();
         const bytes = (() => {
           try { return JSON.stringify(res).length; } catch { return null; }
@@ -338,11 +545,67 @@ class TaqwinMcpService {
         })();
         logger.info("mcp", "TAQWIN MCP tools/call ok", { tool: name, durationMs, bytes });
         logger.info("mcp_audit", "tools/call", { ok: true, tool: name, durationMs, argsBytes, resultBytes: bytes });
+        if (sessionId) {
+          try {
+            await knezClient.emitTaqwinResponse({
+              session_id: sessionId,
+              intent: "mcp_tool_call",
+              correlation_id: toolCallId,
+              trace_id: traceId,
+              observations: [
+                {
+                  type: "mcp_tool_call",
+                  summary: `tools/call ${name}`,
+                  details: {
+                    tool: name,
+                    ok: true,
+                    duration_ms: durationMs,
+                    tool_call_id: toolCallId,
+                    trace_id: traceId,
+                    args_bytes: argsBytes ?? undefined,
+                    result_bytes: bytes ?? undefined,
+                    args_preview: safePreview(args, 2000),
+                    result_preview: safePreview(res, 2000),
+                  },
+                },
+              ],
+            });
+          } catch (e: any) {
+            logger.warn("mcp_audit", "Failed to mirror tool call to KNEZ", { tool: name, error: String(e?.message ?? e) });
+          }
+        }
         return res;
       } catch (err) {
         const durationMs = Math.round(performance.now() - startedAt);
         logger.error("mcp", "TAQWIN MCP tools/call failed", { tool: name, durationMs, error: String((err as any)?.message ?? err) });
         logger.error("mcp_audit", "tools/call", { ok: false, tool: name, durationMs, error: String((err as any)?.message ?? err) });
+        if (sessionId) {
+          try {
+            await knezClient.emitTaqwinResponse({
+              session_id: sessionId,
+              intent: "mcp_tool_call",
+              correlation_id: toolCallId,
+              trace_id: traceId,
+              observations: [
+                {
+                  type: "mcp_tool_call",
+                  summary: `tools/call ${name}`,
+                  details: {
+                    tool: name,
+                    ok: false,
+                    duration_ms: durationMs,
+                    tool_call_id: toolCallId,
+                    trace_id: traceId,
+                    args_preview: safePreview(args, 2000),
+                    error: String((err as any)?.message ?? err),
+                  },
+                },
+              ],
+            });
+          } catch (e: any) {
+            logger.warn("mcp_audit", "Failed to mirror tool failure to KNEZ", { tool: name, error: String(e?.message ?? e) });
+          }
+        }
         const normalized = this.normalizeError(err);
         this.lastRawError = String((err as any)?.message ?? err);
         this.lastNormalizedError = normalized.message;
@@ -355,17 +618,19 @@ class TaqwinMcpService {
   }
 
   async activateTaqwin(opts: { sessionId?: string; knezEndpoint?: string; checkpoint?: string } = {}) {
-    return this.enqueue(async () => {
-      if (!isTauriRuntime()) throw new Error("mcp_unavailable_non_tauri");
-      const tools = await this.listTools(true);
-      const tool = resolveTaqwinActivationToolName(tools);
-      if (tool === "taqwin_activate") {
-        const sid = opts.sessionId ?? "";
-        const endpoint = opts.knezEndpoint ?? "";
-        const cp = opts.checkpoint ?? "CP01_MCP_REGISTRY";
-        return await this.callTool(tool, { session_id: sid, knez_endpoint: endpoint, checkpoint: cp });
-      }
-      if (tool === "activate_taqwin_unified_consciousness") {
+    if (!isTauriRuntime()) throw new Error("mcp_unavailable_non_tauri");
+    const candidates: Array<"activate_taqwin_unified_consciousness" | "taqwin_activate"> = [
+      "activate_taqwin_unified_consciousness",
+      "taqwin_activate"
+    ];
+    const sid = opts.sessionId ?? "";
+    const endpoint = opts.knezEndpoint ?? "";
+    const cp = opts.checkpoint ?? "CP01_MCP_REGISTRY";
+    for (const tool of candidates) {
+      try {
+        if (tool === "taqwin_activate") {
+          return await this.callTool(tool, { session_id: sid, knez_endpoint: endpoint, checkpoint: cp });
+        }
         return await this.callTool(tool, {
           level: "superintelligence",
           enable_learning: true,
@@ -380,9 +645,9 @@ class TaqwinMcpService {
           persistent_mode: true,
           memory_depth: 50,
         });
-      }
-      throw new Error("taqwin_activate_tool_missing");
-    });
+      } catch {}
+    }
+    throw new Error("taqwin_activate_tool_missing");
   }
 
   async selfTest() {
@@ -393,16 +658,6 @@ class TaqwinMcpService {
       const t0 = performance.now();
         await this.start(false);
       steps.push({ step: "start", ok: true, durationMs: Math.round(performance.now() - t0) });
-
-      const t1 = performance.now();
-      const tools = await this.listTools(true);
-      const names = tools.map((t) => t.name);
-      steps.push({
-        step: "tools/list",
-        ok: tools.length > 0,
-        durationMs: Math.round(performance.now() - t1),
-        detail: { tools: tools.length, names: names.slice(0, 12) }
-      });
 
       const t2 = performance.now();
       const status = await this.callTool("get_server_status", { force_refresh: true, include_db_analysis: false });

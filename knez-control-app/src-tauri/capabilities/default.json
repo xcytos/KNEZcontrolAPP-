@@ -9,6 +9,7 @@
     "http:default",
     "shell:allow-open",
     "shell:allow-stdin-write",
+    "shell:allow-kill",
     {
       "identifier": "shell:allow-execute",
       "allow": [

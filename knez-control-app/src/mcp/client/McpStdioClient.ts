@@ -2,6 +2,7 @@ import { Command, Child } from "@tauri-apps/plugin-shell";
 import { McpToolDefinition } from "../../services/McpTypes";
 import { logger } from "../../services/LogService";
 import type { McpServerConfig } from "../config/McpHostConfig";
+import type { McpTrafficEvent } from "../inspector/McpTraffic";
 
 type McpRequest = {
   jsonrpc: "2.0";
@@ -17,6 +18,8 @@ type McpResponse =
 type McpRequestOptions = {
   timeoutMs?: number;
   stopOnTimeout?: boolean;
+  logTimeoutLevel?: "error" | "warn" | "debug" | "none";
+  logTimeoutMessage?: string;
 };
 
 export class McpStdioClient {
@@ -32,6 +35,8 @@ export class McpStdioClient {
   private decoder = new TextDecoder("utf-8");
   private encoder = new TextEncoder();
   private stdoutTail = "";
+  private traffic: McpTrafficEvent[] = [];
+  private trafficLimit = 800;
   private startedWith: { mode: "program"; programName: string } | { mode: "config"; serverId: string; command: string } | null = null;
   private requestFraming: "content-length" | "line" = "content-length";
   private lastTimeout:
@@ -67,6 +72,7 @@ export class McpStdioClient {
     this.lastCloseTail = null;
     this.lastError = null;
     this.stdoutTail = "";
+    this.traffic = [];
     this.requestFraming = "content-length";
     this.lastTimeout = null;
     this.lastWrite = null;
@@ -79,6 +85,7 @@ export class McpStdioClient {
       this.lastExitCode = typeof evt.code === "number" ? evt.code : null;
       this.lastCloseTail = stderrTail ? stderrTail.trim() : null;
       this.lastError = `mcp_process_closed_${evt.code ?? "null"}${stderrTail ? `: ${stderrTail.trim()}` : ""}`;
+      this.pushTraffic({ kind: "process_closed", at: Date.now(), code: this.lastExitCode });
       const err = new Error(
         `mcp_process_closed_${evt.code ?? "null"}${stderrTail ? `: ${stderrTail.trim()}` : ""}`
       );
@@ -90,6 +97,7 @@ export class McpStdioClient {
     cmd.on("error", (err) => {
       const e = this.asMcpError(err);
       this.lastError = String(e?.message ?? e);
+      this.pushTraffic({ kind: "spawn_error", at: Date.now(), message: this.lastError });
       logger.error("mcp", "MCP spawn error", { error: this.lastError });
       for (const p of this.pending.values()) p.reject(e);
       this.pending.clear();
@@ -106,11 +114,6 @@ export class McpStdioClient {
     }
   }
 
-  private cmdQuote(s: string): string {
-    const v = String(s);
-    return `"${v.replace(/"/g, '""')}"`;
-  }
-
   async startWithConfig(server: McpServerConfig): Promise<void> {
     if (this.child) return;
     const isWin = navigator.userAgent.toLowerCase().includes("windows");
@@ -118,8 +121,6 @@ export class McpStdioClient {
     if (!server?.command) throw new Error("mcp_config_missing_command");
     const args = Array.isArray(server.args) ? server.args : [];
     const command = server.command;
-    const base = command.split(/[\\/]/).pop()?.toLowerCase() ?? "";
-    const looksLikePython = base === "python.exe" || base === "python";
 
     this.stdoutBuffer = new Uint8Array(0);
     this.stderrLines = [];
@@ -128,6 +129,7 @@ export class McpStdioClient {
     this.lastCloseTail = null;
     this.lastError = null;
     this.stdoutTail = "";
+    this.traffic = [];
     const framingHint = String((server.env as any)?.KNEZ_MCP_CLIENT_FRAMING ?? "").trim().toLowerCase();
     if (framingHint === "line") this.requestFraming = "line";
     else if (framingHint === "content-length" || framingHint === "content_length") this.requestFraming = "content-length";
@@ -136,14 +138,11 @@ export class McpStdioClient {
     this.lastWrite = null;
     this.startedWith = { mode: "config", serverId: server.id, command: server.command };
 
-    const cmd = (() => {
-      if (looksLikePython) {
-        return Command.create("python", args, { encoding: "raw", cwd: server.cwd, env: server.env });
-      }
-      const cmdArgs = args.map((a) => this.cmdQuote(a)).join(" ");
-      const baseCmd = `${this.cmdQuote(command)}${cmdArgs ? ` ${cmdArgs}` : ""}`.trim();
-      return Command.create("cmd", ["/d", "/s", "/c", baseCmd], { encoding: "raw", cwd: server.cwd, env: server.env });
-    })();
+    const cmd = Command.create("cmd", ["/d", "/s", "/c", command, ...args], {
+      encoding: "raw",
+      cwd: server.cwd,
+      env: server.env
+    });
     cmd.stdout.on("data", (chunk) => this.onStdout(chunk));
     cmd.stderr.on("data", (chunk) => this.onStderr(chunk));
     cmd.on("close", (evt) => {
@@ -151,6 +150,7 @@ export class McpStdioClient {
       this.lastExitCode = typeof evt.code === "number" ? evt.code : null;
       this.lastCloseTail = stderrTail ? stderrTail.trim() : null;
       this.lastError = `mcp_process_closed_${evt.code ?? "null"}${stderrTail ? `: ${stderrTail.trim()}` : ""}`;
+      this.pushTraffic({ kind: "process_closed", at: Date.now(), code: this.lastExitCode });
       const err = new Error(
         `mcp_process_closed_${evt.code ?? "null"}${stderrTail ? `: ${stderrTail.trim()}` : ""}`
       );
@@ -162,6 +162,7 @@ export class McpStdioClient {
     cmd.on("error", (err) => {
       const e = this.asMcpError(err);
       this.lastError = String(e?.message ?? e);
+      this.pushTraffic({ kind: "spawn_error", at: Date.now(), message: this.lastError });
       logger.error("mcp", "MCP spawn error", { error: this.lastError });
       for (const p of this.pending.values()) p.reject(e);
       this.pending.clear();
@@ -170,7 +171,7 @@ export class McpStdioClient {
     try {
       this.child = await cmd.spawn();
       logger.info("mcp", "MCP process started", {
-        programName: looksLikePython ? "python" : "cmd",
+        programName: "cmd",
         serverId: server.id,
         cwd: server.cwd,
         command: server.command,
@@ -180,7 +181,7 @@ export class McpStdioClient {
       const e = this.asMcpError(err);
       this.lastError = String(e?.message ?? e);
       logger.error("mcp", "MCP spawn failed", {
-        programName: looksLikePython ? "python" : "cmd",
+        programName: "cmd",
         serverId: server.id,
         cwd: server.cwd,
         error: this.lastError
@@ -191,11 +192,33 @@ export class McpStdioClient {
 
   async stop(): Promise<void> {
     if (!this.child) return;
+    const pid = this.child.pid ?? null;
     try {
-      logger.info("mcp", "MCP process stopping", { pid: this.child.pid, startedWith: this.startedWith });
+      logger.info("mcp", "MCP process stopping", { pid, startedWith: this.startedWith });
     } catch {}
-    await this.child.kill();
-    this.child = null;
+    try {
+      await this.child.kill();
+      this.child = null;
+      return;
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      this.lastError = msg;
+      const isWin = typeof navigator !== "undefined" && /windows/i.test(navigator.userAgent ?? "");
+      if (pid && isWin) {
+        try {
+          const res = await Command.create("exec", ["/PID", String(pid), "/T", "/F"], { encoding: "utf-8" }).execute();
+          const code = Number((res as any)?.code ?? 1);
+          if (code === 0) {
+            this.child = null;
+            return;
+          }
+        } catch {}
+      }
+      try {
+        logger.warn("mcp", "MCP stop failed", { pid, error: msg });
+      } catch {}
+      return;
+    }
   }
 
   private appendStdout(bytes: Uint8Array) {
@@ -234,6 +257,14 @@ export class McpStdioClient {
   private onStdout(chunk: any) {
     const bytes =
       typeof chunk === "string" ? this.encoder.encode(chunk) : chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+    const decoded = (() => {
+      try {
+        return this.decoder.decode(bytes);
+      } catch {
+        return "";
+      }
+    })();
+    if (decoded) this.pushTraffic({ kind: "raw_stdout", at: Date.now(), text: decoded });
     try {
       const preview = (() => {
         try {
@@ -293,6 +324,13 @@ export class McpStdioClient {
               }
             })();
             logger.warn("mcp", "MCP response parse failed", { framing: "content-length", bytes: bodyBytes.length, preview });
+            this.pushTraffic({
+              kind: "parse_error",
+              at: Date.now(),
+              framing: "content-length",
+              detail: "JSON.parse failed",
+              preview
+            });
           } catch {}
           continue;
         }
@@ -324,6 +362,13 @@ export class McpStdioClient {
       } catch {
         try {
           logger.warn("mcp", "MCP response parse failed", { framing: "line", bytes: lineBytes.length, preview: line.slice(0, 240) });
+          this.pushTraffic({
+            kind: "parse_error",
+            at: Date.now(),
+            framing: "line",
+            detail: "JSON.parse failed",
+            preview: line.slice(0, 240)
+          });
         } catch {}
         continue;
       }
@@ -332,6 +377,7 @@ export class McpStdioClient {
 
   private onStderr(chunk: any) {
     const text = typeof chunk === "string" ? chunk : this.decoder.decode(chunk);
+    if (text) this.pushTraffic({ kind: "raw_stderr", at: Date.now(), text });
     this.stderrLines.push(text);
     if (this.stderrLines.length > 200) this.stderrLines.splice(0, this.stderrLines.length - 200);
     const tail = this.stderrLines.slice(-30).join("").trim();
@@ -364,6 +410,7 @@ export class McpStdioClient {
       hasResult: "result" in msg,
       hasError: "error" in msg
     });
+    if (key) this.pushTraffic({ kind: "response", at: Date.now(), id: key, ok: !("error" in msg), json: msg });
     if ("error" in msg) {
       const code = (msg as any)?.error?.code;
       const message = String((msg as any)?.error?.message ?? "mcp_error");
@@ -395,51 +442,55 @@ export class McpStdioClient {
   }
 
   private async request<T = any>(method: string, params?: any, options: number | McpRequestOptions = 30000): Promise<T> {
-    const run = async (): Promise<T> => {
-      if (!this.child) throw new Error("mcp_not_started");
-      const timeoutMs = typeof options === "number" ? options : (options.timeoutMs ?? 30000);
-      const stopOnTimeout = typeof options === "number" ? true : (options.stopOnTimeout ?? true);
-      const id = String(this.nextId++);
-      const req: McpRequest = { jsonrpc: "2.0", id, method, params };
-      const payload = this.buildPayload(req);
-      const previewBytes = payload.slice(0, Math.min(160, payload.length));
-      const preview = (() => {
-        try {
-          return this.decoder.decode(previewBytes).replace(/\r/g, "\\r").replace(/\n/g, "\\n");
-        } catch {
-          return "";
-        }
-      })();
-      this.lastWrite = {
-        at: Date.now(),
-        id,
-        method,
-        framing: this.requestFraming,
-        bytes: payload.length,
-        preview,
-        ok: false,
-        error: null
-      };
-      let timeoutId: number | undefined;
-      const p = new Promise<T>((resolve, reject) => {
-        this.pending.set(id, { resolve, reject });
-        timeoutId = window.setTimeout(() => {
-          if (!this.pending.has(id)) return;
-          this.pending.delete(id);
-          if (stopOnTimeout) this.stop().catch(() => {});
-          this.lastError = "mcp_request_timeout";
-          const stderrTail = this.stderrLines.slice(-30).join("").trim();
-          const stdoutTail = this.stdoutTail.trim();
-          this.lastTimeout = {
-            at: Date.now(),
-            method,
-            timeoutMs,
-            framing: this.requestFraming,
-            stdoutBytes: this.stdoutBuffer.length,
-            stderrTail: stderrTail ? stderrTail.slice(-800) : null,
-            stdoutTail: stdoutTail ? stdoutTail.slice(-800) : null
-          };
-          logger.error("mcp", "MCP request timeout", {
+    if (!this.child) throw new Error("mcp_not_started");
+    const timeoutMs = typeof options === "number" ? options : (options.timeoutMs ?? 30000);
+    const stopOnTimeout = typeof options === "number" ? true : (options.stopOnTimeout ?? true);
+    const logTimeoutLevel = typeof options === "number" ? "error" : (options.logTimeoutLevel ?? "error");
+    const logTimeoutMessage =
+      typeof options === "number" ? "MCP request timed out" : (options.logTimeoutMessage ?? "MCP request timed out");
+    const id = String(this.nextId++);
+    const req: McpRequest = { jsonrpc: "2.0", id, method, params };
+    this.pushTraffic({ kind: "request", at: Date.now(), id, method, json: req });
+    const payload = this.buildPayload(req);
+    const previewBytes = payload.slice(0, Math.min(160, payload.length));
+    const preview = (() => {
+      try {
+        return this.decoder.decode(previewBytes).replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+      } catch {
+        return "";
+      }
+    })();
+    this.lastWrite = {
+      at: Date.now(),
+      id,
+      method,
+      framing: this.requestFraming,
+      bytes: payload.length,
+      preview,
+      ok: false,
+      error: null
+    };
+    let timeoutId: number | undefined;
+    const p = new Promise<T>((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      timeoutId = window.setTimeout(() => {
+        if (!this.pending.has(id)) return;
+        this.pending.delete(id);
+        if (stopOnTimeout) this.stop().catch(() => {});
+        this.lastError = "mcp_request_timeout";
+        const stderrTail = this.stderrLines.slice(-30).join("").trim();
+        const stdoutTail = this.stdoutTail.trim();
+        this.lastTimeout = {
+          at: Date.now(),
+          method,
+          timeoutMs,
+          framing: this.requestFraming,
+          stdoutBytes: this.stdoutBuffer.length,
+          stderrTail: stderrTail ? stderrTail.slice(-800) : null,
+          stdoutTail: stdoutTail ? stdoutTail.slice(-800) : null
+        };
+        if (logTimeoutLevel !== "none") {
+          const payload = {
             pid: this.child?.pid ?? null,
             startedWith: this.startedWith,
             method,
@@ -449,17 +500,23 @@ export class McpStdioClient {
             lastWrite: this.lastWrite,
             stderrTail: stderrTail ? stderrTail.slice(-800) : null,
             stdoutTail: stdoutTail ? stdoutTail.slice(-800) : null
-          });
-          reject(new Error("mcp_request_timeout"));
-        }, Math.max(1, timeoutMs));
-      }).finally(() => {
-        if (typeof timeoutId === "number") clearTimeout(timeoutId);
-      });
+          };
+          if (logTimeoutLevel === "debug") logger.debug("mcp", logTimeoutMessage, payload);
+          else if (logTimeoutLevel === "warn") logger.warn("mcp", logTimeoutMessage, payload);
+          else logger.error("mcp", logTimeoutMessage, payload);
+        }
+        reject(new Error("mcp_request_timeout"));
+      }, Math.max(1, timeoutMs));
+    }).finally(() => {
+      if (typeof timeoutId === "number") clearTimeout(timeoutId);
+    });
+
+    const run = async (): Promise<void> => {
       try {
         const paramsKeys =
           params && typeof params === "object" && !Array.isArray(params) ? Object.keys(params).slice(0, 12) : [];
         logger.debug("mcp", "MCP request", { id, method, paramsKeys, framing: this.requestFraming, bytes: payload.length });
-        await this.child.write(Array.from(payload));
+        await this.child!.write(Array.from(payload));
         if (this.lastWrite && this.lastWrite.id === id) this.lastWrite.ok = true;
       } catch (err) {
         const slot = this.pending.get(id);
@@ -475,7 +532,6 @@ export class McpStdioClient {
           slot.reject(e);
         }
       }
-      return p;
     };
 
     const chained = this.requestChain.then(run, run);
@@ -483,21 +539,35 @@ export class McpStdioClient {
       () => {},
       () => {}
     );
-    return chained;
+    return p;
   }
 
   async initialize(): Promise<any> {
-    const res = await this.request(
-      "initialize",
-      {
-        protocolVersion: "2024-11-05",
-        capabilities: {},
-        clientInfo: { name: "knez-control-app", version: "dev" }
-      },
-      { timeoutMs: 90000, stopOnTimeout: true }
-    );
-    logger.info("mcp", "MCP initialize ok", { framing: this.requestFraming });
-    return res;
+    const params = {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "knez-control-app", version: "dev" }
+    };
+    const startedAt = performance.now();
+    const prevFraming = this.requestFraming;
+    try {
+      this.requestFraming = "content-length";
+      const res = await this.request("initialize", params, { timeoutMs: 2500, stopOnTimeout: false, logTimeoutLevel: "debug" });
+      logger.info("mcp", "MCP initialize ok", { framing: this.requestFraming, durationMs: Math.round(performance.now() - startedAt) });
+      try { await this.notifyInitialized(); } catch {}
+      return res;
+    } catch (e1) {
+      try {
+        this.requestFraming = "line";
+        const res = await this.request("initialize", params, { timeoutMs: 2500, stopOnTimeout: false, logTimeoutLevel: "debug" });
+        logger.info("mcp", "MCP initialize ok", { framing: this.requestFraming, durationMs: Math.round(performance.now() - startedAt) });
+        try { await this.notifyInitialized(); } catch {}
+        return res;
+      } catch (e2) {
+        this.requestFraming = prevFraming;
+        throw e2;
+      }
+    }
   }
 
   async notifyInitialized(): Promise<void> {
@@ -507,13 +577,20 @@ export class McpStdioClient {
     await this.child.write(Array.from(payload));
   }
 
-  async listTools(): Promise<McpToolDefinition[]> {
-    const res = await this.request<{ tools?: McpToolDefinition[] }>("tools/list", {}, { timeoutMs: 60000, stopOnTimeout: true });
+  async listTools(opts?: { cursor?: string | null; timeoutMs?: number; logTimeoutLevel?: McpRequestOptions["logTimeoutLevel"] }): Promise<McpToolDefinition[]> {
+    const cursor = typeof opts?.cursor === "string" ? opts.cursor : null;
+    const timeoutMs = typeof opts?.timeoutMs === "number" ? opts.timeoutMs : 60000;
+    const res = await this.request<{ tools?: McpToolDefinition[] }>(
+      "tools/list",
+      cursor ? { cursor } : undefined,
+      { timeoutMs, stopOnTimeout: false, logTimeoutLevel: opts?.logTimeoutLevel ?? "debug", logTimeoutMessage: "MCP tools/list timed out" }
+    );
     return Array.isArray(res?.tools) ? res.tools : [];
   }
 
-  async callTool(name: string, args: any): Promise<any> {
-    return await this.request("tools/call", { name, arguments: args ?? {} }, { timeoutMs: 180000, stopOnTimeout: true });
+  async callTool(name: string, args: any, opts?: { timeoutMs?: number }): Promise<any> {
+    const timeoutMs = typeof opts?.timeoutMs === "number" ? opts.timeoutMs : 180000;
+    return await this.request("tools/call", { name, arguments: args ?? {} }, { timeoutMs, stopOnTimeout: false });
   }
 
   getDebugState() {
@@ -530,5 +607,14 @@ export class McpStdioClient {
       stderrTail: this.stderrLines.slice(-60).join("").trim() || null,
       stdoutTail: this.stdoutTail.trim() || null,
     };
+  }
+
+  getTraffic(): McpTrafficEvent[] {
+    return this.traffic.slice();
+  }
+
+  private pushTraffic(evt: McpTrafficEvent) {
+    this.traffic.push(evt);
+    if (this.traffic.length > this.trafficLimit) this.traffic.splice(0, this.traffic.length - this.trafficLimit);
   }
 }

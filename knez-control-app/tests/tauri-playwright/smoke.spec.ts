@@ -5,10 +5,6 @@ test.describe("Tauri E2E", () => {
   test.describe.configure({ mode: "serial" });
   test.setTimeout(240000);
 
-  test.afterEach(async () => {
-    await new Promise((r) => setTimeout(r, 600));
-  });
-
   test.afterAll(async () => {
     await closeAllE2EWindows();
     await closeTauri();
@@ -18,7 +14,7 @@ test.describe("Tauri E2E", () => {
     const { page, label } = await openE2EWindow();
     try {
       console.log(`[E2E] Start test label=${label} url=${page.url()}`);
-      await page.waitForTimeout(400);
+      await page.waitForTimeout(150);
 
       console.log("[E2E] Click Chat");
       await page.getByTitle("Chat", { exact: true }).click();

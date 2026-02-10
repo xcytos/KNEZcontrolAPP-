@@ -126,7 +126,8 @@ export async function connectTauri(): Promise<{ browser: Browser; page: Page }> 
     for (let attempt = 0; attempt < 80; attempt++) {
       const contexts = browser.contexts();
       const pages = contexts.flatMap((c) => c.pages()).filter((p) => !p.isClosed());
-      const candidates = pages.filter((p) => p.url().includes(":5173/"));
+      const preferred = pages.filter((p) => p.url().includes(":5173"));
+      const candidates = preferred.length ? preferred : pages;
       if (attempt % 8 === 0) console.log(`[E2E] CDP pages total=${pages.length} candidates5173=${candidates.length}`);
       for (const p of candidates) {
         const url = p.url();
@@ -150,6 +151,11 @@ export async function closeTauri() {
   const current = cached;
   cached = null;
   try {
+    if (current?.mode === "cdp" && current.page && !current.page.isClosed()) {
+      try {
+        await withTimeout(invokeTauri(current.page, "close_all_test_windows"), 5000, "e2e_close_all_windows_timeout");
+      } catch {}
+    }
     if (current?.browser) await withTimeout(current.browser.close(), 8000, "e2e_close_browser_timeout");
   } catch {}
 }

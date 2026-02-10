@@ -95,6 +95,15 @@ fn close_all_test_windows(app: tauri::AppHandle) -> Result<u32, String> {
     Ok(closed)
 }
 
+#[tauri::command]
+fn close_main_window(app: tauri::AppHandle) -> Result<bool, String> {
+    if let Some(w) = app.get_webview_window("main") {
+        w.close().map_err(|e| e.to_string())?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -135,7 +144,8 @@ pub fn run() {
             set_ui_preferences,
             open_test_window,
             close_window,
-            close_all_test_windows
+            close_all_test_windows,
+            close_main_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

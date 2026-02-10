@@ -1,6 +1,9 @@
 export type PresenceState = "SILENT" | "OBSERVING" | "REFLECTING" | "RESPONDING";
 
 export type SessionId = string;
+export type TraceId = string;
+export type CorrelationId = string;
+export type ToolCallId = string;
 
 export interface ChatMessage {
   id: string;
@@ -15,7 +18,9 @@ export interface ChatMessage {
   deliveryStatus?: "queued" | "pending" | "delivered" | "failed";
   deliveryError?: string;
   replyToMessageId?: string;
-  correlationId?: string;
+  correlationId?: CorrelationId;
+  traceId?: TraceId;
+  toolCallId?: ToolCallId;
   toolCall?: ToolCallMessage;
   metrics?: {
     timeToFirstTokenMs?: number;
@@ -191,6 +196,8 @@ export interface KnezConnectionProfile {
   transport: "http" | "ipc";
   endpoint: string; // e.g. "http://localhost:3000"
   instanceId?: string; // Filled after handshake
+  pinnedFingerprint?: string;
+  verifiedAt?: string;
   declaredCapabilities?: string[]; // Filled after handshake
   trustLevel: "untrusted" | "verified";
 }

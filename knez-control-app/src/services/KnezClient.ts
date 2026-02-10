@@ -64,6 +64,30 @@ type KnezErrorResponse = {
   reason?: string;
 };
 
+type TaqwinObservation = {
+  type: string;
+  summary: string;
+  details?: Record<string, any>;
+};
+
+type TaqwinProposal = {
+  proposal_type: string;
+  risk_level: "low" | "medium" | "high";
+  scope: string;
+  summary: string;
+  rationale: string;
+  metadata?: Record<string, any>;
+};
+
+type TaqwinResponse = {
+  session_id: string;
+  intent: string;
+  correlation_id?: string;
+  trace_id?: string;
+  observations?: TaqwinObservation[];
+  proposals?: TaqwinProposal[];
+};
+
 const PROFILE_STORAGE_KEY = "knez_connection_profile";
 const SESSION_STORAGE_KEY = "knez_session_id";
 
@@ -174,6 +198,50 @@ export class KnezClient {
     return normalizeEndpoint(this.profile.endpoint).replace(/\/$/, "");
   }
 
+  private async fetchIdentity(): Promise<{ knez_instance_id: string; fingerprint: string; version?: string } | null> {
+    try {
+      const resp = await fetch(`${this.baseUrl()}/identity`);
+      if (!resp.ok) return null;
+      const data = (await resp.json()) as any;
+      const iid = String(data?.knez_instance_id ?? "");
+      const fp = String(data?.fingerprint ?? "");
+      const version = data?.version != null ? String(data.version) : undefined;
+      if (!iid || !fp) return null;
+      return { knez_instance_id: iid, fingerprint: fp, version };
+    } catch {
+      return null;
+    }
+  }
+
+  private async syncTrustIdentity(trusted: boolean): Promise<void> {
+    if (!trusted) {
+      this.profile = { ...this.profile, trustLevel: "untrusted", pinnedFingerprint: undefined, verifiedAt: undefined, instanceId: undefined };
+      localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(this.profile));
+      return;
+    }
+    const ident = await this.fetchIdentity();
+    if (!ident) {
+      this.profile = { ...this.profile, trustLevel: "untrusted" };
+      localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(this.profile));
+      return;
+    }
+    const pinned = this.profile.pinnedFingerprint;
+    if (pinned && pinned !== ident.fingerprint) {
+      this.profile = { ...this.profile, trustLevel: "untrusted" };
+      localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(this.profile));
+      logger.warn("knez_client", "KNEZ fingerprint mismatch; trust revoked", { endpoint: this.profile.endpoint });
+      return;
+    }
+    this.profile = {
+      ...this.profile,
+      trustLevel: "verified",
+      pinnedFingerprint: pinned ?? ident.fingerprint,
+      verifiedAt: new Date().toISOString(),
+      instanceId: ident.knez_instance_id,
+    };
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(this.profile));
+  }
+
   getProfile(): KnezConnectionProfile {
     return this.profile;
   }
@@ -188,6 +256,7 @@ export class KnezClient {
     this.profile = { ...this.profile, trustLevel: trusted ? "verified" : "untrusted" };
     localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(this.profile));
     logger.info("knez_client", "Trust level changed", { trusted });
+    void this.syncTrustIdentity(trusted);
   }
 
   getSessionId(): string | null {
@@ -271,6 +340,19 @@ export class KnezClient {
     this.sessionId = fresh;
     localStorage.setItem(SESSION_STORAGE_KEY, fresh);
     logger.info("knez_client", "New session created (CP8-6 Enforcement)", { sessionId: fresh });
+    try {
+      await this.emitEvent({
+        session_id: fresh,
+        event_type: "INPUT",
+        event_name: "ui_session_started",
+        source: "system",
+        severity: "INFO",
+        payload: { session_id: fresh },
+        tags: ["session_bootstrap", "control_app"],
+      });
+    } catch (e: any) {
+      logger.warn("knez_client", "Session bootstrap event failed", { sessionId: fresh, error: String(e?.message ?? e) });
+    }
     
     // Also log this creation event to backend immediately if possible?
     // Usually the first message does that, but we can emit a "session_start" event if we had an endpoint.
@@ -291,16 +373,30 @@ export class KnezClient {
     return (await resp.json()) as KnezEvent[];
   }
 
-  async emitTaqwinEvent(sessionId: string, eventName: string, payload: any = {}): Promise<void> {
+  async emitTaqwinResponse(payload: TaqwinResponse): Promise<void> {
     const url = `${this.baseUrl()}/taqwin/events`;
     const resp = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, event: eventName, payload }),
+      body: JSON.stringify(payload),
     });
     if (!resp.ok) {
       throw new Error(`taqwin_event_failed_${resp.status}`);
     }
+  }
+
+  async emitTaqwinEvent(sessionId: string, eventName: string, payload: any = {}): Promise<void> {
+    await this.emitTaqwinResponse({
+      session_id: sessionId,
+      intent: eventName,
+      observations: [
+        {
+          type: "control_app_event",
+          summary: eventName,
+          details: payload ?? {},
+        },
+      ],
+    });
   }
 
   async tryGetMcpRegistry(): Promise<McpRegistrySnapshot> {
@@ -327,6 +423,41 @@ export class KnezClient {
       return { supported: true, items: normalized };
     } catch {
       return { supported: false, reason: "MCP registry unreachable." };
+    }
+  }
+
+  private mcpRuntimeReportSupported: boolean | null = null;
+
+  async reportMcpRuntime(args: { id: string; running: boolean; pid?: number | null; last_ok?: number | null; last_error?: string | null }): Promise<void> {
+    const enabled = String((import.meta as any)?.env?.VITE_ENABLE_MCP_RUNTIME_REPORT ?? "false").toLowerCase() === "true";
+    if (!enabled) {
+      this.mcpRuntimeReportSupported = false;
+      return;
+    }
+    if (this.mcpRuntimeReportSupported === false) return;
+    const url = `${this.baseUrl()}/mcp/registry/report`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(args),
+    });
+    if (resp.status === 404 || resp.status === 405) {
+      this.mcpRuntimeReportSupported = false;
+      return;
+    }
+    if (!resp.ok) {
+      throw new Error(`mcp_registry_report_failed_${resp.status}`);
+    }
+    this.mcpRuntimeReportSupported = true;
+  }
+
+  async getGovernanceSnapshot(): Promise<any | null> {
+    try {
+      const resp = await fetch(`${this.baseUrl()}/governance/snapshot`);
+      if (!resp.ok) return null;
+      return await resp.json();
+    } catch {
+      return null;
     }
   }
 

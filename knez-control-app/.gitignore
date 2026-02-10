@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 *.local
+.taqwin/
 
 # Test artifacts
 test-results/
@@ -35,3 +36,7 @@ src-tauri/target/
 tests/tauri-e2e/.webview2-user-data/
 tests/tauri-e2e/.webview2-user-data*/
 tests/tauri-e2e/.tauri-dev-state.json
+tests/tauri-e2e/puppeteer-artifacts/
+tests/tauri-e2e/e2e-run.log
+tests/tauri-e2e/tauri-dev.log
+mcp-host-inspector/

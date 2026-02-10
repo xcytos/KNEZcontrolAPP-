@@ -14,7 +14,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e:tauri": "node tests/tauri-e2e/spawn-and-run.js",
-    "e2e:tauri:attach": "node tests/tauri-e2e/attach.js"
+    "e2e:tauri:attach": "node tests/tauri-e2e/attach.js",
+    "e2e:tauri:puppeteer": "node tests/tauri-e2e/puppeteer-live.js"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.0",
@@ -40,6 +41,7 @@
     "autoprefixer": "^10.4.24",
     "jsdom": "^28.0.0",
     "postcss": "^8.5.6",
+    "puppeteer-core": "^24.1.0",
     "tailwindcss": "^4.1.18",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
