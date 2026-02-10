@@ -29,7 +29,7 @@ test.describe("Tauri E2E", () => {
       await expect(page.getByRole("heading", { name: "TAQWIN Tools" })).toBeVisible({ timeout: 30000 });
 
       await expect(page.getByText(/Open MCP Logs/)).toBeVisible({ timeout: 30000 });
-      await expect(page.getByRole("button", { name: /TAQWIN MCP/ })).toBeVisible({ timeout: 30000 });
+      await expect(page.getByTestId("mcp-control")).toBeVisible({ timeout: 30000 });
       await expect(page.getByText("MCP Config")).toBeVisible({ timeout: 30000 });
       await page.getByRole("button", { name: "Advanced" }).click();
       await expect(page.getByRole("button", { name: "Self-Test" })).toBeVisible({ timeout: 30000 });

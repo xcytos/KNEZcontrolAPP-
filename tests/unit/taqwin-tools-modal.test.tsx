@@ -101,7 +101,8 @@ describe("TaqwinToolsModal status rendering", () => {
     render(<TaqwinToolsModal isOpen={true} onClose={() => {}} />);
 
     expect(await screen.findByText(/mcp_state=\s*READY/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Restart TAQWIN MCP" })).toBeTruthy();
+    expect(screen.getByTestId("mcp-control")).toBeTruthy();
+    expect(screen.getByTestId("mcp-control").textContent || "").toContain("Restart TAQWIN MCP");
   });
 
   it("renders down status and start label", async () => {
@@ -110,6 +111,7 @@ describe("TaqwinToolsModal status rendering", () => {
     render(<TaqwinToolsModal isOpen={true} onClose={() => {}} />);
 
     expect(await screen.findByText(/mcp_state=\s*IDLE/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Start TAQWIN MCP" })).toBeTruthy();
+    expect(screen.getByTestId("mcp-control")).toBeTruthy();
+    expect(screen.getByTestId("mcp-control").textContent || "").toContain("Start TAQWIN MCP");
   });
 });

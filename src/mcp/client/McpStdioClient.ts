@@ -234,6 +234,16 @@ export class McpStdioClient {
   private onStdout(chunk: any) {
     const bytes =
       typeof chunk === "string" ? this.encoder.encode(chunk) : chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+    try {
+      const preview = (() => {
+        try {
+          return this.decoder.decode(bytes.slice(0, Math.min(200, bytes.length))).replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+        } catch {
+          return "";
+        }
+      })();
+      logger.debugThrottled("mcp_stdout_chunk", 250, "mcp", "MCP stdout chunk", { bytes: bytes.length, preview });
+    } catch {}
     this.appendStdout(bytes);
     while (true) {
       const clPrefix = new Uint8Array([67, 111, 110, 116, 101, 110, 116, 45, 76, 101, 110, 103, 116, 104, 58]); // "Content-Length:"
@@ -297,13 +307,24 @@ export class McpStdioClient {
       if (lineBytes.length > 0 && lineBytes[lineBytes.length - 1] === 13) {
         lineBytes = lineBytes.slice(0, -1);
       }
-      const line = this.decoder.decode(lineBytes).trim();
+      let line = this.decoder.decode(lineBytes).trim();
       if (!line) continue;
-      if (!line.startsWith("{") && !line.startsWith("[")) continue;
+      if (line.charCodeAt(0) === 0xfeff) line = line.slice(1);
+      if (!line.startsWith("{") && !line.startsWith("[")) {
+        const braceAt = line.indexOf("{");
+        const arrAt = line.indexOf("[");
+        const startAt = braceAt >= 0 && arrAt >= 0 ? Math.min(braceAt, arrAt) : braceAt >= 0 ? braceAt : arrAt;
+        if (startAt < 0) continue;
+        line = line.slice(startAt);
+        if (!line.startsWith("{") && !line.startsWith("[")) continue;
+      }
       try {
         const parsed = JSON.parse(line) as McpResponse;
         this.onMessage(parsed);
       } catch {
+        try {
+          logger.warn("mcp", "MCP response parse failed", { framing: "line", bytes: lineBytes.length, preview: line.slice(0, 240) });
+        } catch {}
         continue;
       }
     }

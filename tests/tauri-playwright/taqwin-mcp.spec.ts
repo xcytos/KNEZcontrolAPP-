@@ -38,10 +38,9 @@ test.describe("TAQWIN MCP", () => {
       await expect(page.getByRole("button", { name: "Save" })).toBeVisible({ timeout: 30000 });
       await page.getByRole("button", { name: "Save" }).click();
 
-      await expect(page.getByRole("button", { name: /Start TAQWIN MCP|Retry TAQWIN MCP|Restart TAQWIN MCP/ })).toBeVisible({
-        timeout: 30000
-      });
-      await page.getByRole("button", { name: /Start TAQWIN MCP|Retry TAQWIN MCP/ }).click();
+      const mcpBtn = page.getByTestId("mcp-control");
+      await expect(mcpBtn).toBeVisible({ timeout: 30000 });
+      await mcpBtn.click();
 
       const status = page.locator('[data-testid="mcp-status"]');
       await expect(status).toContainText("mcp_state=READY", { timeout: 60000 });
