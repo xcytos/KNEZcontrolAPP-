@@ -528,26 +528,26 @@ export const TaqwinToolsModal: React.FC<{
                     }
                   })();
                 }}
-                disabled={!isTauri || loadingTools || startingMcp}
+                disabled={!isTauri || startingMcp}
                 className={`text-xs px-2 py-1 rounded text-white transition-colors ${
                   !isTauri
                     ? "bg-zinc-700/50 cursor-not-allowed"
-                    : startingMcp || mcpStatus.state === "starting"
+                    : startingMcp || mcpStatus.state === "STARTING" || mcpStatus.state === "LISTING_TOOLS"
                       ? "bg-blue-600/60 cursor-not-allowed"
-                      : mcpStatus.state === "running"
+                      : mcpStatus.state === "READY" || mcpStatus.state === "INITIALIZED"
                         ? "bg-emerald-600 hover:bg-emerald-500"
-                        : mcpStatus.state === "error"
+                        : mcpStatus.state === "ERROR"
                           ? "bg-red-600 hover:bg-red-500"
                           : "bg-blue-600 hover:bg-blue-500"
                 }`}
               >
                 {!isTauri
                   ? "Start TAQWIN MCP"
-                  : startingMcp || mcpStatus.state === "starting"
+                  : startingMcp || mcpStatus.state === "STARTING" || mcpStatus.state === "LISTING_TOOLS"
                     ? "Starting..."
-                    : mcpStatus.state === "running"
+                    : mcpStatus.state === "READY" || mcpStatus.state === "INITIALIZED"
                       ? "Restart TAQWIN MCP"
-                      : mcpStatus.state === "error"
+                      : mcpStatus.state === "ERROR"
                         ? "Retry TAQWIN MCP"
                         : "Start TAQWIN MCP"}
               </button>

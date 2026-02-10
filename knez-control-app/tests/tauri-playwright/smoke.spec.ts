@@ -24,8 +24,8 @@ test.describe("Tauri E2E", () => {
       await page.getByTitle("Chat", { exact: true }).click();
 
       console.log("[E2E] Open TAQWIN Tools");
-      await expect(page.getByRole("button", { name: "Tools" })).toBeVisible({ timeout: 30000 });
-      await page.getByRole("button", { name: "Tools" }).click();
+      await expect(page.getByTitle("TAQWIN Tools")).toBeVisible({ timeout: 30000 });
+      await page.getByTitle("TAQWIN Tools").click();
       await expect(page.getByRole("heading", { name: "TAQWIN Tools" })).toBeVisible({ timeout: 30000 });
 
       await expect(page.getByText(/Open MCP Logs/)).toBeVisible({ timeout: 30000 });

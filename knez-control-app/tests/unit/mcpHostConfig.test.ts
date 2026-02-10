@@ -2,19 +2,19 @@ import { describe, expect, test } from "vitest";
 import { normalizeTaqwinMcpServer, parseMcpHostConfigJson, validateTaqwinMcpServer } from "../../src/mcp/config/McpHostConfig";
 
 describe("McpHostConfig", () => {
-  test("parses mcpServers format", () => {
+  test("parses schema B mcpServers format (no working_directory)", () => {
     const raw = JSON.stringify({
       mcpServers: {
         taqwin: {
           command: "C:\\\\Python\\\\python.exe",
           args: ["-u", "C:\\\\TAQWIN_V1\\\\main.py"],
-          cwd: "C:\\\\TAQWIN_V1",
           env: { PYTHONUNBUFFERED: "1" }
         }
       }
     });
     const cfg = parseMcpHostConfigJson(raw);
     expect(cfg.servers.taqwin.command).toContain("python.exe");
+    expect(cfg.servers.taqwin.cwd).toBe("C:\\\\TAQWIN_V1");
   });
 
   test("parses legacy servers format", () => {
@@ -31,6 +31,31 @@ describe("McpHostConfig", () => {
     });
     const cfg = parseMcpHostConfigJson(raw);
     expect(cfg.servers.taqwin.cwd).toBe("C:\\\\TAQWIN_V1");
+  });
+
+  test("prefers schema A servers when both schemas present", () => {
+    const raw = JSON.stringify({
+      schema_version: "1",
+      servers: {
+        taqwin: {
+          command: "C:\\\\Python\\\\python.exe",
+          args: ["-u", "C:\\\\TAQWIN_V1\\\\main.py"],
+          working_directory: "C:\\\\TAQWIN_V1",
+          env: { PYTHONUNBUFFERED: "1" },
+          tags: ["a"]
+        }
+      },
+      mcpServers: {
+        taqwin: {
+          command: "C:\\\\Other\\\\python.exe",
+          args: ["-u", "C:\\\\Other\\\\main.py"],
+          env: { PYTHONUNBUFFERED: "1" },
+          tags: ["b"]
+        }
+      }
+    });
+    const cfg = parseMcpHostConfigJson(raw);
+    expect(cfg.servers.taqwin.command).toBe("C:\\\\Python\\\\python.exe");
   });
 
   test("validates required fields per TAQWIN guide", () => {

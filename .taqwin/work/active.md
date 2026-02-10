@@ -20,3 +20,8 @@ Current active tasks:
 
 - CP6.1 (PREVIOUS)
   - Status: CLOSED (Superseded by CP7)
+
+Recently completed:
+- CP-MCP-TOOLS-LIST — MCP tools/list stabilization
+  - Status: DONE
+  - evidence: .taqwin/reports/mcp_tools_list_audit.md and passing npm test + e2e:tauri

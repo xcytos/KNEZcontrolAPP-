@@ -965,11 +965,11 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                     </span>
                     <span
                       className={`inline-block w-2 h-2 rounded-full ${
-                        taqwinMcpStatus.state === "running"
+                        taqwinMcpStatus.state === "READY" || taqwinMcpStatus.state === "INITIALIZED"
                           ? "bg-emerald-400"
-                          : taqwinMcpStatus.state === "starting"
+                          : taqwinMcpStatus.state === "STARTING" || taqwinMcpStatus.state === "LISTING_TOOLS"
                             ? "bg-amber-400"
-                            : taqwinMcpStatus.state === "error"
+                            : taqwinMcpStatus.state === "ERROR"
                               ? "bg-red-400"
                               : "bg-zinc-500"
                       }`}

@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 let mockMcpStatus: any = {
-  state: "running",
+  state: "READY",
   processAlive: true,
   initialized: true,
+  trust: "trusted",
   framing: "line",
   lastStartAt: null,
   lastOkAt: null,
@@ -95,20 +96,20 @@ describe("TaqwinToolsModal status rendering", () => {
   });
 
   it("renders running status and restart label", async () => {
-    mockMcpStatus = { ...mockMcpStatus, state: "running" };
+    mockMcpStatus = { ...mockMcpStatus, state: "READY", trust: "trusted" };
     const { TaqwinToolsModal } = await import("../../src/features/chat/TaqwinToolsModal");
     render(<TaqwinToolsModal isOpen={true} onClose={() => {}} />);
 
-    expect(await screen.findByText(/mcp=running/)).toBeTruthy();
+    expect(await screen.findByText(/mcp_state=\s*READY/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Restart TAQWIN MCP" })).toBeTruthy();
   });
 
   it("renders down status and start label", async () => {
-    mockMcpStatus = { ...mockMcpStatus, state: "down", processAlive: false, initialized: false };
+    mockMcpStatus = { ...mockMcpStatus, state: "IDLE", processAlive: false, initialized: false, trust: "untrusted" };
     const { TaqwinToolsModal } = await import("../../src/features/chat/TaqwinToolsModal");
     render(<TaqwinToolsModal isOpen={true} onClose={() => {}} />);
 
-    expect(await screen.findByText(/mcp=down/)).toBeTruthy();
+    expect(await screen.findByText(/mcp_state=\s*IDLE/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Start TAQWIN MCP" })).toBeTruthy();
   });
 });
