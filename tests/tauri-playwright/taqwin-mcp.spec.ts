@@ -5,10 +5,6 @@ test.describe("TAQWIN MCP", () => {
   test.describe.configure({ mode: "serial" });
   test.setTimeout(360000);
 
-  test.afterEach(async () => {
-    await new Promise((r) => setTimeout(r, 600));
-  });
-
   test.afterAll(async () => {
     await closeAllE2EWindows();
     await closeTauri();
@@ -23,7 +19,7 @@ test.describe("TAQWIN MCP", () => {
       });
       expect(isTauri).toBe(true);
 
-      await page.waitForTimeout(400);
+      await page.waitForTimeout(150);
 
       await page.keyboard.press("Escape");
       await page.locator('button[title="Chat"]').click();
@@ -51,6 +47,8 @@ test.describe("TAQWIN MCP", () => {
       await page.getByRole("button", { name: "Self-Test" }).click();
 
       await expect(status).toContainText("mcp_trust=trusted", { timeout: 60000 });
+      await expect(status).toContainText("capability_trust=trusted", { timeout: 60000 });
+      await expect(status).toContainText("tools_pending=false", { timeout: 60000 });
 
       const diagMid = getPageDiagnostics(page);
       const forbidden = /(switching client framing|fallback|request timeout)/i;

@@ -217,41 +217,7 @@ export const TaqwinToolsModal: React.FC<{
       setErrorRaw("mcp_unavailable_non_tauri");
       return;
     }
-    let cancelled = false;
-    const load = async (force = false) => {
-      try {
-        setLoadingTools(true);
-        const list = await taqwinMcpService.listTools(force);
-        if (!cancelled) {
-          setError("");
-          setErrorRaw("");
-          setTools(list);
-          setSelectedTool((prev) => {
-            const next = prev && list.some((t) => t.name === prev) ? prev : (list[0]?.name ?? "");
-            if (next && next !== prev) setArgsText(JSON.stringify(defaultArgsForTool(next), null, 2));
-            return next;
-          });
-        }
-      } catch (e: any) {
-        if (!cancelled) {
-          const raw = String(e?.message ?? e);
-          logger.error("mcp", "Failed to load TAQWIN tools", { error: raw });
-          setError(formatMcpUiError(raw));
-          setErrorRaw(raw);
-          setTools([]);
-          setSelectedTool("");
-        }
-      } finally {
-        if (!cancelled) setLoadingTools(false);
-      }
-    };
-    const running = Boolean((mcpStatus as any)?.running && (mcpStatus as any)?.initialized);
-    if (!e2eMode && running) void load(false);
-    const t = !e2eMode && running ? window.setInterval(() => void load(false), 20000) : null;
-    return () => {
-      cancelled = true;
-      if (typeof t === "number") clearInterval(t);
-    };
+    setLoadingTools(false);
   }, [isOpen, e2eMode, isTauri, (mcpStatus as any)?.running, (mcpStatus as any)?.initialized]);
 
   useEffect(() => {
@@ -322,13 +288,18 @@ export const TaqwinToolsModal: React.FC<{
     const startedWith = dbg?.startedWith ?? null;
     const diagnosis = (() => {
       if (!isTauri) return "web_mode: MCP requires desktop app (Tauri).";
-      if ((mcpStatus as any)?.state === "READY") return "ready: tools/list completed and registry is cached.";
+      if ((mcpStatus as any)?.state === "READY") {
+        const toolsCached = Number((mcpStatus as any)?.toolsCached ?? 0);
+        const toolsPending = Boolean((mcpStatus as any)?.toolsPending);
+        if (toolsCached === 0 && toolsPending) return "ready: MCP initialized, tools pending (tools/list may be lazy or slow).";
+        return "ready: MCP initialized and tools registry is cached.";
+      }
       if ((mcpStatus as any)?.state === "INITIALIZED") return "initialized: MCP handshake completed (tools may not be listed yet).";
-      if ((mcpStatus as any)?.state === "STARTING" || (mcpStatus as any)?.state === "LISTING_TOOLS") {
+      if ((mcpStatus as any)?.state === "STARTING" || (mcpStatus as any)?.state === "DISCOVERING") {
         if (lastTimeout?.method === "initialize" && (lastTimeout?.stdoutBytes ?? 0) === 0) {
           return "initialize_stall: server did not produce stdout. Check stderrTail/lastCloseTail and TAQWIN entrypoint.";
         }
-        return "starting: waiting for initialize/tools/list. Use MCP Logs for stderrTail.";
+        return "starting: waiting for initialize/tools/list (non-blocking). Use MCP Logs for stderrTail.";
       }
       if ((mcpStatus as any)?.state === "ERROR") return `error: ${(mcpStatus as any)?.lastError ?? "unknown"}`;
       return "idle: MCP not started.";
@@ -351,6 +322,9 @@ export const TaqwinToolsModal: React.FC<{
         toolsCached: (mcpStatus as any)?.toolsCached,
         toolsCacheAt: (mcpStatus as any)?.toolsCacheAt,
         consecutiveFailures: (mcpStatus as any)?.consecutiveFailures,
+        mcpTrust: (mcpStatus as any)?.mcpTrust ?? (mcpStatus as any)?.trust ?? "unknown",
+        capabilityTrust: (mcpStatus as any)?.capabilityTrust ?? "unknown",
+        toolsPending: (mcpStatus as any)?.toolsPending ?? false,
         lastError: (mcpStatus as any)?.lastError,
         lastRawError: (mcpStatus as any)?.lastRawError,
         lastNormalizedError: (mcpStatus as any)?.lastNormalizedError,
@@ -510,15 +484,9 @@ export const TaqwinToolsModal: React.FC<{
                     setErrorRaw("");
                     try {
                       setStartingMcp(true);
-                      setLoadingTools(true);
                       await taqwinMcpService.start(true);
-                      const list = await taqwinMcpService.listTools(true);
-                      setTools(list);
-                      setSelectedTool((prev) => {
-                        const next = prev && list.some((t) => t.name === prev) ? prev : (list[0]?.name ?? "");
-                        if (next && next !== prev) setArgsText(JSON.stringify(defaultArgsForTool(next), null, 2));
-                        return next;
-                      });
+                      setTools([]);
+                      setSelectedTool("");
                     } catch (e: any) {
                       const raw = String(e?.message ?? e);
                       setError(formatMcpUiError(raw));
@@ -526,7 +494,6 @@ export const TaqwinToolsModal: React.FC<{
                       window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
                     } finally {
                       setStartingMcp(false);
-                      setLoadingTools(false);
                     }
                   })();
                 }}
@@ -536,7 +503,7 @@ export const TaqwinToolsModal: React.FC<{
                 className={`text-xs px-2 py-1 rounded text-white transition-colors ${
                   !isTauri
                     ? "bg-zinc-700/50 cursor-not-allowed"
-                    : startingMcp || mcpStatus.state === "STARTING" || mcpStatus.state === "LISTING_TOOLS"
+                    : startingMcp || mcpStatus.state === "STARTING" || mcpStatus.state === "DISCOVERING"
                       ? "bg-blue-600/60 cursor-not-allowed"
                       : mcpStatus.state === "READY" || mcpStatus.state === "INITIALIZED"
                         ? "bg-emerald-600 hover:bg-emerald-500"
@@ -547,7 +514,7 @@ export const TaqwinToolsModal: React.FC<{
               >
                 {!isTauri
                   ? "Start TAQWIN MCP"
-                  : startingMcp || mcpStatus.state === "STARTING" || mcpStatus.state === "LISTING_TOOLS"
+                  : startingMcp || mcpStatus.state === "STARTING" || mcpStatus.state === "DISCOVERING"
                     ? "Starting..."
                     : mcpStatus.state === "READY" || mcpStatus.state === "INITIALIZED"
                       ? "Restart TAQWIN MCP"
@@ -562,7 +529,7 @@ export const TaqwinToolsModal: React.FC<{
           </div>
           <div className="mt-2 text-[10px] text-zinc-500 font-mono flex items-center justify-between gap-3" data-testid="mcp-status">
             <div>
-              mcp_state={mcpStatus.state} mcp_trust={(mcpStatus as any).trust ?? "unknown"} pid={(mcpStatus as any)?.debug?.pid ?? "null"} tools={(mcpStatus as any)?.toolsCached ?? 0} failures={mcpStatus.consecutiveFailures}
+              mcp_state={mcpStatus.state} mcp_trust={(mcpStatus as any).mcpTrust ?? (mcpStatus as any).trust ?? "unknown"} capability_trust={(mcpStatus as any).capabilityTrust ?? "unknown"} tools_pending={String((mcpStatus as any).toolsPending ?? false)} pid={(mcpStatus as any)?.debug?.pid ?? "null"} tools={(mcpStatus as any)?.toolsCached ?? 0} failures={mcpStatus.consecutiveFailures}
             </div>
             {mcpStatus.lastRawError && (
               <div className="truncate text-red-300 max-w-[520px]">{mcpStatus.lastRawError}</div>
@@ -570,6 +537,36 @@ export const TaqwinToolsModal: React.FC<{
           </div>
           {showAdvanced && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => {
+                  if (!isTauri) return;
+                  setError("");
+                  setErrorRaw("");
+                  setLoadingTools(true);
+                  void (async () => {
+                    try {
+                      const list = await taqwinMcpService.listTools(true, { waitForResult: true, timeoutMs: 20000 });
+                      setTools(list);
+                      setSelectedTool((prev) => {
+                        const next = prev && list.some((t) => t.name === prev) ? prev : (list[0]?.name ?? "");
+                        if (next && next !== prev) setArgsText(JSON.stringify(defaultArgsForTool(next), null, 2));
+                        return next;
+                      });
+                    } catch (e: any) {
+                      const raw = String(e?.message ?? e);
+                      setError(formatMcpUiError(raw));
+                      setErrorRaw(raw);
+                      window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
+                    } finally {
+                      setLoadingTools(false);
+                    }
+                  })();
+                }}
+                className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!isTauri || startingMcp || loadingTools}
+              >
+                Refresh Tools
+              </button>
               <button
                 onClick={() => setShowHealth((v) => !v)}
                 className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
@@ -804,11 +801,17 @@ export const TaqwinToolsModal: React.FC<{
               </div>
             )}
             <div className="border border-zinc-800 rounded bg-zinc-950/40 overflow-hidden">
-              {loadingTools ? (
+            {loadingTools ? (
                 <div className="p-3 text-xs text-zinc-500">Loading tools...</div>
               ) : tools.length === 0 ? (
                 <div className="p-3 space-y-2">
-                  <div className="text-xs text-zinc-500">No tools loaded.</div>
+                  <div className="text-xs text-zinc-500">
+                    {mcpStatus.state === "READY" && (mcpStatus as any).toolsPending
+                      ? "TAQWIN MCP is ready, but tools are still pending. Click Refresh Tools or open MCP Logs."
+                      : (mcpStatus as any).capabilityTrust === "failed"
+                        ? "Tools failed to load. Open MCP Logs, fix the issue, then refresh tools."
+                        : "No tools loaded."}
+                  </div>
                   {error && <div className="text-xs text-red-300">{error}</div>}
                   {stderrTail && (
                     <div className="text-[10px] font-mono text-zinc-300 whitespace-pre-wrap break-words">

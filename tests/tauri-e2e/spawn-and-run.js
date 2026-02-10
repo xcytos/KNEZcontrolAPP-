@@ -369,6 +369,7 @@ async function main() {
     const exitCode = await runPlaywrightTauri({ cdpUrl: reusable });
     if (exitCode !== 0) throw new Error(`playwright_failed_${exitCode}`);
     logLine("TAURI E2E: PASS");
+    killImage("knez-control-app.exe");
     return 0;
   }
 
@@ -436,6 +437,7 @@ async function main() {
     killProcessTree(tauriProc);
     killListeningPort(5173);
     if (cdpPort) killListeningPort(cdpPort);
+    killImage("knez-control-app.exe");
     if (knezDetached) {
       killListeningPort(KNEZ_PORT);
     } else if (knezProc) {

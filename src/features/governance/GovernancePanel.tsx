@@ -17,6 +17,49 @@ export const GovernancePanel: React.FC = () => {
   // CP7-8 & CP7-9 Data
   const [promptsContent, setPromptsContent] = useState<string>("");
   const [ticketsContent, setTicketsContent] = useState<string>("");
+  const [snapshotRemote, setSnapshotRemote] = useState<any | null>(null);
+  const [snapshotLocal, setSnapshotLocal] = useState<{ combined_sha256: string; files: Array<{ path: string; sha256: string | null; bytes: number | null }> } | null>(null);
+  const [snapshotStatus, setSnapshotStatus] = useState<"idle" | "loading" | "ok" | "unavailable">("idle");
+
+  const sha256Hex = async (text: string): Promise<string> => {
+    const data = new TextEncoder().encode(text);
+    const hash = await crypto.subtle.digest("SHA-256", data);
+    const bytes = new Uint8Array(hash);
+    return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+  };
+
+  const loadGovernanceSnapshot = async () => {
+    setSnapshotStatus("loading");
+    const remote = await knezClient.getGovernanceSnapshot();
+    setSnapshotRemote(remote);
+    if (!remote?.files || !Array.isArray(remote.files)) {
+      setSnapshotLocal(null);
+      setSnapshotStatus("unavailable");
+      return;
+    }
+    try {
+      const localFiles: Array<{ path: string; sha256: string | null; bytes: number | null }> = [];
+      const combinedParts: string[] = [];
+      for (const f of remote.files as any[]) {
+        const rel = String(f?.path ?? "");
+        if (!rel) continue;
+        try {
+          const content = await readTextFile(rel);
+          const sha = await sha256Hex(content);
+          localFiles.push({ path: rel, sha256: sha, bytes: content.length });
+          combinedParts.push(content);
+        } catch {
+          localFiles.push({ path: rel, sha256: null, bytes: null });
+        }
+      }
+      const combined = await sha256Hex(combinedParts.join("\n"));
+      setSnapshotLocal({ combined_sha256: combined, files: localFiles });
+      setSnapshotStatus("ok");
+    } catch {
+      setSnapshotLocal(null);
+      setSnapshotStatus("unavailable");
+    }
+  };
 
   useEffect(() => {
     knezClient.getOperatorControls()
@@ -33,6 +76,7 @@ export const GovernancePanel: React.FC = () => {
         setDenials(filtered.slice(0, 20));
       })
       .catch(() => setDenials([]));
+    void loadGovernanceSnapshot();
   }, []);
 
   const refreshApprovals = async () => {
@@ -152,6 +196,24 @@ export const GovernancePanel: React.FC = () => {
       {activeTab === 'controls' && (
         <div className="space-y-6 overflow-y-auto">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-lg md:col-span-2">
+              <h3 className="text-lg font-medium text-white mb-2">Governance Snapshot</h3>
+              {snapshotStatus === "loading" ? (
+                <div className="text-sm text-zinc-500">Loading snapshot…</div>
+              ) : snapshotRemote && snapshotLocal ? (
+                <div className="space-y-2">
+                  <div className="text-xs text-zinc-400">Remote combined SHA-256: <span className="text-zinc-200 font-mono">{String(snapshotRemote.combined_sha256 ?? "")}</span></div>
+                  <div className="text-xs text-zinc-400">Local combined SHA-256: <span className="text-zinc-200 font-mono">{String(snapshotLocal.combined_sha256 ?? "")}</span></div>
+                  <div className={`text-xs ${snapshotRemote.combined_sha256 === snapshotLocal.combined_sha256 ? "text-green-400" : "text-amber-400"}`}>
+                    {snapshotRemote.combined_sha256 === snapshotLocal.combined_sha256 ? "No drift detected." : "Drift detected: local .taqwin differs from KNEZ snapshot."}
+                  </div>
+                </div>
+              ) : snapshotRemote ? (
+                <div className="text-sm text-zinc-500">Remote snapshot available; local .taqwin not readable in this runtime.</div>
+              ) : (
+                <div className="text-sm text-zinc-500">Snapshot unavailable.</div>
+              )}
+            </div>
             {/* Global Control */}
             <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-lg">
               <h3 className="text-lg font-medium text-white mb-4">Global Influence</h3>
