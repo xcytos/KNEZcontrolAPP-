@@ -193,7 +193,12 @@ class TaqwinMcpService {
                 this.mcpTrust = "trusted";
                 this.capabilityTrust = "trusted";
                 this.toolsPending = false;
-                this.setLifecycle("READY");
+                
+                // FORENSIC AUDIT FIX (MCP-001):
+                // Do NOT set READY state on initialization timeout even if it eventually resolves.
+                // We must verify tools/list first.
+                this.setLifecycle("INITIALIZED"); 
+                
                 this.consecutiveFailures = 0;
                 this.lastRawError = null;
                 this.lastNormalizedError = null;
@@ -203,6 +208,10 @@ class TaqwinMcpService {
                     await knezClient.reportMcpRuntime({ id: this.serverId, running: true, last_ok: Date.now() / 1000, last_error: null });
                   } catch {}
                 }
+                
+                // Force a tools/list check immediately to verify readiness
+                void this.listTools(true, { waitForResult: false });
+                
                 return client;
               }
               const initializeDurationMs = Math.round(performance.now() - initializeStartedAt);
@@ -210,7 +219,12 @@ class TaqwinMcpService {
               this.mcpTrust = "trusted";
               this.capabilityTrust = "trusted";
               this.toolsPending = false;
-              this.setLifecycle("READY");
+              
+              // FORENSIC AUDIT FIX (MCP-001):
+              // Initialization OK does NOT mean READY. READY implies tools are discoverable.
+              // We set INITIALIZED here, and let listTools upgrade it to READY.
+              this.setLifecycle("INITIALIZED");
+              
               this.lastOkAt = Date.now();
               this.consecutiveFailures = 0;
               this.lastRawError = null;
@@ -222,6 +236,9 @@ class TaqwinMcpService {
                   await knezClient.reportMcpRuntime({ id: this.serverId, running: true, last_ok: Date.now() / 1000, last_error: null });
                 } catch {}
               }
+              
+              // Trigger tool discovery immediately
+              void this.listTools(true, { waitForResult: false });
             }
             if (this.toolsCache && this.toolsCache.length > 0) {
               this.capabilityTrust = "trusted";
@@ -229,7 +246,14 @@ class TaqwinMcpService {
               this.setLifecycle("READY");
             } else {
               this.capabilityTrust = this.toolsPending ? "pending" : this.initialized ? "trusted" : "unknown";
-              this.setLifecycle("READY");
+              // Only upgrade to READY if we are truly initialized AND have tools (or pending discovery)
+              if (this.initialized && !this.toolsPending && (!this.toolsCache || this.toolsCache.length === 0)) {
+                 // We are initialized but have no tools yet. Remain INITIALIZED.
+                 this.setLifecycle("INITIALIZED");
+                 void this.listTools(true, { waitForResult: false });
+              } else if (this.initialized) {
+                 this.setLifecycle("READY");
+              }
             }
             return client;
           } catch (err) {

@@ -27,14 +27,6 @@ export type McpHttpServerConfig = {
 
 export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
 
-export function isHttpServer(s: McpServerConfig): s is McpHttpServerConfig {
-  return (s as any).type === "http";
-}
-
-export function isStdioServer(s: McpServerConfig): s is McpStdioServerConfig {
-  return (s as any).type !== "http";
-}
-
 export type McpHostConfig = {
   schema_version?: string;
   inputs?: McpConfigInput[];
@@ -179,7 +171,7 @@ export function parseMcpHostConfigJson(raw: string): McpHostConfig {
 export function validateTaqwinMcpServer(server: McpServerConfig): McpConfigIssue[] {
   const issues: McpConfigIssue[] = [];
 
-  if (isHttpServer(server)) {
+  if ((server as any)?.type === "http") {
     issues.push({ level: "error", message: "TAQWIN must be configured as a stdio server", field: "type" });
     return issues;
   }
@@ -193,12 +185,12 @@ export function validateTaqwinMcpServer(server: McpServerConfig): McpConfigIssue
   }
   if (!Array.isArray(server.args)) issues.push({ level: "error", message: "args must be an array", field: "args" });
 
-  const hasU = (server.args || []).some((a) => a === "-u");
+  const hasU = server.args.some((a) => a === "-u");
   if (!hasU) issues.push({ level: "error", message: "args must include -u (unbuffered)", field: "args" });
 
-  const hasMain = (server.args || []).some((a) => /main\.py$/i.test(a));
+  const hasMain = server.args.some((a) => /main\.py$/i.test(a));
   if (!hasMain) issues.push({ level: "error", message: "args must include main.py", field: "args" });
-  const mainArg = (server.args || []).find((a) => /main\.py$/i.test(a)) ?? "";
+  const mainArg = server.args.find((a) => /main\.py$/i.test(a)) ?? "";
   if (mainArg && !isAbsolutePath(mainArg)) issues.push({ level: "warn", message: "main.py path is not absolute", field: "args" });
 
   const env = server.env ?? {};
@@ -210,7 +202,7 @@ export function validateTaqwinMcpServer(server: McpServerConfig): McpConfigIssue
 }
 
 export function normalizeTaqwinMcpServer(server: McpServerConfig): McpServerConfig {
-  if (isHttpServer(server)) return server;
+  if ((server as any)?.type === "http") return server;
   const env = { ...(server.env ?? {}) };
   if (!env.PYTHONUNBUFFERED) env.PYTHONUNBUFFERED = "1";
   const args = Array.isArray(server.args) ? server.args.slice() : [];

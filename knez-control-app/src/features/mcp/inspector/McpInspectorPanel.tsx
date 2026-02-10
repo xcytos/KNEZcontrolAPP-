@@ -115,6 +115,8 @@ export const McpInspectorPanel: React.FC = () => {
     return searched.slice(Math.max(0, searched.length - trafficLimit));
   }, [selectedId, logTab, trafficLimit, logSearch, servers.length]);
 
+  const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
+
   useEffect(() => {
     if (!autoScroll) return;
     const el = logsRef.current;
@@ -122,7 +124,7 @@ export const McpInspectorPanel: React.FC = () => {
     try {
       el.scrollTop = el.scrollHeight;
     } catch {}
-  }, [autoScroll, traffic.length, logTab]);
+  }, [autoScroll, traffic.length, logTab, expandedLogId]);
 
   const mergeServerConfigIntoDraft = (draftRaw: string, insertRaw: string): string => {
     const parsedDraft = JSON.parse(draftRaw);
@@ -705,10 +707,33 @@ export const McpInspectorPanel: React.FC = () => {
                     {traffic.map((evt, idx) => (
                       <div key={idx} className="border border-zinc-800 rounded p-2 bg-zinc-950">
                         <div className="flex items-center justify-between text-[10px] text-zinc-500 mb-1">
-                          <div>{evt.kind}</div>
+                          <div className="flex items-center gap-2">
+                            <button 
+                              onClick={() => setExpandedLogId(expandedLogId === idx ? null : idx)}
+                              className="hover:text-zinc-300"
+                              title="Toggle details"
+                            >
+                              ⠇
+                            </button>
+                            <span className={evt.kind.includes("error") ? "text-red-400 font-bold" : "text-zinc-400"}>
+                              {evt.kind}
+                            </span>
+                            {/* FORENSIC AUDIT (MCP-004): Show trace ID or request ID if available */}
+                            {(evt as any).id && <span className="font-mono text-zinc-600">#{(evt as any).id}</span>}
+                          </div>
                           <div>{formatTime(evt.at)}</div>
                         </div>
-                        <pre className="text-[10px] text-zinc-200 whitespace-pre-wrap break-words">{asText(evt)}</pre>
+                        <div className={`text-[10px] text-zinc-200 whitespace-pre-wrap break-words ${expandedLogId === idx ? "" : "max-h-[60px] overflow-hidden"}`}>
+                           {asText(evt)}
+                        </div>
+                        {expandedLogId === idx && (evt as any).json && (
+                          <div className="mt-2 pt-2 border-t border-zinc-800">
+                            <div className="text-[9px] text-zinc-500 mb-1">RAW JSON PAYLOAD</div>
+                            <pre className="text-[9px] font-mono text-zinc-400 overflow-auto">
+                              {JSON.stringify((evt as any).json, null, 2)}
+                            </pre>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
