@@ -218,22 +218,36 @@ export class McpHttpClient {
         const contentType = String(res.headers.get("content-type") ?? "").toLowerCase();
         const returnedSessionId = String(res.headers.get("Mcp-Session-Id") ?? "").trim();
         if (returnedSessionId) this.sessionId = returnedSessionId;
+        
+        // Log detailed HTTP metrics
+        const durationMs = Date.now() - (this.lastWrite?.at ?? Date.now());
+        logger.debug("mcp", "MCP HTTP response", {
+          id,
+          method,
+          status: res.status,
+          contentType,
+          sessionId: this.sessionId,
+          durationMs
+        });
+
         if (!res.ok) {
           const safeDetail =
             res.status === 401 || res.status === 403
               ? "unauthorized"
               : await res.text().then((t) => t.slice(0, 240)).catch(() => "");
           const msg = `mcp_http_${res.status}${safeDetail ? `: ${safeDetail}` : ""}`;
-          this.lastError = msg;
-          this.pushTraffic({ kind: "spawn_error", at: Date.now(), message: msg });
+          // Redact potential secrets in error message
+          const redactedMsg = msg.replace(/Bearer\s+[a-zA-Z0-9\-\._~+/]+=*/gi, "Bearer ***");
+          this.lastError = redactedMsg;
+          this.pushTraffic({ kind: "spawn_error", at: Date.now(), message: redactedMsg });
           const slot = this.pending.get(id);
           if (slot) {
             this.pending.delete(id);
             if (this.lastWrite && this.lastWrite.id === id) {
               this.lastWrite.ok = false;
-              this.lastWrite.error = msg;
+              this.lastWrite.error = redactedMsg;
             }
-            slot.reject(new Error(msg));
+            slot.reject(new Error(redactedMsg));
           }
           return;
         }

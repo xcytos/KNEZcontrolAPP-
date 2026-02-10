@@ -204,7 +204,7 @@ export class McpInspectorService {
   patchServer(serverId: string, patch: Partial<NormalizedMcpServerConfig>) {
     const s = this.sessions.get(serverId);
     if (!s) return;
-    s.server = { ...s.server, ...patch, id: serverId };
+    s.server = { ...s.server, ...patch, id: serverId } as NormalizedMcpServerConfig;
     this.emit();
   }
 

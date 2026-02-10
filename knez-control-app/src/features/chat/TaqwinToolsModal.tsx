@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { Command } from "@tauri-apps/plugin-shell";
 import { taqwinMcpService } from "../../mcp/taqwin/TaqwinMcpService";
 import { getTaqwinToolPermissions, isTaqwinToolAllowed, setTaqwinToolEnabled } from "../../services/TaqwinToolPermissions";
 import { McpToolDefinition } from "../../services/McpTypes";
@@ -9,7 +10,7 @@ import { ChatMessage, ToolCallMessage } from "../../domain/DataContracts";
 import { knezClient } from "../../services/KnezClient";
 import { logger } from "../../services/LogService";
 import { mcpHostConfigService } from "../../mcp/config/McpHostConfigService";
-import { normalizeTaqwinMcpServer, parseMcpHostConfigJson, validateTaqwinMcpServer } from "../../mcp/config/McpHostConfig";
+import { normalizeTaqwinMcpServer, parseMcpHostConfigJson, validateTaqwinMcpServer, isStdioServer } from "../../mcp/config/McpHostConfig";
 import { useTaqwinMcpStatus } from "../../hooks/useTaqwinMcpStatus";
 
 function newLocalId(prefix: string): string {
@@ -240,16 +241,46 @@ export const TaqwinToolsModal: React.FC<{
       const w = window as any;
       const isTauri = !!(w.__TAURI__?.core?.invoke ?? w.__TAURI__?.invoke ?? w.__TAURI_INTERNALS__ ?? w.__TAURI_IPC__);
       if (!isTauri) throw new Error("mcp_unavailable_non_tauri");
-      const python = "python";
-      const taqwin = "..\\\\TAQWIN_V1";
+
+      // 1. Detect Python
+      let python = "python";
+      try {
+        const out = await Command.create("cmd", ["/c", "where", "python"]).execute();
+        if (out.code === 0 && out.stdout.trim()) {
+          const lines = out.stdout.trim().split(/\r?\n/);
+          if (lines[0]) python = lines[0].trim();
+        }
+      } catch {}
+
+      // 2. Detect TAQWIN_V1 Path
+      // Probe common locations using dir /b
+      let taqwin = "";
+      const candidates = [
+        "..\\TAQWIN_V1",
+        "C:\\Users\\%USERNAME%\\Downloads\\ASSETS\\controlAPP\\TAQWIN_V1",
+        "C:\\TAQWIN_V1",
+        "TAQWIN_V1"
+      ];
+      
+      for (const c of candidates) {
+        try {
+          const check = await Command.create("cmd", ["/c", "if", "exist", `${c}\\main.py`, "echo", "yes"]).execute();
+          if (check.code === 0 && check.stdout.trim() === "yes") {
+            taqwin = c;
+            break;
+          }
+        } catch {}
+      }
+      
+      if (!taqwin) taqwin = "..\\TAQWIN_V1"; // Fallback
 
       const next = {
         schema_version: "1",
         servers: {
           taqwin: {
-            command: python ?? "python",
+            command: python,
             args: ["-u", "main.py", "mcp"],
-            working_directory: taqwin ?? "",
+            working_directory: taqwin,
             env: { PYTHONUNBUFFERED: "1" },
             enabled: true,
             tags: ["taqwin", "mcp"]
@@ -694,14 +725,16 @@ export const TaqwinToolsModal: React.FC<{
                                   continue;
                                 }
                                 const next = normalizeTaqwinMcpServer(server);
-                                normalized.servers[name] = {
-                                  command: next.command,
-                                  args: next.args,
-                                  env: next.env,
-                                  working_directory: next.cwd,
-                                  enabled: next.enabled ?? true,
-                                  tags: next.tags
-                                };
+                                if (isStdioServer(next)) {
+                                  normalized.servers[name] = {
+                                    command: next.command,
+                                    args: next.args,
+                                    env: next.env,
+                                    working_directory: next.cwd,
+                                    enabled: next.enabled ?? true,
+                                    tags: next.tags
+                                  };
+                                }
                               }
                               setConfigText(JSON.stringify(normalized, null, 2));
                             } catch (e: any) {
