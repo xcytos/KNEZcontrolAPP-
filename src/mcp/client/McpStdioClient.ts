@@ -1,7 +1,7 @@
 import { Command, Child } from "@tauri-apps/plugin-shell";
 import { McpToolDefinition } from "../../services/McpTypes";
 import { logger } from "../../services/LogService";
-import type { McpServerConfig } from "../config/McpHostConfig";
+import { isStdioServer, type McpServerConfig } from "../config/McpHostConfig";
 import type { McpTrafficEvent } from "../inspector/McpTraffic";
 
 type McpRequest = {
@@ -118,7 +118,10 @@ export class McpStdioClient {
     if (this.child) return;
     const isWin = navigator.userAgent.toLowerCase().includes("windows");
     if (!isWin) throw new Error("mcp_custom_config_windows_only");
-    if (!server?.command) throw new Error("mcp_config_missing_command");
+    
+    if (!isStdioServer(server)) throw new Error("mcp_config_invalid_type: expected stdio");
+    if (!server.command) throw new Error("mcp_config_missing_command");
+    
     const args = Array.isArray(server.args) ? server.args : [];
     const command = server.command;
 
@@ -552,14 +555,14 @@ export class McpStdioClient {
     const prevFraming = this.requestFraming;
     try {
       this.requestFraming = "content-length";
-      const res = await this.request("initialize", params, { timeoutMs: 2500, stopOnTimeout: false, logTimeoutLevel: "debug" });
+      const res = await this.request("initialize", params, { timeoutMs: 15000, stopOnTimeout: false, logTimeoutLevel: "debug" });
       logger.info("mcp", "MCP initialize ok", { framing: this.requestFraming, durationMs: Math.round(performance.now() - startedAt) });
       try { await this.notifyInitialized(); } catch {}
       return res;
     } catch (e1) {
       try {
         this.requestFraming = "line";
-        const res = await this.request("initialize", params, { timeoutMs: 2500, stopOnTimeout: false, logTimeoutLevel: "debug" });
+        const res = await this.request("initialize", params, { timeoutMs: 15000, stopOnTimeout: false, logTimeoutLevel: "debug" });
         logger.info("mcp", "MCP initialize ok", { framing: this.requestFraming, durationMs: Math.round(performance.now() - startedAt) });
         try { await this.notifyInitialized(); } catch {}
         return res;

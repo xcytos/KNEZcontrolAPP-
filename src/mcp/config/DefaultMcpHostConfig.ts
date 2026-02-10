@@ -43,7 +43,7 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
   const raw = JSON.stringify(rawObj, null, 2);
   const config: McpHostConfig = {
     schema_version: "1",
-    inputs: rawObj.inputs,
+    inputs: rawObj.inputs as any,
     servers: {
       taqwin: {
         id: "taqwin",

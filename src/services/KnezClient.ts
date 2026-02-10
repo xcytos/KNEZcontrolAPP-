@@ -119,54 +119,6 @@ function safeJsonParse<T>(raw: string): T | null {
   }
 }
 
-function escapePowerShellSingleQuoted(s: string): string {
-  return s.replace(/'/g, "''");
-}
-
-async function healthViaPowerShell(url: string, timeoutMs: number): Promise<KnezHealthResponse> {
-  const { Command } = await import("@tauri-apps/plugin-shell");
-  const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
-  const script = [
-    "$ErrorActionPreference='Stop';",
-    "$ProgressPreference='SilentlyContinue';",
-    `$u='${escapePowerShellSingleQuoted(url)}';`,
-    `$r = Invoke-RestMethod -Uri $u -TimeoutSec ${timeoutSec};`,
-    "$r | ConvertTo-Json -Depth 12 -Compress",
-  ].join(" ");
-  const out = await Command.create("powershell", ["-NoProfile", "-Command", script]).execute();
-  if (out.code !== 0) {
-    throw new AppError("KNEZ_HEALTH_FAILED", `Health check failed (shell)`, { url, code: out.code, stderr: out.stderr });
-  }
-  const data = safeJsonParse<KnezHealthResponse>(out.stdout);
-  if (!data) {
-    throw new AppError("KNEZ_HEALTH_FAILED", `Health check invalid JSON (shell)`, { url, stdout: out.stdout });
-  }
-  return data;
-}
-
-async function postJsonViaPowerShell<T>(url: string, payload: any, timeoutMs: number): Promise<T> {
-  const { Command } = await import("@tauri-apps/plugin-shell");
-  const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
-  const body = JSON.stringify(payload ?? {});
-  const script = [
-    "$ErrorActionPreference='Stop';",
-    "$ProgressPreference='SilentlyContinue';",
-    `$u='${escapePowerShellSingleQuoted(url)}';`,
-    `$b='${escapePowerShellSingleQuoted(body)}';`,
-    `$r = Invoke-RestMethod -Method Post -Uri $u -Body $b -ContentType 'application/json' -TimeoutSec ${timeoutSec};`,
-    "$r | ConvertTo-Json -Depth 20 -Compress",
-  ].join(" ");
-  const out = await Command.create("powershell", ["-NoProfile", "-Command", script]).execute();
-  if (out.code !== 0) {
-    throw new AppError("KNEZ_FETCH_FAILED", `Shell POST failed: ${url}`, { url, code: out.code, stderr: out.stderr });
-  }
-  const data = safeJsonParse<T>(out.stdout);
-  if (!data) {
-    throw new AppError("KNEZ_FETCH_FAILED", `Shell POST invalid JSON: ${url}`, { url, stdout: out.stdout });
-  }
-  return data;
-}
-
 async function healthViaShell(url: string, timeoutMs: number): Promise<KnezHealthResponse> {
   const { Command } = await import("@tauri-apps/plugin-shell");
   const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
@@ -178,13 +130,21 @@ async function healthViaShell(url: string, timeoutMs: number): Promise<KnezHealt
     }
     return data;
   }
-  return await healthViaPowerShell(url, timeoutMs);
+  throw new AppError("KNEZ_HEALTH_FAILED", `Health check failed (cmd code ${out.code})`, { url, stderr: out.stderr });
 }
 
 async function postJsonViaShell<T>(url: string, payload: any, timeoutMs: number): Promise<T> {
   const { Command } = await import("@tauri-apps/plugin-shell");
   const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
   const body = JSON.stringify(payload ?? {});
+  // Use a temp file or stdin if body is large? For now, stick to simple curl, but escape double quotes?
+  // Windows cmd argument escaping is tricky.
+  // Better approach: echo body | curl -d @- ...
+  // But pipe is tricky with Command.
+  // Alternative: write to temp file?
+  // Or just escape double quotes: " -> \"
+  const escapedBody = body.replace(/"/g, '\\"');
+  
   const out = await Command.create("cmd", [
     "/d",
     "/s",
@@ -196,9 +156,10 @@ async function postJsonViaShell<T>(url: string, payload: any, timeoutMs: number)
     "-H",
     "Content-Type: application/json",
     "-d",
-    body,
+    escapedBody,
     url,
   ]).execute();
+  
   if (out.code === 0) {
     const data = safeJsonParse<T>(out.stdout);
     if (!data) {
@@ -206,7 +167,7 @@ async function postJsonViaShell<T>(url: string, payload: any, timeoutMs: number)
     }
     return data;
   }
-  return await postJsonViaPowerShell<T>(url, payload, timeoutMs);
+  throw new AppError("KNEZ_FETCH_FAILED", `Shell POST failed (cmd code ${out.code})`, { url, stderr: out.stderr });
 }
 
 function newSessionId(): string {
@@ -417,13 +378,23 @@ export class KnezClient {
 
   async emitTaqwinResponse(payload: TaqwinResponse): Promise<void> {
     const url = `${this.baseUrl()}/taqwin/events`;
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!resp.ok) {
-      throw new Error(`taqwin_event_failed_${resp.status}`);
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!resp.ok) {
+        throw new Error(`taqwin_event_failed_${resp.status}`);
+      }
+    } catch (e: any) {
+      if (isTauriRuntime()) {
+        try {
+          await postJsonViaShell(url, payload, 5000);
+          return;
+        } catch {}
+      }
+      throw e;
     }
   }
 
@@ -672,12 +643,23 @@ export class KnezClient {
     payload?: Record<string, any>;
     tags?: string[];
   }): Promise<void> {
-    const resp = await fetch(`${this.baseUrl()}/events`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(args),
-    });
-    if (!resp.ok) throw new Error(`event_emit_failed_${resp.status}`);
+    const url = `${this.baseUrl()}/events`;
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(args),
+      });
+      if (!resp.ok) throw new Error(`event_emit_failed_${resp.status}`);
+    } catch (e: any) {
+      if (isTauriRuntime()) {
+        try {
+          await postJsonViaShell(url, args, 5000);
+          return;
+        } catch {}
+      }
+      throw e;
+    }
   }
 
   async getMemoryDetail(memoryId: string): Promise<KnezMemoryRecord> {

@@ -29,5 +29,67 @@ export default defineConfig(async () => ({
         "**/tests/tauri-e2e/**"
       ],
     },
+    proxy: {
+      '/taqwin': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/mcp': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/health': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/events': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/identity': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/memory': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/state': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/sessions': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/governance': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/v1': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/approvals': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/audit': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/perception': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/operator': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/runbooks': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+    }
   },
 }));

@@ -88,7 +88,7 @@ export const McpInspectorPanel: React.FC = () => {
     const filtered = q ? list.filter((t) => t.name.toLowerCase().includes(q) || String(t.description ?? "").toLowerCase().includes(q)) : list;
     filtered.sort((a, b) => a.name.localeCompare(b.name));
     return filtered;
-  }, [selectedId, toolSearch, servers.length, Object.keys(statusById).join("|")]);
+  }, [selectedId, toolSearch, servers.length, Object.keys(statusById).join("|"), selected?.toolsCached]);
 
   useEffect(() => {
     if (!selectedId) return;

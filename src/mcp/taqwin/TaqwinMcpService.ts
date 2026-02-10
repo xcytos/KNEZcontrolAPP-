@@ -3,7 +3,7 @@ import { logger } from "../../services/LogService";
 import { knezClient } from "../../services/KnezClient";
 import { redactAny } from "../../utils/redact";
 import { mcpHostConfigService } from "../config/McpHostConfigService";
-import { normalizeTaqwinMcpServer } from "../config/McpHostConfig";
+import { normalizeTaqwinMcpServer, isStdioServer } from "../config/McpHostConfig";
 import { mcpInspectorService } from "../inspector/McpInspectorService";
 
 function isTauriRuntime(): boolean {
@@ -139,6 +139,8 @@ class TaqwinMcpService {
                 null;
               if (!selected) throw new Error("mcp_no_enabled_servers");
               const server = normalizeTaqwinMcpServer(selected);
+              if (!isStdioServer(server)) throw new Error("taqwin_must_be_stdio");
+              
               this.serverId = server.id;
               server.env = {
                 ...(server.env ?? {}),
@@ -154,8 +156,11 @@ class TaqwinMcpService {
                 env: server.env
               });
               await mcpInspectorService.start(server.id);
-              client = mcpInspectorService.getClientInstance(server.id);
-              if (!client) throw new Error("mcp_client_missing");
+              const instance = mcpInspectorService.getClientInstance(server.id);
+              if (!instance || typeof (instance as any).startWithConfig !== "function") {
+                 throw new Error("mcp_client_missing_or_not_stdio");
+              }
+              client = instance as import("../client/McpStdioClient").McpStdioClient;
               this.client = client;
               this.initialized = false;
               this.mcpTrust = "untrusted";
