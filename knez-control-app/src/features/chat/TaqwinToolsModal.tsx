@@ -245,13 +245,14 @@ export const TaqwinToolsModal: React.FC<{
         if (!cancelled) setLoadingTools(false);
       }
     };
-    void load(true);
-    const t = e2eMode ? null : window.setInterval(() => void load(false), 20000);
+    const running = Boolean((mcpStatus as any)?.running && (mcpStatus as any)?.initialized);
+    if (!e2eMode && running) void load(false);
+    const t = !e2eMode && running ? window.setInterval(() => void load(false), 20000) : null;
     return () => {
       cancelled = true;
       if (typeof t === "number") clearInterval(t);
     };
-  }, [isOpen, e2eMode, isTauri]);
+  }, [isOpen, e2eMode, isTauri, (mcpStatus as any)?.running, (mcpStatus as any)?.initialized]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -321,15 +322,16 @@ export const TaqwinToolsModal: React.FC<{
     const startedWith = dbg?.startedWith ?? null;
     const diagnosis = (() => {
       if (!isTauri) return "web_mode: MCP requires desktop app (Tauri).";
-      if ((mcpStatus as any)?.state === "running") return "running: MCP initialized and ready.";
-      if ((mcpStatus as any)?.state === "starting") {
+      if ((mcpStatus as any)?.state === "READY") return "ready: tools/list completed and registry is cached.";
+      if ((mcpStatus as any)?.state === "INITIALIZED") return "initialized: MCP handshake completed (tools may not be listed yet).";
+      if ((mcpStatus as any)?.state === "STARTING" || (mcpStatus as any)?.state === "LISTING_TOOLS") {
         if (lastTimeout?.method === "initialize" && (lastTimeout?.stdoutBytes ?? 0) === 0) {
           return "initialize_stall: server did not produce stdout. Check stderrTail/lastCloseTail and TAQWIN entrypoint.";
         }
         return "starting: waiting for initialize/tools/list. Use MCP Logs for stderrTail.";
       }
-      if ((mcpStatus as any)?.state === "error") return `error: ${(mcpStatus as any)?.lastError ?? "unknown"}`;
-      return "down: MCP not started.";
+      if ((mcpStatus as any)?.state === "ERROR") return `error: ${(mcpStatus as any)?.lastError ?? "unknown"}`;
+      return "idle: MCP not started.";
     })();
     const snap: any = {
       when: new Date().toISOString(),
@@ -337,7 +339,7 @@ export const TaqwinToolsModal: React.FC<{
       handshake: [
         "initialize (client -> server)",
         "initialize result (server -> client)",
-        "notifications/initialized (client -> server)",
+        "notifications/initialized (client -> server, no response expected)",
         "tools/list, tools/call..."
       ],
       diagnosis,
@@ -371,7 +373,7 @@ export const TaqwinToolsModal: React.FC<{
         const lines = logger
           .getLogs()
           .slice(0, 800)
-          .filter((l: any) => l.category === "mcp" || l.category === "knez_client")
+          .filter((l: any) => l.category === "mcp" || l.category === "knez_client" || l.category === "mcp_server_log")
           .slice(0, 250)
           .map((l: any) => {
             const ts = String(l.timestamp ?? "");
@@ -529,6 +531,8 @@ export const TaqwinToolsModal: React.FC<{
                   })();
                 }}
                 disabled={!isTauri || startingMcp}
+                aria-label="TAQWIN MCP"
+                data-testid="mcp-control"
                 className={`text-xs px-2 py-1 rounded text-white transition-colors ${
                   !isTauri
                     ? "bg-zinc-700/50 cursor-not-allowed"
@@ -556,9 +560,9 @@ export const TaqwinToolsModal: React.FC<{
               </button>
             </div>
           </div>
-          <div className="mt-2 text-[10px] text-zinc-500 font-mono flex items-center justify-between gap-3">
+          <div className="mt-2 text-[10px] text-zinc-500 font-mono flex items-center justify-between gap-3" data-testid="mcp-status">
             <div>
-              mcp={mcpStatus.state} failures={mcpStatus.consecutiveFailures}
+              mcp_state={mcpStatus.state} mcp_trust={(mcpStatus as any).trust ?? "unknown"} pid={(mcpStatus as any)?.debug?.pid ?? "null"} tools={(mcpStatus as any)?.toolsCached ?? 0} failures={mcpStatus.consecutiveFailures}
             </div>
             {mcpStatus.lastRawError && (
               <div className="truncate text-red-300 max-w-[520px]">{mcpStatus.lastRawError}</div>
