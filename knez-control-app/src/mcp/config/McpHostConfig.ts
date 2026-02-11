@@ -68,6 +68,10 @@ export type McpConfigIssue = {
   field?: string;
 };
 
+export function isStdioServer(server: McpServerConfig): server is McpStdioServerConfig {
+  return (server as any).type !== "http";
+}
+
 function isAbsolutePath(p: string): boolean {
   if (!p) return false;
   if (/^[a-zA-Z]:[\\/]/.test(p)) return true;
@@ -171,7 +175,7 @@ export function parseMcpHostConfigJson(raw: string): McpHostConfig {
 export function validateTaqwinMcpServer(server: McpServerConfig): McpConfigIssue[] {
   const issues: McpConfigIssue[] = [];
 
-  if ((server as any)?.type === "http") {
+  if (!isStdioServer(server)) {
     issues.push({ level: "error", message: "TAQWIN must be configured as a stdio server", field: "type" });
     return issues;
   }
@@ -202,7 +206,7 @@ export function validateTaqwinMcpServer(server: McpServerConfig): McpConfigIssue
 }
 
 export function normalizeTaqwinMcpServer(server: McpServerConfig): McpServerConfig {
-  if ((server as any)?.type === "http") return server;
+  if (!isStdioServer(server)) return server;
   const env = { ...(server.env ?? {}) };
   if (!env.PYTHONUNBUFFERED) env.PYTHONUNBUFFERED = "1";
   const args = Array.isArray(server.args) ? server.args.slice() : [];
