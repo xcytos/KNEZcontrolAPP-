@@ -48,7 +48,7 @@ export class ExtractionService {
     }
   }
 
-  async search(query: string, limit = 5, timeoutMs = 3500): Promise<Array<{ title: string; url: string; snippet?: string }>> {
+  async search(query: string, _limit = 5, _timeoutMs = 3500): Promise<Array<{ title: string; url: string; snippet?: string }>> {
     const q = query.trim();
     if (!q) return [];
     
@@ -59,9 +59,6 @@ export class ExtractionService {
     
     // Check if we can use the backend proxy
     try {
-      const controller = new AbortController();
-      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
-      
       // Use the local dev proxy configured in vite.config.ts to forward to KNEZ
       // If KNEZ supports /api/search, this works. If not, we fail gracefully.
       // For this audit, we assume KNEZ will implement this or we handle the failure.
@@ -73,13 +70,6 @@ export class ExtractionService {
       
       console.warn("[ExtractionService] Direct browser search is disabled by policy. Please enable 'search_web' MCP tool.");
       return []; 
-      
-      /* 
-      // Legacy Code Removed for Compliance
-      const searchUrl = `https://duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
-      const { text } = await this.fetchTextWithFallback(searchUrl, timeoutMs);
-      ...
-      */
     } catch (e) {
       return [];
     }
