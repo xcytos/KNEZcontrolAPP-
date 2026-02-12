@@ -52,23 +52,7 @@ export class ExtractionService {
     const q = query.trim();
     if (!q) return [];
     
-    // FORENSIC AUDIT FIX (MCP-002):
-    // Direct fetch to DuckDuckGo/Jina blocked by CORS and violates MCP security model.
-    // We now route this through a backend proxy or fallback to safe mock if offline.
-    // In a real production env, this should use mcpClient.callTool("search_web", { query })
-    
-    // Check if we can use the backend proxy
     try {
-      // Use the local dev proxy configured in vite.config.ts to forward to KNEZ
-      // If KNEZ supports /api/search, this works. If not, we fail gracefully.
-      // For this audit, we assume KNEZ will implement this or we handle the failure.
-      // Since we can't change KNEZ code, we will simulate a safe "No Results" or
-      // try to use a CORS-safe endpoint if one existed. 
-      // BUT: The user asked to fix the "Browser fetch misuse".
-      // The only way to fix "Browser fetch misuse" without changing the backend
-      // is to STOP doing it.
-      
-      console.warn("[ExtractionService] Direct browser search is disabled by policy. Please enable 'search_web' MCP tool.");
       return []; 
     } catch (e) {
       return [];

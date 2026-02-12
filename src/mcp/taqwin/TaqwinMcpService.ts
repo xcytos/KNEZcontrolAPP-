@@ -65,6 +65,7 @@ class TaqwinMcpService {
   private mcpTrust: McpTrust = "untrusted";
   private capabilityTrust: CapabilityTrust = "unknown";
   private toolsPending = false;
+  private canaryInFlight = false;
   private listeners = new Set<(status: ReturnType<TaqwinMcpService["getStatus"]>) => void>();
 
   subscribe(listener: (status: ReturnType<TaqwinMcpService["getStatus"]>) => void): () => void {
@@ -191,12 +192,9 @@ class TaqwinMcpService {
                 this.lastOkAt = Date.now();
                 this.initialized = true;
                 this.mcpTrust = "trusted";
-                this.capabilityTrust = "trusted";
+                this.capabilityTrust = "unknown";
                 this.toolsPending = false;
                 
-                // FORENSIC AUDIT FIX (MCP-001):
-                // Do NOT set READY state on initialization timeout even if it eventually resolves.
-                // We must verify tools/list first.
                 this.setLifecycle("INITIALIZED"); 
                 
                 this.consecutiveFailures = 0;
@@ -209,15 +207,12 @@ class TaqwinMcpService {
                   } catch {}
                 }
                 
-                // Force a tools/list check immediately to verify readiness
-                void this.listTools(true, { waitForResult: false });
-                
                 return client;
               }
               const initializeDurationMs = Math.round(performance.now() - initializeStartedAt);
               this.initialized = true;
               this.mcpTrust = "trusted";
-              this.capabilityTrust = "trusted";
+              this.capabilityTrust = "unknown";
               this.toolsPending = false;
               
               // FORENSIC AUDIT FIX (MCP-001):
@@ -236,23 +231,16 @@ class TaqwinMcpService {
                   await knezClient.reportMcpRuntime({ id: this.serverId, running: true, last_ok: Date.now() / 1000, last_error: null });
                 } catch {}
               }
-              
-              // Trigger tool discovery immediately
-              void this.listTools(true, { waitForResult: false });
             }
             if (this.toolsCache && this.toolsCache.length > 0) {
               this.capabilityTrust = "trusted";
               this.toolsPending = false;
               this.setLifecycle("READY");
             } else {
-              this.capabilityTrust = this.toolsPending ? "pending" : this.initialized ? "trusted" : "unknown";
-              // Only upgrade to READY if we are truly initialized AND have tools (or pending discovery)
-              if (this.initialized && !this.toolsPending && (!this.toolsCache || this.toolsCache.length === 0)) {
-                 // We are initialized but have no tools yet. Remain INITIALIZED.
-                 this.setLifecycle("INITIALIZED");
-                 void this.listTools(true, { waitForResult: false });
-              } else if (this.initialized) {
-                 this.setLifecycle("READY");
+              this.capabilityTrust = "unknown";
+              if (this.initialized) {
+                this.toolsPending = false;
+                this.setLifecycle("INITIALIZED");
               }
             }
             return client;
@@ -421,10 +409,19 @@ class TaqwinMcpService {
         this.toolsPending = true;
         this.capabilityTrust = "pending";
         this.setLifecycle("DISCOVERING");
-        const timeoutMs = typeof opts?.timeoutMs === "number" ? opts.timeoutMs : (waitForResult ? 15000 : 300000);
+        const timeoutMs = typeof opts?.timeoutMs === "number" ? opts.timeoutMs : (waitForResult ? 15000 : 60000);
         const listPromise = mcpInspectorService.listTools(sid, { timeoutMs, waitForResult });
         if (waitForResult) {
           const tools = await listPromise;
+          if (!tools || tools.length === 0) {
+            this.toolsCache = [];
+            this.toolsCacheAt = Date.now();
+            this.lastOkAt = Date.now();
+            this.toolsPending = false;
+            this.capabilityTrust = "failed";
+            this.setLifecycle("ERROR");
+            throw new Error("mcp_server_no_tools");
+          }
           this.toolsCache = tools;
           this.toolsCacheAt = Date.now();
           const durationMs = Math.round(performance.now() - startedAt);
@@ -434,6 +431,14 @@ class TaqwinMcpService {
           this.setLifecycle("READY");
           logger.info("mcp", "TAQWIN MCP tools/list ok", { durationMs, tools: tools.length });
           logger.info("mcp_audit", "tools/list", { ok: true, durationMs, tools: tools.length });
+          if (!this.canaryInFlight && tools.some((t) => t?.name === "debug_test")) {
+            this.canaryInFlight = true;
+            void this.callTool("debug_test", { message: "ping", include_env: false })
+              .catch(() => {})
+              .finally(() => {
+                this.canaryInFlight = false;
+              });
+          }
           return tools;
         }
 
@@ -496,10 +501,19 @@ class TaqwinMcpService {
           throw normalized;
         }
         if (result.kind === "timeout") {
-          this.setLifecycle("READY");
+          this.setLifecycle("DISCOVERING");
           return this.toolsCache ?? [];
         }
         const tools = result.value;
+        if (!tools || tools.length === 0) {
+          this.toolsCache = [];
+          this.toolsCacheAt = Date.now();
+          this.lastOkAt = Date.now();
+          this.toolsPending = false;
+          this.capabilityTrust = "failed";
+          this.setLifecycle("ERROR");
+          throw new Error("mcp_server_no_tools");
+        }
         this.toolsCache = tools;
         this.toolsCacheAt = Date.now();
         const durationMs = Math.round(performance.now() - startedAt);
@@ -509,6 +523,14 @@ class TaqwinMcpService {
         this.setLifecycle("READY");
         logger.info("mcp", "TAQWIN MCP tools/list ok", { durationMs, tools: tools.length });
         logger.info("mcp_audit", "tools/list", { ok: true, durationMs, tools: tools.length });
+        if (!this.canaryInFlight && tools.some((t) => t?.name === "debug_test")) {
+          this.canaryInFlight = true;
+          void this.callTool("debug_test", { message: "ping", include_env: false })
+            .catch(() => {})
+            .finally(() => {
+              this.canaryInFlight = false;
+            });
+        }
         return tools;
       } catch (err) {
         const durationMs = Math.round(performance.now() - startedAt);
@@ -557,6 +579,17 @@ class TaqwinMcpService {
       try {
         const client = await this.getClient();
         const sid = this.serverId;
+        if ((!this.toolsCache || this.toolsCache.length === 0) && sid) {
+          const tools = await mcpInspectorService.listTools(sid, { timeoutMs: 60000, waitForResult: true });
+          this.toolsCache = tools;
+          this.toolsCacheAt = Date.now();
+        }
+        if (!this.toolsCache || this.toolsCache.length === 0) {
+          throw new Error("mcp_no_tools_after_list");
+        }
+        if (!this.toolsCache.some((t) => t?.name === name)) {
+          throw new Error(`mcp_tool_not_found:${name}`);
+        }
         const res = sid ? (await mcpInspectorService.callTool(sid, name, args, 180000)).result : await client.callTool(name, args);
         const durationMs = Math.round(performance.now() - startedAt);
         this.lastOkAt = Date.now();
@@ -685,12 +718,8 @@ class TaqwinMcpService {
     const startedAt = performance.now();
     try {
       const t0 = performance.now();
-        await this.start(false);
+      await this.start(false);
       steps.push({ step: "start", ok: true, durationMs: Math.round(performance.now() - t0) });
-
-      const t2 = performance.now();
-      const status = await this.callTool("get_server_status", { force_refresh: true, include_db_analysis: false });
-      steps.push({ step: "tools/call get_server_status", ok: true, durationMs: Math.round(performance.now() - t2), detail: status });
 
       const t3 = performance.now();
       const dbg = await this.callTool("debug_test", { message: "mcp_self_test" });

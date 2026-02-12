@@ -1,11 +1,13 @@
 import { McpStdioClient } from "../client/McpStdioClient";
 import { McpHttpClient } from "../client/McpHttpClient";
+import { McpRustClient } from "../client/McpRustClient";
 import { mcpHostConfigService } from "../config/McpHostConfigService";
 import type { McpConfigIssue, McpServerConfig, NormalizedMcpConfig, NormalizedMcpServerConfig } from "../config/McpHostConfig";
 import { normalizeMcpConfig } from "../config/McpHostConfig";
 import { extractServerInputRefs, listInputsById, substituteServerInputRefs } from "../config/McpInputs";
 import type { McpToolDefinition } from "../../services/McpTypes";
 import { knezClient } from "../../services/KnezClient";
+import { getMcpAuthority } from "../authority";
 
 export type McpInspectorLifecycle = "IDLE" | "STARTING" | "INITIALIZED" | "LISTING_TOOLS" | "READY" | "ERROR";
 
@@ -52,7 +54,7 @@ export type KnezHealthSnapshot = {
 
 type ServerSession = {
   server: NormalizedMcpServerConfig;
-  client: McpStdioClient | McpHttpClient;
+  client: McpStdioClient | McpHttpClient | McpRustClient;
   state: McpInspectorLifecycle;
   lastOkAt: number | null;
   initializedAt: number | null;
@@ -208,7 +210,7 @@ export class McpInspectorService {
     this.emit();
   }
 
-  getClientInstance(serverId: string): McpStdioClient | McpHttpClient | null {
+  getClientInstance(serverId: string): McpStdioClient | McpHttpClient | McpRustClient | null {
     return this.sessions.get(serverId)?.client ?? null;
   }
 
@@ -353,16 +355,114 @@ export class McpInspectorService {
       this.emit();
       try {
         const res = await s.client.initialize();
+        if (typeof (s.client as any).notifyInitialized === "function") {
+          try {
+            await (s.client as any).notifyInitialized();
+          } catch {}
+        }
         s.initializeDurationMs = Math.round(performance.now() - startedAt);
         s.initializedAt = Date.now();
         s.lastOkAt = Date.now();
-        s.state = "READY";
+        s.state = "INITIALIZED";
         s.lastError = null;
         this.emit();
         return res;
       } catch (e: any) {
         s.initializeDurationMs = Math.round(performance.now() - startedAt);
         s.state = "ERROR";
+        s.lastError = String(e?.message ?? e);
+        this.emit();
+        throw e;
+      }
+    });
+  }
+
+  async handshake(serverId: string, opts?: { toolsListTimeoutMs?: number }): Promise<McpToolDefinition[]> {
+    const toolsListTimeoutMs = opts?.toolsListTimeoutMs ?? 60000;
+    return this.enqueue(serverId, async () => {
+      const s = this.sessions.get(serverId);
+      if (!s) throw new Error("mcp_server_not_found");
+
+      if (!s.client.getDebugState().running) {
+        if (!s.server.enabled) throw new Error("mcp_server_disabled");
+        s.state = "STARTING";
+        s.lastError = null;
+        s.tools = [];
+        s.toolsCacheAt = null;
+        s.toolsPending = false;
+        this.emit();
+        const cfg = await this.resolveInputsForServer(this.toServerConfig(s.server));
+        await s.client.startWithConfig(cfg);
+      }
+
+      const initStartedAt = performance.now();
+      s.state = "STARTING";
+      s.lastError = null;
+      this.emit();
+      try {
+        const res = await s.client.initialize();
+        if (typeof (s.client as any).notifyInitialized === "function") {
+          try {
+            await (s.client as any).notifyInitialized();
+          } catch {}
+        }
+        s.initializeDurationMs = Math.round(performance.now() - initStartedAt);
+        s.initializedAt = Date.now();
+        s.lastOkAt = Date.now();
+        s.state = "INITIALIZED";
+        s.lastError = null;
+        this.emit();
+        void res;
+      } catch (e: any) {
+        s.initializeDurationMs = Math.round(performance.now() - initStartedAt);
+        s.state = "ERROR";
+        s.lastError = String(e?.message ?? e);
+        this.emit();
+        throw e;
+      }
+
+      if (this.requiresKnez(s.server)) {
+        try {
+          await this.ensureKnezHealthy();
+        } catch (e: any) {
+          s.state = "ERROR";
+          s.lastError = String(e?.message ?? e);
+          this.emit();
+          throw e;
+        }
+      }
+
+      const toolsStartedAt = performance.now();
+      s.state = "LISTING_TOOLS";
+      s.toolsPending = true;
+      s.lastError = null;
+      this.emit();
+      try {
+        const tools = await s.client.listTools({ timeoutMs: toolsListTimeoutMs, logTimeoutLevel: "warn" });
+        if (!Array.isArray(tools) || tools.length === 0) {
+          s.tools = [];
+          s.toolsCacheAt = Date.now();
+          s.toolsListDurationMs = Math.round(performance.now() - toolsStartedAt);
+          s.lastOkAt = Date.now();
+          s.state = "ERROR";
+          s.toolsPending = false;
+          s.lastError = "mcp_server_no_tools";
+          this.emit();
+          throw new Error("mcp_server_no_tools");
+        }
+        s.tools = tools;
+        s.toolsCacheAt = Date.now();
+        s.toolsListDurationMs = Math.round(performance.now() - toolsStartedAt);
+        s.lastOkAt = Date.now();
+        s.state = "READY";
+        s.toolsPending = false;
+        s.lastError = null;
+        this.emit();
+        return tools;
+      } catch (e: any) {
+        s.toolsListDurationMs = Math.round(performance.now() - toolsStartedAt);
+        s.state = "ERROR";
+        s.toolsPending = false;
         s.lastError = String(e?.message ?? e);
         this.emit();
         throw e;
@@ -386,6 +486,7 @@ export class McpInspectorService {
           throw e;
         }
       }
+      if (!s.initializedAt) throw new Error("mcp_not_initialized");
       const timeoutMs = typeof opts?.timeoutMs === "number" ? opts.timeoutMs : waitForResult ? 15000 : 60000;
       const startedAt = performance.now();
       s.state = "LISTING_TOOLS";
@@ -393,6 +494,17 @@ export class McpInspectorService {
       this.emit();
       try {
         const tools = await s.client.listTools({ timeoutMs, logTimeoutLevel: waitForResult ? "warn" : "debug" });
+        if (!Array.isArray(tools) || tools.length === 0) {
+          s.tools = [];
+          s.toolsCacheAt = Date.now();
+          s.toolsListDurationMs = Math.round(performance.now() - startedAt);
+          s.lastOkAt = Date.now();
+          s.state = "ERROR";
+          s.toolsPending = false;
+          s.lastError = "mcp_server_no_tools";
+          this.emit();
+          throw new Error("mcp_server_no_tools");
+        }
         s.tools = tools;
         s.toolsCacheAt = Date.now();
         s.toolsListDurationMs = Math.round(performance.now() - startedAt);
@@ -418,8 +530,47 @@ export class McpInspectorService {
       const s = this.sessions.get(serverId);
       if (!s) throw new Error("mcp_server_not_found");
       if (!s.client.getDebugState().running) throw new Error("mcp_not_started");
+      if (!s.initializedAt) throw new Error("mcp_not_initialized");
       if (this.requiresKnez(s.server)) {
         await this.ensureKnezHealthy();
+      }
+      if (!s.toolsCacheAt || s.tools.length === 0) {
+        const startedAt = performance.now();
+        s.state = "LISTING_TOOLS";
+        s.toolsPending = true;
+        this.emit();
+        try {
+          const tools = await s.client.listTools({ timeoutMs: 60000, logTimeoutLevel: "warn" });
+          if (!Array.isArray(tools) || tools.length === 0) {
+            s.tools = [];
+            s.toolsCacheAt = Date.now();
+            s.toolsListDurationMs = Math.round(performance.now() - startedAt);
+            s.lastOkAt = Date.now();
+            s.state = "ERROR";
+            s.toolsPending = false;
+            s.lastError = "mcp_server_no_tools";
+            this.emit();
+            throw new Error("mcp_server_no_tools");
+          }
+          s.tools = tools;
+          s.toolsCacheAt = Date.now();
+          s.toolsListDurationMs = Math.round(performance.now() - startedAt);
+          s.lastOkAt = Date.now();
+          s.state = "READY";
+          s.toolsPending = false;
+          s.lastError = null;
+          this.emit();
+        } catch (e: any) {
+          s.toolsListDurationMs = Math.round(performance.now() - startedAt);
+          s.state = "ERROR";
+          s.toolsPending = false;
+          s.lastError = String(e?.message ?? e);
+          this.emit();
+          throw e;
+        }
+      }
+      if (!s.tools.some((t) => t?.name === name)) {
+        throw new Error(`mcp_tool_not_found:${name}`);
       }
       const startedAt = performance.now();
       const res = await s.client.callTool(name, args, { timeoutMs });
@@ -494,6 +645,7 @@ export class McpInspectorService {
 
   private reconcileSessions() {
     const normalized = this.config.normalized;
+    const authority = getMcpAuthority();
     const next = new Map<string, ServerSession>();
     if (normalized) {
       for (const srv of Object.values(normalized.servers)) {
@@ -504,7 +656,12 @@ export class McpInspectorService {
         } else {
           next.set(srv.id, {
             server: srv,
-            client: srv.type === "http" ? new McpHttpClient() : new McpStdioClient(),
+            client:
+              srv.type === "http"
+                ? new McpHttpClient()
+                : authority === "rust"
+                  ? new McpRustClient()
+                  : new McpStdioClient(),
             state: "IDLE",
             lastOkAt: null,
             initializedAt: null,

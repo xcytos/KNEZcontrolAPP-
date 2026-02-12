@@ -1,6 +1,7 @@
 import { McpToolDefinition } from "../../services/McpTypes";
 import { logger } from "../../services/LogService";
 import type { McpServerConfig } from "../config/McpHostConfig";
+import { classifyMcpTimeout } from "./classifyTimeout";
 import type { McpTrafficEvent } from "../inspector/McpTraffic";
 
 type McpRequest = {
@@ -195,7 +196,8 @@ export class McpHttpClient {
         if (!this.pending.has(id)) return;
         this.pending.delete(id);
         if (stopOnTimeout) controller.abort();
-        this.lastError = "mcp_request_timeout";
+        const classified = classifyMcpTimeout(method);
+        this.lastError = classified;
         this.lastTimeout = { at: Date.now(), method, timeoutMs, url };
         if (logTimeoutLevel !== "none") {
           const payload = { url, method, timeoutMs, lastWrite: this.lastWrite, lastTimeout: this.lastTimeout };
@@ -203,7 +205,7 @@ export class McpHttpClient {
           else if (logTimeoutLevel === "warn") logger.warn("mcp", logTimeoutMessage, payload);
           else logger.error("mcp", logTimeoutMessage, payload);
         }
-        reject(new Error("mcp_request_timeout"));
+        reject(new Error(classified));
       }, Math.max(1, timeoutMs));
     }).finally(() => {
       if (typeof timeoutId === "number") clearTimeout(timeoutId);
@@ -333,12 +335,21 @@ export class McpHttpClient {
   }
 
   async initialize(): Promise<any> {
-    const params = {
-      protocolVersion: "2024-11-05",
-      capabilities: {},
-      clientInfo: { name: "knez-control-app", version: "dev" },
-    };
-    return await this.request("initialize", params, { timeoutMs: 8000, stopOnTimeout: false, logTimeoutLevel: "debug" });
+    const protocolVersions = ["2024-11-05", "1.0"];
+    let lastErr: any = null;
+    for (const protocolVersion of protocolVersions) {
+      try {
+        const params = {
+          protocolVersion,
+          capabilities: {},
+          clientInfo: { name: "knez-control-app", version: "dev" },
+        };
+        return await this.request("initialize", params, { timeoutMs: 8000, stopOnTimeout: false, logTimeoutLevel: "debug" });
+      } catch (e: any) {
+        lastErr = e;
+      }
+    }
+    throw lastErr ?? new Error("mcp_initialize_failed");
   }
 
   async listTools(opts?: { cursor?: string | null; timeoutMs?: number; logTimeoutLevel?: McpRequestOptions["logTimeoutLevel"] }): Promise<McpToolDefinition[]> {

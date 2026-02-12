@@ -49,8 +49,8 @@ const CodeBlock: React.FC<{ language: string; content: string }> = ({ language, 
           </button>
         </div>
       </div>
-      <pre className="p-3 overflow-x-auto text-xs font-mono text-zinc-300">
-        <code>{content}</code>
+      <pre className="p-3 overflow-x-hidden text-xs font-mono text-zinc-300 whitespace-pre-wrap break-words max-w-full">
+        <code className="whitespace-pre-wrap break-words">{content}</code>
       </pre>
     </div>
   );
@@ -79,7 +79,7 @@ const FormattedContent: React.FC<{ text: string }> = ({ text }) => {
   const blocks = formatMarkdown(text);
   
   return (
-    <div className="whitespace-pre-wrap leading-relaxed">
+    <div className="whitespace-pre-wrap leading-relaxed break-words max-w-full min-w-0">
       {blocks.map((block, i) => (
         block.type === 'code' ? (
           <CodeBlock key={i} language={block.language!} content={block.content} />
@@ -145,7 +145,7 @@ const MessageItemInner: React.FC<{
         {msg.toolCall ? (
           <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-3">
             <div className="flex items-center justify-between mb-2">
-              <div className="text-xs font-mono text-zinc-200">{msg.toolCall.tool}</div>
+              <div className="text-xs font-mono text-zinc-200 break-all min-w-0">{msg.toolCall.tool}</div>
               <div className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
                 msg.toolCall.status === "succeeded"
                   ? "bg-green-900/20 text-green-300 border-green-900/40"
@@ -157,7 +157,7 @@ const MessageItemInner: React.FC<{
               </div>
             </div>
             <div className="text-[10px] font-mono text-zinc-500 mb-1">args</div>
-            <pre className="text-[10px] bg-zinc-950 p-2 rounded overflow-x-auto text-zinc-300 border border-zinc-900">
+            <pre className="text-[10px] bg-zinc-950 p-2 rounded overflow-x-hidden whitespace-pre-wrap break-words text-zinc-300 border border-zinc-900 max-w-full">
               {JSON.stringify(msg.toolCall.args ?? {}, null, 2)}
             </pre>
             {msg.toolCall.status !== "calling" && (
@@ -165,7 +165,7 @@ const MessageItemInner: React.FC<{
                 <div className="text-[10px] font-mono text-zinc-500 mt-3 mb-1">
                   {msg.toolCall.status === "failed" ? "error" : "result"}
                 </div>
-                <pre className={`text-[10px] bg-zinc-950 p-2 rounded overflow-x-auto border border-zinc-900 ${
+                <pre className={`text-[10px] bg-zinc-950 p-2 rounded overflow-x-hidden whitespace-pre-wrap break-words border border-zinc-900 max-w-full ${
                   msg.toolCall.status === "failed" ? "text-red-300" : "text-green-300"
                 }`}>
                   {msg.toolCall.status === "failed"
@@ -212,7 +212,7 @@ const MessageItemInner: React.FC<{
                       Copy
                     </button>
                   </div>
-                  <pre className="text-[10px] text-zinc-300 p-3 overflow-x-auto whitespace-pre-wrap">
+                  <pre className="text-[10px] text-zinc-300 p-3 overflow-x-hidden whitespace-pre-wrap break-words max-w-full">
                     {content}
                   </pre>
                 </div>

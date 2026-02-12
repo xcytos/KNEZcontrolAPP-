@@ -176,7 +176,7 @@ export const ChatTerminalPane: React.FC = () => {
         <div className="mt-2 text-[10px] text-zinc-500 font-mono">engine=powershell hotkey=ctrl+enter</div>
       </div>
 
-      <div ref={outRef} className="flex-1 overflow-y-auto p-3 font-mono text-[11px] text-zinc-200 whitespace-pre-wrap">
+      <div ref={outRef} className="flex-1 overflow-y-auto overflow-x-hidden p-3 font-mono text-[11px] text-zinc-200 whitespace-pre-wrap break-words max-w-full min-w-0">
         {output || "Ready."}
       </div>
     </div>

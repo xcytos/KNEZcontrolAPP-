@@ -4,6 +4,7 @@ import "./index.css";
 import App from "./App";
 import { ErrorBoundary } from "./components/layout/ErrorBoundary";
 import "./utils/observer"; // Initialize observer
+import "./mcp/rustEventBridge";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

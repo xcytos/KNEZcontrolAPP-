@@ -3,9 +3,9 @@ import { McpRegistrySnapshot } from '../../domain/DataContracts';
 import { knezClient } from '../../services/KnezClient';
 import { useToast } from '../../components/ui/Toast';
 import { logger } from '../../services/LogService';
-import { runTaqwinMcpSelfTest } from '../../mcp/registry/runTaqwinMcpSelfTest';
 import { McpInspectorPanel } from './inspector/McpInspectorPanel';
 import { mcpInspectorService } from '../../mcp/inspector/McpInspectorService';
+import { extractImportedMcpConfig } from '../../mcp/config/importMcpServers';
 
 const AddServerModal: React.FC<{
   isOpen: boolean;
@@ -18,7 +18,9 @@ const AddServerModal: React.FC<{
 
   useEffect(() => {
     if (isOpen) {
-      setJson('{\n  "my-server": {\n    "command": "node",\n    "args": ["path/to/server.js"],\n    "enabled": true\n  }\n}');
+      setJson(
+        '{\n  "servers": {\n    "taqwin": {\n      "command": "C:/path/to/python.exe",\n      "args": ["-u", "C:/path/to/main.py"],\n      "env": { "PYTHONUNBUFFERED": "1" },\n      "enabled": true\n    },\n    "Chrome DevTools MCP": {\n      "command": "npx",\n      "args": ["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics"],\n      "env": {},\n      "enabled": true\n    }\n  }\n}'
+      );
       setError(null);
     }
   }, [isOpen]);
@@ -90,7 +92,7 @@ export const McpRegistryView: React.FC<{
   const [tab, setTab] = useState<"registry" | "inspector">("registry");
   const [toggling, setToggling] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [testing, setTesting] = useState<string | null>(null);
+  const [restarting, setRestarting] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const [showAddModal, setShowAddModal] = useState(false);
 
@@ -113,10 +115,17 @@ export const McpRegistryView: React.FC<{
       if (!s?.id) continue;
       if (byId.has(s.id)) continue;
       const st = inspectorStatusById[s.id];
+      const status = (() => {
+        const state = st?.state ?? "IDLE";
+        if (state === "READY" || state === "INITIALIZED") return "active";
+        if (state === "STARTING" || state === "LISTING_TOOLS") return "starting";
+        if (state === "ERROR") return "error";
+        return "inactive";
+      })();
       byId.set(s.id, {
         id: s.id,
         provider: "local_config",
-        status: "inactive",
+        status,
         capabilities: [],
         enabled: s.enabled,
         last_error: st?.lastError ?? null,
@@ -141,7 +150,7 @@ export const McpRegistryView: React.FC<{
   const handleToggle = async (id: string, currentStatus: string) => {
     setToggling(id);
     try {
-      const isEnabled = currentStatus === 'active';
+      const isEnabled = currentStatus === 'active' || currentStatus === 'starting' || currentStatus === 'error';
       const targetState = !isEnabled;
       
       if (localServerIds.has(id)) {
@@ -175,11 +184,16 @@ export const McpRegistryView: React.FC<{
           
           // If enabling, try to start it immediately
           if (targetState) {
+            const issues = (mcpInspectorService.getConfig().issuesByServerId?.[id] ?? []).filter((it: any) => it?.level === "error");
+            if (issues.length) {
+              showToast(`Enabled ${id} but config is invalid: ${issues[0]?.message ?? "invalid_config"}`, "error");
+              return;
+            }
             try {
-              await mcpInspectorService.start(id);
+              await mcpInspectorService.handshake(id);
               showToast(`Started ${id}`, 'success');
             } catch (e: any) {
-              showToast(`Enabled ${id} but failed to start: ${e.message}`, 'error');
+              showToast(`Enabled ${id} but failed to start: ${String(e?.message ?? e)}`, 'error');
             }
           } else {
              await mcpInspectorService.stop(id);
@@ -198,69 +212,83 @@ export const McpRegistryView: React.FC<{
     }
   };
   
-  const handleTest = async (id: string) => {
-    setTesting(id);
+  const handleRestart = async (id: string) => {
+    if (!localServerIds.has(id)) return;
+    setRestarting(id);
     try {
-      const w = window as any;
-      const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
-      if (!isTauri) throw new Error("MCP test requires the desktop app (Tauri).");
-      const res = await runTaqwinMcpSelfTest();
-      if (!res.ok) throw new Error(String(res?.steps?.slice(-1)?.[0]?.detail ?? "self_test_failed"));
-      const toolsStep = (res.steps ?? []).find((s: any) => s.step === "tools/list");
-      const toolCount = Number((toolsStep as any)?.detail?.tools ?? 0);
-      logger.info("mcp", "MCP connectivity test ok", { id, toolCount, durationMs: res.durationMs });
-      showToast(`MCP test OK (${toolCount} tools)`, "success");
-      window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
+      await mcpInspectorService.restart(id);
+      showToast(`Restarted ${id}`, "success");
     } catch (e: any) {
-      const msg = String(e?.message ?? e);
-      logger.error("mcp", "MCP connectivity test failed", { id, error: msg });
-      showToast(`MCP test failed: ${msg}`, "error");
-      window.dispatchEvent(new CustomEvent("knez-open-console", { detail: { tab: "mcp" } }));
+      showToast(`Restart failed: ${String(e?.message ?? e)}`, "error");
     } finally {
-      setTesting(null);
+      setRestarting(null);
     }
   };
 
   const handleAddServer = async (jsonStr: string) => {
     try {
-      let newServers = JSON.parse(jsonStr);
-      if (typeof newServers !== 'object' || newServers === null) throw new Error("Invalid JSON object");
-      
-      // Handle single server object (if it has 'type' or 'command' and 'id'?)
-      // Or just if it has properties that are NOT server objects.
-      // A server object has 'command' or 'url'.
-      // A map has keys pointing to server objects.
-      // If the root object has 'command' or 'url', it's a single server.
-      if (newServers.command || newServers.url || newServers.type) {
-         const id = newServers.id || `server_${Date.now()}`;
-         newServers = { [id]: newServers };
-      }
+      const parsed = JSON.parse(jsonStr);
+      const extracted = extractImportedMcpConfig(parsed);
+
+      const validateServer = (id: string, server: any): string[] => {
+        const s = typeof server === "object" && server !== null ? server : {};
+        const isHttp = String(s.type ?? "").toLowerCase() === "http" || typeof s.url === "string";
+        if (isHttp) {
+          if (!String(s.url ?? "").trim()) return [`${id}: url is required`];
+          return [];
+        }
+        const errs: string[] = [];
+        if (!String(s.command ?? "").trim()) errs.push(`${id}: command is required`);
+        if (s.args !== undefined && !Array.isArray(s.args)) errs.push(`${id}: args must be an array`);
+        return errs;
+      };
+
+      const mergedInputs = (() => {
+        const current = mcpInspectorService.getInputs();
+        const byId = new Map<string, any>();
+        for (const it of current) {
+          if (!it?.id) continue;
+          byId.set(String(it.id), it);
+        }
+        for (const it of extracted.inputs ?? []) {
+          const id = String((it as any)?.id ?? "").trim();
+          if (!id) continue;
+          if (byId.has(id)) continue;
+          byId.set(id, it);
+        }
+        return Array.from(byId.values());
+      })();
 
       const currentServers = mcpInspectorService.getServers();
-      const inputs = mcpInspectorService.getInputs();
       const serverMap: Record<string, any> = {};
-      
-      // Keep existing
-      for (const s of currentServers) {
-        serverMap[s.id] = s;
+      for (const s of currentServers) serverMap[s.id] = s;
+      for (const [key, val] of Object.entries(extracted.servers ?? {})) {
+        const id = String(key ?? "").trim();
+        if (!id) continue;
+        serverMap[id] = { ...(val as any), id };
       }
-      
-      // Merge new
-      for (const [key, val] of Object.entries(newServers)) {
-        serverMap[key] = { ...(val as any), id: key };
+
+      const validationErrors: string[] = [];
+      for (const [id, s] of Object.entries(extracted.servers ?? {})) {
+        validationErrors.push(...validateServer(String(id), s));
       }
-      
-      const payload = {
-        schema_version: "1",
-        inputs,
-        servers: serverMap
-      };
-      
-      await mcpInspectorService.saveConfig(JSON.stringify(payload, null, 2));
+      if (validationErrors.length) throw new Error(validationErrors.slice(0, 8).join("\n"));
+
+      await mcpInspectorService.saveConfig(
+        JSON.stringify(
+          {
+            schema_version: extracted.schema_version ?? "1",
+            inputs: mergedInputs,
+            servers: serverMap
+          },
+          null,
+          2
+        )
+      );
       showToast("MCP Server configuration updated", "success");
       onRefresh();
     } catch (e: any) {
-      throw new Error(`Failed to add server: ${e.message}`);
+      throw new Error(`Failed to add server: ${String(e?.message ?? e)}`);
     }
   };
 
@@ -297,7 +325,9 @@ export const McpRegistryView: React.FC<{
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {items?.map((item) => (
             <div key={item.id} className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 relative overflow-hidden">
-              <div className={`absolute top-0 left-0 w-1 h-full ${item.status === 'active' ? 'bg-green-500' : 'bg-zinc-700'}`} />
+              <div className={`absolute top-0 left-0 w-1 h-full ${
+                item.status === 'active' ? 'bg-green-500' : item.status === 'starting' ? 'bg-amber-500' : item.status === 'error' ? 'bg-red-500' : 'bg-zinc-700'
+              }`} />
               
               <div className="pl-3">
                 <div className="flex justify-between items-start mb-3">
@@ -323,7 +353,13 @@ export const McpRegistryView: React.FC<{
                     </div>
                   </div>
                   <div className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
-                    item.status === 'active' ? 'bg-green-900/30 text-green-400' : 'bg-zinc-800 text-zinc-500'
+                    item.status === 'active'
+                      ? 'bg-green-900/30 text-green-400'
+                      : item.status === 'starting'
+                        ? 'bg-amber-900/30 text-amber-300'
+                        : item.status === 'error'
+                          ? 'bg-red-900/30 text-red-300'
+                          : 'bg-zinc-800 text-zinc-500'
                   }`}>
                     {item.status}
                   </div>
@@ -342,7 +378,7 @@ export const McpRegistryView: React.FC<{
 
                 <div className="flex justify-between items-center mt-4 pt-3 border-t border-zinc-800">
                   <div className="text-[10px] text-zinc-600">
-                     Health: {item.status === 'active' ? 'Operational' : 'Offline'}
+                     Health: {item.status === 'active' ? 'Operational' : item.status === 'starting' ? 'Connecting' : item.status === 'error' ? 'Error' : 'Offline'}
                   </div>
                   <div className="flex items-center gap-2">
                     <button
@@ -354,13 +390,27 @@ export const McpRegistryView: React.FC<{
                     >
                       Inspect
                     </button>
-                    <button
-                      onClick={() => handleTest(item.id)}
-                      disabled={testing === item.id}
-                      className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors disabled:opacity-50"
-                    >
-                      {testing === item.id ? "..." : "Test"}
-                    </button>
+                    {localServerIds.has(item.id) ? (
+                      <button
+                        onClick={() => {
+                          mcpInspectorService.setSelectedId(item.id);
+                          setTab("inspector");
+                          window.dispatchEvent(new CustomEvent("mcp-inspector-open-config"));
+                        }}
+                        className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
+                      >
+                        Edit
+                      </button>
+                    ) : null}
+                    {localServerIds.has(item.id) ? (
+                      <button
+                        onClick={() => handleRestart(item.id)}
+                        disabled={restarting === item.id}
+                        className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors disabled:opacity-50"
+                      >
+                        {restarting === item.id ? "..." : "Restart"}
+                      </button>
+                    ) : null}
                     <button
                       onClick={() => setExpanded((prev) => (prev === item.id ? null : item.id))}
                       className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
@@ -371,14 +421,14 @@ export const McpRegistryView: React.FC<{
                       onClick={() => handleToggle(item.id, item.status || 'inactive')}
                       disabled={toggling === item.id}
                       className={`text-xs px-3 py-1.5 rounded transition-colors ${
-                         item.status === 'active' 
+                         item.status === 'active' || item.status === 'starting' || item.status === 'error'
                          ? 'bg-zinc-800 text-zinc-400 hover:text-red-400 hover:bg-zinc-700' 
                          : 'bg-blue-600 text-white hover:bg-blue-500'
                       }`}
                     >
                       {toggling === item.id ? (
                         <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      ) : item.status === 'active' ? 'Disable' : 'Enable'}
+                      ) : item.status === 'active' || item.status === 'starting' || item.status === 'error' ? 'Disable' : 'Enable'}
                     </button>
                   </div>
                 </div>
@@ -413,6 +463,16 @@ export const McpRegistryView: React.FC<{
                     {inspectorStatusById[item.id]?.lastError ? (
                       <div className="border border-red-900/40 bg-red-900/10 rounded p-2 text-red-300 whitespace-pre-wrap break-words">
                         {String(inspectorStatusById[item.id]?.lastError)}
+                      </div>
+                    ) : null}
+                    {String(item.id ?? "")
+                      .toLowerCase()
+                      .includes("chrome") &&
+                    String(item.id ?? "")
+                      .toLowerCase()
+                      .includes("devtools") ? (
+                      <div className="border border-zinc-800 bg-zinc-950/40 rounded p-2 text-zinc-300 whitespace-pre-wrap break-words">
+                        Requires Node.js 20.19+ and Chrome stable. Add --no-usage-statistics (and optionally --no-performance-crux) to disable telemetry.
                       </div>
                     ) : null}
                   </div>
