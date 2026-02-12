@@ -21,6 +21,7 @@ import { useTaqwinMcpStatus } from "../../hooks/useTaqwinMcpStatus";
 import { ChatTerminalPane } from "./ChatTerminalPane";
 import { Command, Child } from "@tauri-apps/plugin-shell";
 import { toolExposureService } from "../../services/ToolExposureService";
+import { mcpOrchestrator } from "../../mcp/McpOrchestrator";
 
 // CP17: History Modal
 const HistoryModal: React.FC<{
@@ -330,36 +331,187 @@ const AuditModal: React.FC<{
   );
 };
 
-const AvailableToolsModal: React.FC<{
+const ToolInvokeModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
-  tools: Array<{ name: string; serverId?: string; originalName?: string; description?: string; riskLevel?: string; permission?: { allowed: boolean; reason?: string } }>;
-}> = ({ isOpen, onClose, tools }) => {
-  if (!isOpen) return null;
+  tool: any | null;
+  onRun: (args: any) => Promise<void>;
+}> = ({ isOpen, onClose, tool, onRun }) => {
+  const [argsText, setArgsText] = useState("{\n\n}");
+  const [error, setError] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+  const [confirmHighRisk, setConfirmHighRisk] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setError(null);
+    setRunning(false);
+    setArgsText("{\n\n}");
+    setConfirmHighRisk(false);
+  }, [isOpen, tool?.name]);
+
+  if (!isOpen || !tool) return null;
+  const isHighRisk = String(tool.riskLevel ?? "") === "high";
+  const canRun = !running && (!isHighRisk || confirmHighRisk) && Boolean(tool.permission?.allowed);
+
+  const run = async () => {
+    setError(null);
+    let parsed: any;
+    try {
+      parsed = argsText.trim() ? JSON.parse(argsText) : {};
+    } catch (e: any) {
+      setError(`Invalid JSON: ${String(e?.message ?? e)}`);
+      return;
+    }
+    setRunning(true);
+    try {
+      await onRun(parsed);
+      onClose();
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setRunning(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-zinc-900 border border-zinc-700 rounded-lg w-[900px] shadow-xl max-h-[90vh] flex flex-col">
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg w-[820px] shadow-xl max-h-[90vh] flex flex-col">
         <div className="p-6 pb-4 flex-none border-b border-zinc-800/50">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-light text-zinc-200">Available Tools</h2>
+            <div className="min-w-0">
+              <h2 className="text-lg font-light text-zinc-200">Invoke Tool</h2>
+              <div className="font-mono text-xs text-zinc-300 break-all mt-1">{String(tool.name ?? "")}</div>
+              <div className="text-[10px] text-zinc-500 mt-1">
+                {tool.permission?.allowed ? "allowed" : `blocked:${tool.permission?.reason ?? "policy"}`}{tool.riskLevel ? ` • risk:${tool.riskLevel}` : ""}
+              </div>
+            </div>
             <button onClick={onClose} className="text-xs text-zinc-400 hover:text-white">Close</button>
           </div>
         </div>
-        <div className="p-6 overflow-y-auto flex-1 space-y-2">
-          {tools.length === 0 ? (
-            <div className="text-sm text-zinc-500">No exposed tools.</div>
+        <div className="p-6 overflow-y-auto flex-1 space-y-3">
+          {tool.description ? <div className="text-xs text-zinc-400 whitespace-pre-wrap break-words">{String(tool.description)}</div> : null}
+          <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Arguments (JSON)</div>
+          <textarea
+            className="w-full h-52 bg-zinc-950 border border-zinc-800 rounded p-3 text-xs font-mono text-zinc-300 focus:border-blue-500 outline-none resize-none"
+            value={argsText}
+            onChange={(e) => setArgsText(e.target.value)}
+            spellCheck={false}
+          />
+          {isHighRisk ? (
+            <label className="flex items-center gap-2 text-xs text-zinc-300">
+              <input type="checkbox" checked={confirmHighRisk} onChange={(e) => setConfirmHighRisk(e.target.checked)} />
+              I confirm I want to run a high-risk tool
+            </label>
+          ) : null}
+          {error ? <div className="text-xs text-red-300 border border-red-900/40 bg-red-900/10 rounded p-2 whitespace-pre-wrap break-words">{error}</div> : null}
+        </div>
+        <div className="p-6 pt-4 flex justify-end gap-2 border-t border-zinc-800/50">
+          <button onClick={onClose} className="px-3 py-1.5 text-xs text-zinc-400 hover:text-white">Cancel</button>
+          <button
+            onClick={run}
+            disabled={!canRun}
+            className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded disabled:opacity-50 hover:bg-blue-500"
+          >
+            {running ? "Running..." : "Run"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const AvailableToolsModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  tools: any[];
+  runtimeById: Record<string, any>;
+  onInvoke: (tool: any) => void;
+  onStartServer: (serverId: string) => void;
+  onRefreshTools: (serverId: string) => void;
+  panelError: string | null;
+}> = ({ isOpen, onClose, tools, runtimeById, onInvoke, onStartServer, onRefreshTools, panelError }) => {
+  if (!isOpen) return null;
+  const toolsByServer = (() => {
+    const map = new Map<string, any[]>();
+    for (const t of tools) {
+      const sid = String(t?.serverId ?? "unknown");
+      const arr = map.get(sid) ?? [];
+      arr.push(t);
+      map.set(sid, arr);
+    }
+    for (const arr of map.values()) {
+      arr.sort((a, b) => String(a?.name ?? "").localeCompare(String(b?.name ?? "")));
+    }
+    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  })();
+
+  const allServerIds = Array.from(new Set([...Object.keys(runtimeById), ...toolsByServer.map(([sid]) => sid)])).sort((a, b) => a.localeCompare(b));
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg w-[980px] shadow-xl max-h-[90vh] flex flex-col">
+        <div className="p-6 pb-4 flex-none border-b border-zinc-800/50">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-light text-zinc-200">Tools</h2>
+            <button onClick={onClose} className="text-xs text-zinc-400 hover:text-white">Close</button>
+          </div>
+          {panelError ? (
+            <div className="mt-3 text-xs text-red-300 border border-red-900/40 bg-red-900/10 rounded p-2 whitespace-pre-wrap break-words">{panelError}</div>
+          ) : null}
+        </div>
+        <div className="p-6 overflow-y-auto flex-1 space-y-4">
+          {allServerIds.length === 0 ? (
+            <div className="text-sm text-zinc-500">No MCP servers.</div>
           ) : (
-            tools.map((t) => (
-              <div key={t.name} className="border border-zinc-800 bg-zinc-950/40 rounded p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="font-mono text-xs text-zinc-200 break-all">{t.name}</div>
-                  <div className="text-[10px] text-zinc-400">
-                    {t.permission?.allowed ? "allowed" : `blocked:${t.permission?.reason ?? "policy"}`}{t.riskLevel ? ` • risk:${t.riskLevel}` : ""}
+            allServerIds.map((sid) => {
+              const runtime = runtimeById[sid];
+              const list = toolsByServer.find((x) => x[0] === sid)?.[1] ?? [];
+              return (
+                <div key={sid} className="border border-zinc-800 bg-zinc-950/40 rounded p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-mono text-xs text-zinc-200 break-all">{sid}</div>
+                      <div className="text-[10px] text-zinc-500 mt-1">
+                        state={String(runtime?.state ?? "unknown")}{runtime?.lastError ? ` • error=${String(runtime.lastError)}` : ""}{runtime?.toolsCacheAt ? ` • tools=${String(runtime.tools?.length ?? 0)}` : ""}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => onStartServer(sid)} className="text-[11px] px-2 py-1 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700">Start</button>
+                      <button onClick={() => onRefreshTools(sid)} className="text-[11px] px-2 py-1 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700">Refresh tools</button>
+                    </div>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {list.length === 0 ? (
+                      <div className="text-xs text-zinc-500">No exposed tools.</div>
+                    ) : (
+                      list.map((t) => (
+                        <div key={String(t?.name ?? "")} className="border border-zinc-800 bg-zinc-950/20 rounded p-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="font-mono text-xs text-zinc-200 break-all">{String(t?.name ?? "")}</div>
+                              {t?.description ? <div className="text-xs text-zinc-500 mt-1 whitespace-pre-wrap break-words">{String(t.description)}</div> : null}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="text-[10px] text-zinc-400">
+                                {t.permission?.allowed ? "allowed" : `blocked:${t.permission?.reason ?? "policy"}`}{t.riskLevel ? ` • risk:${t.riskLevel}` : ""}
+                              </div>
+                              <button
+                                onClick={() => onInvoke(t)}
+                                disabled={!t.permission?.allowed}
+                                className="text-[11px] px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50"
+                              >
+                                Invoke
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
-                {t.description ? <div className="text-xs text-zinc-400 mt-2 whitespace-pre-wrap break-words">{t.description}</div> : null}
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
@@ -423,8 +575,13 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const canContinue = !readOnly && !sending && (lastAssistant?.metrics as any)?.finishReason === "stopped";
   const [visibleCount, setVisibleCount] = useState(50);
   const [toolExposureTick, setToolExposureTick] = useState(0);
+  const [mcpTick, setMcpTick] = useState(0);
   const exposedTools = useMemo(() => toolExposureService.getCatalog(), [toolExposureTick]);
   const exposedAllowedCount = useMemo(() => toolExposureService.getToolsForModel().length, [toolExposureTick]);
+  const runtimeById = useMemo(() => mcpOrchestrator.getSnapshot().servers, [mcpTick]);
+  const [toolPanelError, setToolPanelError] = useState<string | null>(null);
+  const [invokeToolOpen, setInvokeToolOpen] = useState(false);
+  const [invokeTool, setInvokeTool] = useState<any | null>(null);
   
   // Reset visible count when session changes
   useEffect(() => {
@@ -443,6 +600,10 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
 
   useEffect(() => {
     return toolExposureService.subscribe(() => setToolExposureTick((v) => (v + 1) % 1000000));
+  }, []);
+
+  useEffect(() => {
+    return mcpOrchestrator.subscribe(() => setMcpTick((v) => (v + 1) % 1000000));
   }, []);
 
   useEffect(() => {
@@ -1230,6 +1391,39 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         isOpen={availableToolsOpen}
         onClose={() => setAvailableToolsOpen(false)}
         tools={exposedTools as any}
+        runtimeById={runtimeById as any}
+        panelError={toolPanelError}
+        onInvoke={(t) => {
+          setToolPanelError(null);
+          setInvokeTool(t);
+          setInvokeToolOpen(true);
+        }}
+        onStartServer={(serverId) => {
+          setToolPanelError(null);
+          void mcpOrchestrator.ensureStarted(serverId).catch((e: any) => {
+            const msg = String(e?.message ?? e);
+            setToolPanelError(msg);
+            showToast(msg, "error");
+          });
+        }}
+        onRefreshTools={(serverId) => {
+          setToolPanelError(null);
+          void mcpOrchestrator.refreshTools(serverId, { waitForResult: true, timeoutMs: 60000 }).catch((e: any) => {
+            const msg = String(e?.message ?? e);
+            setToolPanelError(msg);
+            showToast(msg, "error");
+          });
+        }}
+      />
+      <ToolInvokeModal
+        isOpen={invokeToolOpen}
+        onClose={() => setInvokeToolOpen(false)}
+        tool={invokeTool}
+        onRun={async (args) => {
+          if (!sessionId) throw new Error("no_session");
+          await chatService.invokeToolManually(sessionId, String(invokeTool?.name ?? ""), args);
+          showToast("Tool executed", "success");
+        }}
       />
       <HistoryModal
         isOpen={historyOpen}

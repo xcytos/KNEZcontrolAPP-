@@ -13,6 +13,9 @@ export type McpStdioServerConfig = {
   env: Record<string, string>;
   cwd?: string;
   enabled?: boolean;
+  start_on_boot?: boolean;
+  allowed_tools?: string[];
+  blocked_tools?: string[];
   tags?: string[];
 };
 
@@ -22,6 +25,9 @@ export type McpHttpServerConfig = {
   url: string;
   headers?: Record<string, string>;
   enabled?: boolean;
+  start_on_boot?: boolean;
+  allowed_tools?: string[];
+  blocked_tools?: string[];
   tags?: string[];
 };
 
@@ -41,6 +47,9 @@ export type NormalizedMcpStdioServerConfig = {
   env: Record<string, string>;
   cwd?: string;
   enabled: boolean;
+  start_on_boot: boolean;
+  allowed_tools: string[];
+  blocked_tools: string[];
   tags: string[];
 };
 
@@ -50,6 +59,9 @@ export type NormalizedMcpHttpServerConfig = {
   url: string;
   headers: Record<string, string>;
   enabled: boolean;
+  start_on_boot: boolean;
+  allowed_tools: string[];
+  blocked_tools: string[];
   tags: string[];
 };
 
@@ -127,6 +139,22 @@ export function normalizeMcpConfig(input: any): NormalizedMcpConfig {
     if (!name) continue;
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
     const enabled = typeof (entry as any).enabled === "boolean" ? (entry as any).enabled : true;
+    const start_on_boot =
+      typeof (entry as any).start_on_boot === "boolean"
+        ? (entry as any).start_on_boot
+        : typeof (entry as any).startOnBoot === "boolean"
+          ? (entry as any).startOnBoot
+          : false;
+    const allowed_tools = Array.isArray((entry as any).allowed_tools)
+      ? (entry as any).allowed_tools.map((t: any) => String(t).trim()).filter((t: string) => !!t)
+      : Array.isArray((entry as any).allowedTools)
+        ? (entry as any).allowedTools.map((t: any) => String(t).trim()).filter((t: string) => !!t)
+        : [];
+    const blocked_tools = Array.isArray((entry as any).blocked_tools)
+      ? (entry as any).blocked_tools.map((t: any) => String(t).trim()).filter((t: string) => !!t)
+      : Array.isArray((entry as any).blockedTools)
+        ? (entry as any).blockedTools.map((t: any) => String(t).trim()).filter((t: string) => !!t)
+        : [];
     const tags = Array.isArray((entry as any).tags) ? (entry as any).tags.map((t: any) => String(t)) : [];
 
     const rawType = String((entry as any).type ?? "").trim().toLowerCase();
@@ -136,7 +164,7 @@ export function normalizeMcpConfig(input: any): NormalizedMcpConfig {
     if (isHttp) {
       const url = String((entry as any).url ?? "").trim();
       const headers = toRecord((entry as any).headers);
-      servers[name] = { id: name, type: "http", url, headers, enabled, tags };
+      servers[name] = { id: name, type: "http", url, headers, enabled, start_on_boot, allowed_tools, blocked_tools, tags };
       continue;
     }
 
@@ -157,7 +185,7 @@ export function normalizeMcpConfig(input: any): NormalizedMcpConfig {
       if (main && isAbsolutePath(main)) cwd = dirname(main) || undefined;
     }
 
-    servers[name] = { id: name, type: "stdio", command, args, env, cwd, enabled, tags };
+    servers[name] = { id: name, type: "stdio", command, args, env, cwd, enabled, start_on_boot, allowed_tools, blocked_tools, tags };
   }
   return { schema_version, inputs, servers, sourceSchema };
 }

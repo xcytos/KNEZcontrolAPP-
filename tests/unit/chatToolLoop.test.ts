@@ -126,5 +126,73 @@ describe("ChatService tool loop", () => {
     expect(saveMessages).toHaveBeenCalled();
     expect(updateMessage).toHaveBeenCalled();
   });
-});
 
+  it("invokes tools manually and updates tool trace", async () => {
+    vi.resetModules();
+
+    let saved: any[] = [];
+    const saveMessages = vi.fn(async (_sid: string, msgs: any[]) => {
+      saved = msgs;
+    });
+    const updateMessage = vi.fn(async () => {});
+
+    const callTool = vi.fn(async () => ({ result: { ok: true } }));
+
+    vi.doMock("../../src/services/SessionDatabase", () => ({
+      sessionDatabase: {
+        saveMessages,
+        updateMessage,
+        listOutgoing: async () => [],
+        getOutgoing: async () => null,
+        updateOutgoing: async () => {},
+        removeOutgoing: async () => {},
+        getMessage: async () => null,
+      },
+    }));
+    vi.doMock("../../src/services/SessionController", () => ({
+      sessionController: {
+        getSessionId: () => "sid",
+        subscribe: () => () => {},
+        createNewSession: () => "sid",
+      },
+    }));
+    vi.doMock("../../src/services/PersistenceService", () => ({
+      persistenceService: { loadChat: async () => [] },
+    }));
+    vi.doMock("../../src/services/ExtractionService", () => ({ extractionService: {} }));
+    vi.doMock("../../src/services/TabErrorStore", () => ({ tabErrorStore: { set: () => {} } }));
+    vi.doMock("../../src/utils/observer", () => ({ observe: (_fn: any) => {} }));
+    vi.doMock("../../src/services/TaqwinToolPermissions", () => ({ isTaqwinToolAllowed: () => true }));
+    vi.doMock("../../src/mcp/taqwin/TaqwinMcpService", () => ({ taqwinMcpService: {} }));
+    vi.doMock("../../src/services/KnezClient", () => ({
+      knezClient: { emitEvent: async () => {} },
+    }));
+    vi.doMock("../../src/services/ToolExposureService", () => ({
+      toolExposureService: {
+        getToolByName: () => ({ name: "taqwin__debug_test", serverId: "taqwin", originalName: "debug_test", permission: { allowed: true } }),
+      },
+      parseNamespacedToolName: (name: string) => {
+        const idx = name.indexOf("__");
+        if (idx < 0) return null;
+        return { serverId: name.slice(0, idx), originalName: name.slice(idx + 2) };
+      }
+    }));
+    vi.doMock("../../src/mcp/McpOrchestrator", () => ({
+      mcpOrchestrator: {
+        getServer: () => ({ state: "READY" }),
+        ensureStarted: async () => [],
+        callTool,
+      },
+    }));
+    vi.doMock("../../src/utils/health", () => ({ selectPrimaryBackend: () => null }));
+
+    const mod = await import("../../src/services/ChatService");
+    const svc = new mod.ChatService();
+    await svc.invokeToolManually("sid", "taqwin__debug_test", { message: "ping" });
+
+    expect(saveMessages).toHaveBeenCalled();
+    expect(saved[0]?.toolCall?.status).toBe("calling");
+    expect(callTool).toHaveBeenCalledWith("taqwin", "debug_test", { message: "ping" }, { timeoutMs: 180000 });
+    expect(updateMessage).toHaveBeenCalled();
+  });
+});

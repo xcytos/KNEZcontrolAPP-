@@ -124,4 +124,27 @@ describe("McpHostConfig", () => {
     expect((substituted as any).b[1]).toBe("T");
     expect((substituted as any).c.d).toBe("O");
   });
+
+  test("parses start_on_boot and tool allow/deny lists", () => {
+    const raw = JSON.stringify({
+      schema_version: "1",
+      servers: {
+        taqwin: {
+          command: "C:\\\\Python\\\\python.exe",
+          args: ["-u", "C:\\\\TAQWIN_V1\\\\main.py"],
+          env: { PYTHONUNBUFFERED: "1" },
+          start_on_boot: true,
+          allowed_tools: ["debug_test"],
+          blocked_tools: ["delete_file"],
+        }
+      }
+    });
+    const cfg = parseMcpHostConfigJson(raw);
+    const s: any = cfg.servers.taqwin;
+    expect(s.start_on_boot).toBe(true);
+    expect(Array.isArray(s.allowed_tools)).toBe(true);
+    expect(Array.isArray(s.blocked_tools)).toBe(true);
+    expect(s.allowed_tools[0]).toBe("debug_test");
+    expect(s.blocked_tools[0]).toBe("delete_file");
+  });
 });

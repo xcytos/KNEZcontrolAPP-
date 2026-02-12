@@ -90,9 +90,25 @@ test.describe("TAQWIN MCP", () => {
       await expect(page.getByRole("heading", { name: "MCP Registry" })).toBeVisible({ timeout: 30000 });
       const taqwinCard = page.locator('div').filter({ hasText: "taqwin" }).filter({ hasText: "local_config" }).first();
       await expect(taqwinCard).toBeVisible({ timeout: 30000 });
-      await taqwinCard.getByRole("button", { name: "Details" }).click();
+      await taqwinCard.getByRole("button").filter({ hasText: "Tools" }).first().click();
       await expect(taqwinCard.getByText("tools_cached")).toBeVisible({ timeout: 30000 });
       await expect(taqwinCard.getByText("debug_test")).toBeVisible({ timeout: 30000 });
+
+      const startOnBoot = taqwinCard.locator('input[type="checkbox"]').first();
+      await startOnBoot.check();
+      await taqwinCard.getByRole("button", { name: "Stop" }).click();
+      await expect(taqwinCard.getByText("state")).toBeVisible({ timeout: 30000 });
+      await expect(taqwinCard.getByText("READY")).toBeVisible({ timeout: 180000 });
+
+      await page.getByTitle("Menu").click();
+      await page.getByRole("button", { name: "Available Tools" }).click();
+      await expect(page.getByText("Tools")).toBeVisible({ timeout: 30000 });
+      await expect(page.getByText("taqwin__debug_test")).toBeVisible({ timeout: 30000 });
+      await page.getByRole("button", { name: "Invoke" }).first().click();
+      await expect(page.getByText("Invoke Tool")).toBeVisible({ timeout: 30000 });
+      await page.locator("textarea").first().fill("{\"message\":\"ping\"}");
+      await page.getByRole("button", { name: "Run" }).click();
+      await expect(page.getByText("Invoke Tool")).toBeHidden({ timeout: 30000 });
 
       const diag = getPageDiagnostics(page);
       if (diag.length) console.log(diag.join("\n"));

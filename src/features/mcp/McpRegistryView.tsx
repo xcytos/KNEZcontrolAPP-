@@ -94,6 +94,8 @@ export const McpRegistryView: React.FC<{
   const [toggling, setToggling] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [restarting, setRestarting] = useState<string | null>(null);
+  const [refreshingTools, setRefreshingTools] = useState<string | null>(null);
+  const [toolDetails, setToolDetails] = useState<{ serverId: string; tool: any } | null>(null);
   const [tick, setTick] = useState(0);
   const [showAddModal, setShowAddModal] = useState(false);
 
@@ -127,7 +129,12 @@ export const McpRegistryView: React.FC<{
         id: s.serverId,
         provider: "local_config",
         status,
-        capabilities: [],
+        capabilities: [
+          `authority:${s.authority}`,
+          `type:${s.type}`,
+          `framing:${s.framing}`,
+          `tools:${String(s.tools?.length ?? 0)}`
+        ],
         enabled: s.enabled,
         last_error: s.lastError ?? st?.lastError ?? null,
         last_ok: st?.lastOkAt ? Math.floor(st.lastOkAt / 1000) : null,
@@ -191,13 +198,13 @@ export const McpRegistryView: React.FC<{
               return;
             }
             try {
-              await mcpInspectorService.handshake(id);
+              await mcpOrchestrator.ensureStarted(id);
               showToast(`Started ${id}`, 'success');
             } catch (e: any) {
               showToast(`Enabled ${id} but failed to start: ${String(e?.message ?? e)}`, 'error');
             }
           } else {
-             await mcpInspectorService.stop(id);
+             await mcpOrchestrator.stopServer(id);
           }
         }
       } else {
@@ -217,12 +224,80 @@ export const McpRegistryView: React.FC<{
     if (!localServerIds.has(id)) return;
     setRestarting(id);
     try {
-      await mcpInspectorService.restart(id);
+      await mcpOrchestrator.restartServer(id);
       showToast(`Restarted ${id}`, "success");
     } catch (e: any) {
       showToast(`Restart failed: ${String(e?.message ?? e)}`, "error");
     } finally {
       setRestarting(null);
+    }
+  };
+
+  const persistLocalServerPatch = async (id: string, patch: Record<string, any>) => {
+    const currentCfg = mcpInspectorService.getConfig();
+    const inputs = mcpInspectorService.getInputs();
+    const servers = mcpInspectorService.getServers();
+    const serverMap: Record<string, any> = {};
+    for (const s of servers) {
+      if (s.id === id) {
+        serverMap[s.id] = { ...s, ...patch, id };
+      } else {
+        serverMap[s.id] = s;
+      }
+    }
+    const payload = {
+      schema_version: currentCfg.normalized?.schema_version ?? "1",
+      inputs,
+      servers: serverMap
+    };
+    await mcpInspectorService.saveConfig(JSON.stringify(payload, null, 2));
+  };
+
+  const handleToggleStartOnBoot = async (id: string, next: boolean) => {
+    if (!localServerIds.has(id)) return;
+    try {
+      await persistLocalServerPatch(id, { start_on_boot: next });
+      showToast(`start_on_boot=${next ? "true" : "false"} for ${id}`, "success");
+    } catch (e: any) {
+      showToast(`Failed to update start_on_boot: ${String(e?.message ?? e)}`, "error");
+    }
+  };
+
+  const handleRefreshTools = async (id: string) => {
+    if (!localServerIds.has(id)) return;
+    setRefreshingTools(id);
+    try {
+      await mcpOrchestrator.refreshTools(id, { waitForResult: true, timeoutMs: 60000 });
+      showToast(`Refreshed tools for ${id}`, "success");
+    } catch (e: any) {
+      showToast(`Refresh tools failed: ${String(e?.message ?? e)}`, "error");
+    } finally {
+      setRefreshingTools(null);
+    }
+  };
+
+  const handleStartNow = async (id: string) => {
+    if (!localServerIds.has(id)) return;
+    try {
+      const issues = (mcpInspectorService.getConfig().issuesByServerId?.[id] ?? []).filter((it: any) => it?.level === "error");
+      if (issues.length) {
+        showToast(`Cannot start ${id}: ${issues[0]?.message ?? "invalid_config"}`, "error");
+        return;
+      }
+      await mcpOrchestrator.ensureStarted(id);
+      showToast(`Started ${id}`, "success");
+    } catch (e: any) {
+      showToast(`Start failed: ${String(e?.message ?? e)}`, "error");
+    }
+  };
+
+  const handleStopNow = async (id: string) => {
+    if (!localServerIds.has(id)) return;
+    try {
+      await mcpOrchestrator.stopServer(id);
+      showToast(`Stopped ${id}`, "success");
+    } catch (e: any) {
+      showToast(`Stop failed: ${String(e?.message ?? e)}`, "error");
     }
   };
 
@@ -333,7 +408,14 @@ export const McpRegistryView: React.FC<{
               <div className="pl-3">
                 <div className="flex justify-between items-start mb-3">
                   <div className="min-w-0 flex-1 mr-2">
-                    <div className="font-mono text-sm text-zinc-200 break-all">{item.id}</div>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="font-mono text-sm text-zinc-200 break-all">{item.id}</div>
+                      {runtimeById[item.id]?.tools ? (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] border bg-zinc-900 text-zinc-400 border-zinc-800 flex-none">
+                          tools={String(runtimeById[item.id]?.tools?.length ?? 0)}
+                        </span>
+                      ) : null}
+                    </div>
                     <div className="text-xs text-zinc-500">{item.provider}</div>
                     <div className="mt-1 flex items-center gap-2 flex-wrap">
                       <span className={`px-1.5 py-0.5 rounded text-[10px] border ${
@@ -416,7 +498,7 @@ export const McpRegistryView: React.FC<{
                       onClick={() => setExpanded((prev) => (prev === item.id ? null : item.id))}
                       className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
                     >
-                      {expanded === item.id ? "Hide" : "Details"}
+                      {expanded === item.id ? "▾" : "▸"} Tools
                     </button>
                     <button
                       onClick={() => handleToggle(item.id, item.status || 'inactive')}
@@ -436,12 +518,79 @@ export const McpRegistryView: React.FC<{
 
                 {expanded === item.id && (
                   <div className="mt-3 text-xs text-zinc-400 space-y-2">
+                    {localServerIds.has(item.id) ? (
+                      <div className="flex items-center justify-between gap-3 border border-zinc-800 bg-zinc-950/40 rounded p-2">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleStartNow(item.id)}
+                            className="text-[11px] px-2 py-1 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+                          >
+                            Start
+                          </button>
+                          <button
+                            onClick={() => handleStopNow(item.id)}
+                            className="text-[11px] px-2 py-1 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+                          >
+                            Stop
+                          </button>
+                          <button
+                            onClick={() => handleRefreshTools(item.id)}
+                            disabled={refreshingTools === item.id}
+                            className="text-[11px] px-2 py-1 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:opacity-50"
+                          >
+                            {refreshingTools === item.id ? "..." : "Refresh tools"}
+                          </button>
+                        </div>
+                        <label className="flex items-center gap-2 text-[11px] text-zinc-300 select-none">
+                          <span className="text-zinc-500">start_on_boot</span>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(runtimeById[item.id]?.start_on_boot)}
+                            onChange={(e) => void handleToggleStartOnBoot(item.id, e.target.checked)}
+                          />
+                        </label>
+                      </div>
+                    ) : null}
                     <div className="flex justify-between">
                       <span className="text-zinc-500">enabled</span>
                       <span className="font-mono text-zinc-200">{String((item as any).enabled ?? (item.status === "active"))}</span>
                     </div>
-                    {runtimeById[item.id]?.tools ? (
+                    {runtimeById[item.id] ? (
                       <div className="space-y-2">
+                        <div className="flex justify-between">
+                          <span className="text-zinc-500">state</span>
+                          <span className="font-mono text-zinc-200">{String(runtimeById[item.id]?.state ?? "unknown")}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-zinc-500">type</span>
+                          <span className="font-mono text-zinc-200">{String(runtimeById[item.id]?.type ?? "unknown")}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-zinc-500">framing</span>
+                          <span className="font-mono text-zinc-200">{String(runtimeById[item.id]?.framing ?? "unknown")}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-zinc-500">generation</span>
+                          <span className="font-mono text-zinc-200">{String(runtimeById[item.id]?.generation ?? 0)}</span>
+                        </div>
+                        {runtimeById[item.id]?.lastOkAt ? (
+                          <div className="flex justify-between">
+                            <span className="text-zinc-500">last_ok</span>
+                            <span className="font-mono text-zinc-200">{new Date(Number(runtimeById[item.id]?.lastOkAt)).toLocaleString()}</span>
+                          </div>
+                        ) : null}
+                        {runtimeById[item.id]?.initializeDurationMs !== null && runtimeById[item.id]?.initializeDurationMs !== undefined ? (
+                          <div className="flex justify-between">
+                            <span className="text-zinc-500">init_ms</span>
+                            <span className="font-mono text-zinc-200">{String(runtimeById[item.id]?.initializeDurationMs)}</span>
+                          </div>
+                        ) : null}
+                        {runtimeById[item.id]?.toolsListDurationMs !== null && runtimeById[item.id]?.toolsListDurationMs !== undefined ? (
+                          <div className="flex justify-between">
+                            <span className="text-zinc-500">tools_list_ms</span>
+                            <span className="font-mono text-zinc-200">{String(runtimeById[item.id]?.toolsListDurationMs)}</span>
+                          </div>
+                        ) : null}
                         <div className="flex justify-between">
                           <span className="text-zinc-500">tools_cached</span>
                           <span className="font-mono text-zinc-200">{String(runtimeById[item.id]?.tools?.length ?? 0)}</span>
@@ -456,12 +605,22 @@ export const McpRegistryView: React.FC<{
                         ) : null}
                         {(runtimeById[item.id]?.tools?.length ?? 0) > 0 ? (
                           <div className="border border-zinc-800 bg-zinc-950/40 rounded p-2">
-                            <div className="text-[10px] text-zinc-500 mb-1 uppercase tracking-wider">Tools</div>
-                            <div className="flex flex-wrap gap-1">
-                              {runtimeById[item.id]?.tools?.slice(0, 10).map((t: any) => (
-                                <span key={String(t?.name ?? "")} className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 text-[10px] rounded border border-zinc-700">
-                                  {String(t?.name ?? "")}
-                                </span>
+                            <div className="text-[10px] text-zinc-500 mb-2 uppercase tracking-wider">Tools</div>
+                            <div className="space-y-1">
+                              {runtimeById[item.id]?.tools?.slice(0, 30).map((t: any) => (
+                                <button
+                                  key={String(t?.name ?? "")}
+                                  type="button"
+                                  onClick={() => setToolDetails({ serverId: String(item.id), tool: t })}
+                                  className={`w-full text-left rounded border px-2 py-1 ${
+                                    runtimeById[item.id]?.state === "READY"
+                                      ? "border-zinc-800 bg-zinc-950/30 hover:bg-zinc-900/60"
+                                      : "border-zinc-900 bg-zinc-950/20 opacity-60"
+                                  }`}
+                                >
+                                  <div className="font-mono text-[11px] text-zinc-200 break-all">{String(t?.name ?? "")}</div>
+                                  {t?.description ? <div className="text-[11px] text-zinc-500 break-words">{String(t.description)}</div> : null}
+                                </button>
                               ))}
                             </div>
                           </div>
@@ -519,6 +678,31 @@ export const McpRegistryView: React.FC<{
         onClose={() => setShowAddModal(false)}
         onSave={handleAddServer}
       />
+      {toolDetails ? (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" role="dialog" aria-modal="true">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-lg w-full max-w-3xl shadow-xl flex flex-col max-h-[90vh] mx-4">
+            <div className="flex justify-between items-center p-4 border-b border-zinc-800">
+              <div className="min-w-0">
+                <div className="text-xs text-zinc-500">Tool Details</div>
+                <div className="font-mono text-sm text-zinc-100 break-all">{String(toolDetails.tool?.name ?? "")}</div>
+                <div className="text-xs text-zinc-500 mt-1">server={String(toolDetails.serverId)}</div>
+              </div>
+              <button onClick={() => setToolDetails(null)} className="text-zinc-400 hover:text-white" aria-label="Close">✕</button>
+            </div>
+            <div className="p-4 overflow-auto space-y-3">
+              {toolDetails.tool?.description ? (
+                <div className="text-sm text-zinc-300 whitespace-pre-wrap break-words">{String(toolDetails.tool.description)}</div>
+              ) : (
+                <div className="text-sm text-zinc-500">No description.</div>
+              )}
+              <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Input Schema</div>
+              <pre className="text-xs bg-zinc-950 border border-zinc-800 rounded p-3 overflow-auto text-zinc-300">
+                {JSON.stringify(toolDetails.tool?.inputSchema ?? { type: "object", properties: {} }, null, 2)}
+              </pre>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 };
