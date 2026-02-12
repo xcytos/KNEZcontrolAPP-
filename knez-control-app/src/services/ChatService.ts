@@ -14,6 +14,7 @@ import { tabErrorStore } from "./TabErrorStore";
 import { selectPrimaryBackend } from "../utils/health";
 import { toolExposureService, parseNamespacedToolName } from "./ToolExposureService";
 import { mcpOrchestrator } from "../mcp/McpOrchestrator";
+import { classifyMcpError } from "../mcp/McpErrorTaxonomy";
 
 export interface ChatState {
   messages: ChatMessage[];
@@ -108,6 +109,79 @@ export class ChatService {
     this.state.searchProvider = this.resolveSearchProvider(tools.search);
     localStorage.setItem(`chat_search_enabled:${this.sessionId}`, tools.search ? "1" : "0");
     this.notify();
+  }
+
+  async invokeToolManually(sessionId: string, namespacedToolName: string, args: any): Promise<void> {
+    const sid = sessionId || this.sessionId;
+    if (!sid) throw new Error("no_session");
+
+    const startedAt = new Date().toISOString();
+    const traceMessageId = `${newMessageId()}-manual-tool`;
+    const toolCall: ToolCallMessage = { tool: namespacedToolName, args, status: "calling", startedAt };
+    await this.persistToolTrace(sid, {
+      id: traceMessageId,
+      sessionId: sid,
+      from: "knez",
+      text: "",
+      createdAt: startedAt,
+      toolCall,
+      deliveryStatus: "delivered",
+      correlationId: traceMessageId
+    });
+
+    let result: any;
+    let ok = false;
+    let errorMsg: string | undefined;
+    let serverId: string | undefined;
+    let originalName: string | undefined;
+    try {
+      const meta = toolExposureService.getToolByName(namespacedToolName);
+      if (!meta) throw new Error("mcp_tool_not_found");
+      if (!meta.permission.allowed) throw new Error(`mcp_permission_denied:${meta.permission.reason ?? "blocked"}`);
+      const parsed = parseNamespacedToolName(namespacedToolName);
+      serverId = parsed?.serverId ?? meta.serverId;
+      originalName = parsed?.originalName ?? meta.originalName;
+
+      const runtime = mcpOrchestrator.getServer(serverId);
+      if (!runtime || runtime.state !== "READY") {
+        await mcpOrchestrator.ensureStarted(serverId);
+      }
+
+      void this.tryEmit(
+        "tool_call_started",
+        { tool: namespacedToolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId, mode: "manual" },
+        sid
+      );
+      logger.info("mcp_audit", "tool_call_started", { tool: namespacedToolName, serverId, originalName, toolCallId: traceMessageId, mode: "manual" });
+
+      const execStartedAt = performance.now();
+      const callRes = await mcpOrchestrator.callTool(serverId, originalName, args, { timeoutMs: 180000 });
+      const durationMs = Math.round(performance.now() - execStartedAt);
+      result = callRes.result;
+      ok = true;
+
+      void this.tryEmit(
+        "tool_call_completed",
+        { tool: namespacedToolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId, duration_ms: durationMs, mode: "manual" },
+        sid
+      );
+      logger.info("mcp_audit", "tool_call_completed", { tool: namespacedToolName, serverId, originalName, toolCallId: traceMessageId, durationMs, mode: "manual" });
+    } catch (e: any) {
+      const classified = this.classifyToolError(String(e?.message ?? e));
+      errorMsg = `${classified.code}:${classified.message}`;
+      result = { ok: false, error: classified };
+      void this.tryEmit(
+        "tool_call_failed",
+        { tool: namespacedToolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId, error_code: classified.code, mode: "manual" },
+        sid
+      );
+      logger.warn("mcp_audit", "tool_call_failed", { tool: namespacedToolName, serverId, originalName, toolCallId: traceMessageId, errorCode: classified.code, mode: "manual" });
+    }
+
+    const finishedAt = new Date().toISOString();
+    await this.updateToolTrace(sid, traceMessageId, {
+      toolCall: { ...toolCall, status: ok ? "succeeded" : "failed", result: ok ? result : undefined, error: ok ? undefined : errorMsg, finishedAt }
+    });
   }
 
   async sendMessage(text: string, forceContext?: string): Promise<void> {
@@ -495,15 +569,7 @@ export class ChatService {
   }
 
   private classifyToolError(rawError: string): { code: string; message: string } {
-    const raw = String(rawError ?? "");
-    const lower = raw.toLowerCase();
-    if (lower.includes("mcp_permission_denied") || lower.includes("permission_denied")) return { code: "mcp_permission_denied", message: raw };
-    if (lower.includes("mcp_tool_not_found")) return { code: "mcp_tool_not_found", message: raw };
-    if (lower.includes("mcp_server_not_found")) return { code: "mcp_server_not_found", message: raw };
-    if (lower.includes("mcp_not_ready") || lower.includes("mcp_server_not_ready")) return { code: "mcp_server_not_ready", message: raw };
-    if (lower.includes("mcp_not_started") || lower.includes("mcp_not_initialized")) return { code: "mcp_server_not_ready", message: raw };
-    if (lower.includes("timeout")) return { code: "mcp_tool_timeout", message: raw };
-    return { code: "mcp_tool_execution_error", message: raw };
+    return classifyMcpError(rawError);
   }
 
   private async persistToolTrace(sessionId: string, msg: ChatMessage): Promise<void> {

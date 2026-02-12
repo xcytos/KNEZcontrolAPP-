@@ -8,6 +8,8 @@ import { extractServerInputRefs, listInputsById, substituteServerInputRefs } fro
 import type { McpToolDefinition } from "../../services/McpTypes";
 import { knezClient } from "../../services/KnezClient";
 import { getMcpAuthority } from "../authority";
+import { logger } from "../../services/LogService";
+import { classifyMcpError } from "../McpErrorTaxonomy";
 
 export type McpInspectorLifecycle = "IDLE" | "STARTING" | "INITIALIZED" | "LISTING_TOOLS" | "READY" | "ERROR";
 
@@ -86,6 +88,17 @@ export class McpInspectorService {
         fn();
       } catch {}
     }
+  }
+
+  private emitMcpEvent(eventName: string, payload: Record<string, any>, severity: string = "INFO") {
+    void knezClient.emitEvent({
+      event_type: "mcp",
+      event_name: eventName,
+      source: "control-app",
+      severity,
+      payload,
+      tags: ["mcp"]
+    }).catch(() => {});
   }
 
   private enqueue<T>(serverId: string, fn: () => Promise<T>): Promise<T> {
@@ -382,6 +395,8 @@ export class McpInspectorService {
     return this.enqueue(serverId, async () => {
       const s = this.sessions.get(serverId);
       if (!s) throw new Error("mcp_server_not_found");
+      this.emitMcpEvent("mcp_handshake_started", { server_id: serverId, authority: getMcpAuthority(), type: s.server.type });
+      logger.info("mcp_audit", "handshake_started", { serverId, authority: getMcpAuthority(), type: s.server.type });
 
       if (!s.client.getDebugState().running) {
         if (!s.server.enabled) throw new Error("mcp_server_disabled");
@@ -414,6 +429,9 @@ export class McpInspectorService {
         this.emit();
         void res;
       } catch (e: any) {
+        const classified = classifyMcpError(e);
+        this.emitMcpEvent("mcp_handshake_failed", { server_id: serverId, stage: "initialize", error_code: classified.code, error: classified.message }, "WARN");
+        logger.warn("mcp_audit", "handshake_failed", { serverId, stage: "initialize", errorCode: classified.code });
         s.initializeDurationMs = Math.round(performance.now() - initStartedAt);
         s.state = "ERROR";
         s.lastError = String(e?.message ?? e);
@@ -425,6 +443,9 @@ export class McpInspectorService {
         try {
           await this.ensureKnezHealthy();
         } catch (e: any) {
+          const classified = classifyMcpError(e);
+          this.emitMcpEvent("mcp_handshake_failed", { server_id: serverId, stage: "knez_health", error_code: classified.code, error: classified.message }, "WARN");
+          logger.warn("mcp_audit", "handshake_failed", { serverId, stage: "knez_health", errorCode: classified.code });
           s.state = "ERROR";
           s.lastError = String(e?.message ?? e);
           this.emit();
@@ -458,8 +479,14 @@ export class McpInspectorService {
         s.toolsPending = false;
         s.lastError = null;
         this.emit();
+        this.emitMcpEvent("mcp_handshake_completed", { server_id: serverId, init_ms: s.initializeDurationMs, tools_list_ms: s.toolsListDurationMs, tools: tools.length });
+        this.emitMcpEvent("mcp_tools_updated", { server_id: serverId, tools: tools.length });
+        logger.info("mcp_audit", "handshake_completed", { serverId, tools: tools.length, initMs: s.initializeDurationMs, toolsListMs: s.toolsListDurationMs });
         return tools;
       } catch (e: any) {
+        const classified = classifyMcpError(e);
+        this.emitMcpEvent("mcp_handshake_failed", { server_id: serverId, stage: "tools_list", error_code: classified.code, error: classified.message }, "WARN");
+        logger.warn("mcp_audit", "handshake_failed", { serverId, stage: "tools_list", errorCode: classified.code });
         s.toolsListDurationMs = Math.round(performance.now() - toolsStartedAt);
         s.state = "ERROR";
         s.toolsPending = false;
@@ -513,6 +540,8 @@ export class McpInspectorService {
         s.toolsPending = false;
         s.lastError = null;
         this.emit();
+        this.emitMcpEvent("mcp_tools_updated", { server_id: serverId, tools: tools.length });
+        logger.info("mcp_audit", "tools_updated", { serverId, tools: tools.length, durationMs: s.toolsListDurationMs });
         return tools;
       } catch (e: any) {
         s.toolsListDurationMs = Math.round(performance.now() - startedAt);
@@ -573,18 +602,53 @@ export class McpInspectorService {
         throw new Error(`mcp_tool_not_found:${name}`);
       }
       const startedAt = performance.now();
-      const res = await s.client.callTool(name, args, { timeoutMs });
-      s.lastOkAt = Date.now();
-      this.emit();
-      return { result: res, durationMs: Math.round(performance.now() - startedAt) };
+      this.emitMcpEvent("tool_call_started", { server_id: serverId, tool: name });
+      logger.info("mcp_audit", "tool_call_started", { serverId, tool: name });
+      try {
+        const res = await s.client.callTool(name, args, { timeoutMs });
+        const durationMs = Math.round(performance.now() - startedAt);
+        s.lastOkAt = Date.now();
+        this.emit();
+        this.emitMcpEvent("tool_call_completed", { server_id: serverId, tool: name, duration_ms: durationMs });
+        logger.info("mcp_audit", "tool_call_completed", { serverId, tool: name, durationMs });
+        return { result: res, durationMs };
+      } catch (e: any) {
+        const durationMs = Math.round(performance.now() - startedAt);
+        const classified = classifyMcpError(e);
+        this.emitMcpEvent("tool_call_failed", { server_id: serverId, tool: name, duration_ms: durationMs, error_code: classified.code, error: classified.message }, "WARN");
+        logger.warn("mcp_audit", "tool_call_failed", { serverId, tool: name, durationMs, errorCode: classified.code });
+        throw e;
+      }
     });
   }
 
   private toServerConfig(s: NormalizedMcpServerConfig): McpServerConfig {
     if (s.type === "http") {
-      return { id: s.id, type: "http", url: s.url, headers: s.headers, enabled: s.enabled, tags: s.tags };
+      return {
+        id: s.id,
+        type: "http",
+        url: s.url,
+        headers: s.headers,
+        enabled: s.enabled,
+        start_on_boot: s.start_on_boot,
+        allowed_tools: s.allowed_tools,
+        blocked_tools: s.blocked_tools,
+        tags: s.tags
+      };
     }
-    return { id: s.id, type: "stdio", command: s.command, args: s.args, env: s.env, cwd: s.cwd, enabled: s.enabled, tags: s.tags };
+    return {
+      id: s.id,
+      type: "stdio",
+      command: s.command,
+      args: s.args,
+      env: s.env,
+      cwd: s.cwd,
+      enabled: s.enabled,
+      start_on_boot: s.start_on_boot,
+      allowed_tools: s.allowed_tools,
+      blocked_tools: s.blocked_tools,
+      tags: s.tags
+    };
   }
 
   private async resolveInputsForServer(server: McpServerConfig): Promise<McpServerConfig> {

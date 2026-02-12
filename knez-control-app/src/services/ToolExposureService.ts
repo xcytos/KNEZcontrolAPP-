@@ -78,7 +78,15 @@ function categoryForTool(originalName: string, serverId: string): string {
   return "mcp";
 }
 
-function permissionForTool(originalName: string, serverId: string): ToolPermission {
+function permissionForTool(originalName: string, runtime: ServerRuntime): ToolPermission {
+  const allow = Array.isArray(runtime.allowed_tools) ? runtime.allowed_tools : [];
+  const block = Array.isArray(runtime.blocked_tools) ? runtime.blocked_tools : [];
+  if (block.includes("*") || block.includes(originalName)) {
+    return { allowed: false, reason: "blocked_by_config" };
+  }
+  if (allow.length > 0 && !allow.includes("*") && !allow.includes(originalName)) {
+    return { allowed: false, reason: "not_in_allowlist" };
+  }
   const riskyByName = new Set([
     "delete_file",
     "scan_database",
@@ -87,7 +95,7 @@ function permissionForTool(originalName: string, serverId: string): ToolPermissi
     "mcp_taqwin_web_intelligence",
   ]);
   const trust = knezClient.getProfile().trustLevel;
-  const risk = riskForTool(originalName, serverId);
+  const risk = riskForTool(originalName, runtime.serverId);
   if (trust !== "verified" && (riskyByName.has(originalName) || risk === "high")) {
     return { allowed: false, reason: "unverified_knez_profile" };
   }
@@ -101,7 +109,7 @@ function toolToMeta(tool: McpToolDefinition, runtime: ServerRuntime): ExposedToo
   const parameters = normalizeParameters(tool?.inputSchema);
   const riskLevel = riskForTool(originalName, runtime.serverId);
   const category = categoryForTool(originalName, runtime.serverId);
-  const permission = permissionForTool(originalName, runtime.serverId);
+  const permission = permissionForTool(originalName, runtime);
   const schemaHash = stableHash({ serverId: runtime.serverId, originalName, parameters, description });
   return {
     name,

@@ -18,6 +18,9 @@ export type ServerRuntime = {
   serverId: string;
   authority: McpAuthority;
   enabled: boolean;
+  start_on_boot: boolean;
+  allowed_tools: string[];
+  blocked_tools: string[];
   type: "stdio" | "http";
   tags: string[];
   state: McpInspectorLifecycle;
@@ -25,6 +28,10 @@ export type ServerRuntime = {
   running: boolean;
   framing: "content-length" | "line" | "http";
   generation: number;
+  lastOkAt: number | null;
+  initializedAt: number | null;
+  initializeDurationMs: number | null;
+  toolsListDurationMs: number | null;
   lastError: string | null;
   tools: McpToolDefinition[];
   toolsHash: string | null;
@@ -54,6 +61,10 @@ export class McpOrchestrator {
   private snapshot: McpOrchestratorSnapshot = { servers: {} };
   private subscribers = new Set<() => void>();
   private rustGenerationByServerId = new Map<string, number>();
+  private toolsInvalidatedAtByServerId = new Map<string, number>();
+  private autoStartInFlight = new Set<string>();
+  private autoStartBackoffUntilByServerId = new Map<string, number>();
+  private autoStartAttemptsByServerId = new Map<string, number>();
 
   constructor() {
     mcpInspectorService.subscribe(() => {
@@ -61,6 +72,7 @@ export class McpOrchestrator {
     });
     this.rebuildFromInspector();
     void this.maybeAttachRustEventListeners();
+    void this.maybeAutoStartServers();
   }
 
   subscribe(fn: () => void): () => void {
@@ -76,8 +88,38 @@ export class McpOrchestrator {
     return this.snapshot.servers[serverId] ?? null;
   }
 
+  getServers(): ServerRuntime[] {
+    const list = Object.values(this.snapshot.servers);
+    list.sort((a, b) => a.serverId.localeCompare(b.serverId));
+    return list;
+  }
+
   getServerTools(serverId: string): McpToolDefinition[] {
     return (this.snapshot.servers[serverId]?.tools ?? []).slice();
+  }
+
+  getTools(serverId: string): McpToolDefinition[] {
+    return this.getServerTools(serverId);
+  }
+
+  async startServer(serverId: string): Promise<void> {
+    await mcpInspectorService.start(serverId);
+  }
+
+  async stopServer(serverId: string): Promise<void> {
+    await mcpInspectorService.stop(serverId);
+  }
+
+  async restartServer(serverId: string): Promise<void> {
+    await mcpInspectorService.restart(serverId);
+  }
+
+  async handshake(serverId: string, opts?: { toolsListTimeoutMs?: number }): Promise<McpToolDefinition[]> {
+    return await mcpInspectorService.handshake(serverId, { toolsListTimeoutMs: opts?.toolsListTimeoutMs });
+  }
+
+  async ensureStarted(serverId: string): Promise<McpToolDefinition[]> {
+    return await this.handshake(serverId);
   }
 
   async refreshTools(serverId: string, opts?: { timeoutMs?: number; waitForResult?: boolean }): Promise<McpToolDefinition[]> {
@@ -101,17 +143,42 @@ export class McpOrchestrator {
   private rebuildFromInspector() {
     const authority = getMcpAuthority();
     const statusById = mcpInspectorService.getStatusById();
+    const startOnBootById = new Map<string, boolean>();
+    const allowedToolsById = new Map<string, string[]>();
+    const blockedToolsById = new Map<string, string[]>();
+    for (const s of mcpInspectorService.getServers()) {
+      startOnBootById.set(s.id, Boolean(s.start_on_boot));
+      allowedToolsById.set(s.id, Array.isArray(s.allowed_tools) ? s.allowed_tools.slice() : []);
+      blockedToolsById.set(s.id, Array.isArray(s.blocked_tools) ? s.blocked_tools.slice() : []);
+    }
     const out: Record<string, ServerRuntime> = {};
 
     for (const [serverId, status] of Object.entries(statusById)) {
       const tools = mcpInspectorService.getTools(serverId);
       const toolsHash = tools.length ? stableToolsHash(tools) : null;
       const generation = this.rustGenerationByServerId.get(serverId) ?? 0;
-      out[serverId] = this.buildRuntime(authority, status, tools, toolsHash, generation);
+      const invalidatedAt = this.toolsInvalidatedAtByServerId.get(serverId) ?? null;
+      const toolsCacheAt = status.toolsCacheAt ?? null;
+      const invalidated = invalidatedAt !== null && (Number(toolsCacheAt ?? 0) < invalidatedAt);
+      if (!invalidated && invalidatedAt !== null && Number(toolsCacheAt ?? 0) >= invalidatedAt) {
+        this.toolsInvalidatedAtByServerId.delete(serverId);
+      }
+      out[serverId] = this.buildRuntime(
+        authority,
+        status,
+        tools,
+        toolsHash,
+        generation,
+        invalidated,
+        startOnBootById.get(serverId) ?? false,
+        allowedToolsById.get(serverId) ?? [],
+        blockedToolsById.get(serverId) ?? []
+      );
     }
 
     this.snapshot = { servers: out };
     this.emit();
+    void this.maybeAutoStartServers();
   }
 
   private buildRuntime(
@@ -119,25 +186,76 @@ export class McpOrchestrator {
     status: McpInspectorServerStatus,
     tools: McpToolDefinition[],
     toolsHash: string | null,
-    generation: number
+    generation: number,
+    generationChanged: boolean,
+    startOnBoot: boolean,
+    allowedTools: string[],
+    blockedTools: string[]
   ): ServerRuntime {
+    const effectiveState = generationChanged && status.state === "READY" ? "INITIALIZED" : status.state;
+    const effectiveTools = generationChanged ? [] : tools.slice();
+    const effectiveToolsHash = generationChanged ? null : toolsHash;
+    const effectiveToolsCacheAt = generationChanged ? null : status.toolsCacheAt ?? null;
     return {
       serverId: status.id,
       authority,
       enabled: status.enabled,
+      start_on_boot: startOnBoot,
+      allowed_tools: allowedTools.slice(),
+      blocked_tools: blockedTools.slice(),
       type: status.type,
       tags: status.tags,
-      state: status.state,
+      state: effectiveState,
       pid: status.pid ?? null,
       running: Boolean(status.running),
       framing: status.framing,
       generation,
+      lastOkAt: status.lastOkAt ?? null,
+      initializedAt: status.initializedAt ?? null,
+      initializeDurationMs: status.initializeDurationMs ?? null,
+      toolsListDurationMs: status.toolsListDurationMs ?? null,
       lastError: status.lastError ?? null,
-      tools: tools.slice(),
-      toolsHash,
-      toolsCacheAt: status.toolsCacheAt ?? null,
-      toolsPending: Boolean(status.toolsPending)
+      tools: effectiveTools,
+      toolsHash: effectiveToolsHash,
+      toolsCacheAt: effectiveToolsCacheAt,
+      toolsPending: generationChanged ? false : Boolean(status.toolsPending)
     };
+  }
+
+  private async maybeAutoStartServers(): Promise<void> {
+    const authority = getMcpAuthority();
+    const isTauri = isTauriRuntime();
+    const servers = this.getServers();
+    const stdioAutoStarts = servers.filter((s) => s.enabled && s.start_on_boot && s.type === "stdio");
+    if (authority === "rust" && stdioAutoStarts.length > 1) {
+      for (const s of stdioAutoStarts.slice(1)) {
+        this.autoStartBackoffUntilByServerId.set(s.serverId, Date.now() + 60000);
+      }
+    }
+
+    for (const s of servers) {
+      if (!s.enabled || !s.start_on_boot) continue;
+      if (!isTauri && s.type !== "http") continue;
+      if (authority === "rust" && s.type === "stdio" && stdioAutoStarts.length > 1 && s.serverId !== stdioAutoStarts[0]?.serverId) continue;
+      if (s.state === "READY") continue;
+
+      const backoffUntil = this.autoStartBackoffUntilByServerId.get(s.serverId) ?? 0;
+      if (backoffUntil && Date.now() < backoffUntil) continue;
+      if (this.autoStartInFlight.has(s.serverId)) continue;
+
+      this.autoStartInFlight.add(s.serverId);
+      void this.ensureStarted(s.serverId)
+        .catch((e: any) => {
+          const attempts = (this.autoStartAttemptsByServerId.get(s.serverId) ?? 0) + 1;
+          this.autoStartAttemptsByServerId.set(s.serverId, attempts);
+          const delayMs = Math.min(60000, 2000 * Math.pow(2, Math.min(6, attempts - 1)));
+          this.autoStartBackoffUntilByServerId.set(s.serverId, Date.now() + delayMs);
+          logger.warn("mcp", "MCP auto-start failed", { serverId: s.serverId, error: String(e?.message ?? e), delayMs });
+        })
+        .finally(() => {
+          this.autoStartInFlight.delete(s.serverId);
+        });
+    }
   }
 
   private async maybeAttachRustEventListeners(): Promise<void> {
@@ -153,6 +271,10 @@ export class McpOrchestrator {
       const genRaw = p.generation;
       const generation = typeof genRaw === "number" ? genRaw : Number(genRaw ?? 0);
       if (Number.isFinite(generation) && generation >= 0) {
+        const prev = this.rustGenerationByServerId.get(serverId);
+        if (prev !== undefined && prev !== generation) {
+          this.toolsInvalidatedAtByServerId.set(serverId, Date.now());
+        }
         this.rustGenerationByServerId.set(serverId, generation);
       }
 
