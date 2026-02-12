@@ -86,6 +86,14 @@ test.describe("TAQWIN MCP", () => {
 
       await page.keyboard.press("Escape");
 
+      await page.getByTitle("MCP Registry").click();
+      await expect(page.getByRole("heading", { name: "MCP Registry" })).toBeVisible({ timeout: 30000 });
+      const taqwinCard = page.locator('div').filter({ hasText: "taqwin" }).filter({ hasText: "local_config" }).first();
+      await expect(taqwinCard).toBeVisible({ timeout: 30000 });
+      await taqwinCard.getByRole("button", { name: "Details" }).click();
+      await expect(taqwinCard.getByText("tools_cached")).toBeVisible({ timeout: 30000 });
+      await expect(taqwinCard.getByText("debug_test")).toBeVisible({ timeout: 30000 });
+
       const diag = getPageDiagnostics(page);
       if (diag.length) console.log(diag.join("\n"));
     } finally {

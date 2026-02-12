@@ -20,6 +20,7 @@ import { useTaqwinActivationStatus } from "../../hooks/useTaqwinActivationStatus
 import { useTaqwinMcpStatus } from "../../hooks/useTaqwinMcpStatus";
 import { ChatTerminalPane } from "./ChatTerminalPane";
 import { Command, Child } from "@tauri-apps/plugin-shell";
+import { toolExposureService } from "../../services/ToolExposureService";
 
 // CP17: History Modal
 const HistoryModal: React.FC<{
@@ -329,6 +330,43 @@ const AuditModal: React.FC<{
   );
 };
 
+const AvailableToolsModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  tools: Array<{ name: string; serverId?: string; originalName?: string; description?: string; riskLevel?: string; permission?: { allowed: boolean; reason?: string } }>;
+}> = ({ isOpen, onClose, tools }) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg w-[900px] shadow-xl max-h-[90vh] flex flex-col">
+        <div className="p-6 pb-4 flex-none border-b border-zinc-800/50">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-light text-zinc-200">Available Tools</h2>
+            <button onClick={onClose} className="text-xs text-zinc-400 hover:text-white">Close</button>
+          </div>
+        </div>
+        <div className="p-6 overflow-y-auto flex-1 space-y-2">
+          {tools.length === 0 ? (
+            <div className="text-sm text-zinc-500">No exposed tools.</div>
+          ) : (
+            tools.map((t) => (
+              <div key={t.name} className="border border-zinc-800 bg-zinc-950/40 rounded p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="font-mono text-xs text-zinc-200 break-all">{t.name}</div>
+                  <div className="text-[10px] text-zinc-400">
+                    {t.permission?.allowed ? "allowed" : `blocked:${t.permission?.reason ?? "policy"}`}{t.riskLevel ? ` • risk:${t.riskLevel}` : ""}
+                  </div>
+                </div>
+                {t.description ? <div className="text-xs text-zinc-400 mt-2 whitespace-pre-wrap break-words">{t.description}</div> : null}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 type Props = {
   sessionId: string | null;
   readOnly: boolean;
@@ -355,6 +393,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [historyOpen, setHistoryOpen] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [availableToolsOpen, setAvailableToolsOpen] = useState(false);
   const [inspectSessionId, setInspectSessionId] = useState<string | null>(null);
   const [mode, setMode] = useState<"chat" | "terminal">("chat");
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
@@ -383,6 +422,9 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const lastAssistant = [...messages].reverse().find((m) => m.from === "knez");
   const canContinue = !readOnly && !sending && (lastAssistant?.metrics as any)?.finishReason === "stopped";
   const [visibleCount, setVisibleCount] = useState(50);
+  const [toolExposureTick, setToolExposureTick] = useState(0);
+  const exposedTools = useMemo(() => toolExposureService.getCatalog(), [toolExposureTick]);
+  const exposedAllowedCount = useMemo(() => toolExposureService.getToolsForModel().length, [toolExposureTick]);
   
   // Reset visible count when session changes
   useEffect(() => {
@@ -397,6 +439,10 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     const onOpen = () => setToolsOpen(true);
     window.addEventListener("taqwin-tools-open", onOpen as any);
     return () => window.removeEventListener("taqwin-tools-open", onOpen as any);
+  }, []);
+
+  useEffect(() => {
+    return toolExposureService.subscribe(() => setToolExposureTick((v) => (v + 1) % 1000000));
   }, []);
 
   useEffect(() => {
@@ -784,6 +830,8 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
               <span>mcp:{taqwinMcpStatus.state}</span>
               <span>•</span>
               <span>tools:{(taqwinMcpStatus as any).toolsCached ?? 0}</span>
+              <span>•</span>
+              <span>mcp_tools:{exposedAllowedCount}</span>
             </div>
             <button
                 onClick={() => {
@@ -842,6 +890,17 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                       MCP Registry
                     </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHeaderMenuOpen(false);
+                      setAvailableToolsOpen(true);
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-900 flex items-center gap-2"
+                  >
+                    <Puzzle size={14} />
+                    Available Tools
+                  </button>
                   <button
                     type="button"
                     onClick={() => {
@@ -1166,6 +1225,11 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
       <TaqwinToolsModal
         isOpen={toolsOpen}
         onClose={() => setToolsOpen(false)}
+      />
+      <AvailableToolsModal
+        isOpen={availableToolsOpen}
+        onClose={() => setAvailableToolsOpen(false)}
+        tools={exposedTools as any}
       />
       <HistoryModal
         isOpen={historyOpen}

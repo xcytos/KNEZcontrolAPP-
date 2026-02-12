@@ -8,6 +8,7 @@ const targets = [
   "dist",
   "playwright-report",
   "test-results",
+  path.join("src-tauri", "target"),
   path.join("tests", "tauri-e2e", ".tauri-dev-state.json"),
   path.join("tests", "tauri-e2e", "e2e-run.log"),
   path.join("tests", "tauri-e2e", "tauri-dev.log"),

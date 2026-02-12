@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useMcpInspector } from "./useMcpInspector";
 import type { McpTrafficEvent } from "../../../mcp/inspector/McpTraffic";
+import { mcpOrchestrator } from "../../../mcp/McpOrchestrator";
 
 type LogTab = "traffic" | "stdout" | "stderr" | "parse";
 
@@ -96,7 +97,7 @@ export const McpInspectorPanel: React.FC = () => {
 
   const tools = useMemo(() => {
     if (!selectedId) return [];
-    const list = svc.getTools(selectedId);
+    const list = mcpOrchestrator.getServerTools(selectedId);
     const q = toolSearch.trim().toLowerCase();
     const filtered = q ? list.filter((t) => t.name.toLowerCase().includes(q) || String(t.description ?? "").toLowerCase().includes(q)) : list;
     filtered.sort((a, b) => a.name.localeCompare(b.name));
@@ -105,7 +106,7 @@ export const McpInspectorPanel: React.FC = () => {
 
   useEffect(() => {
     if (!selectedId) return;
-    const list = svc.getTools(selectedId);
+    const list = mcpOrchestrator.getServerTools(selectedId);
     if (!selectedTool || !list.some((t) => t.name === selectedTool)) {
       setSelectedTool(list[0]?.name ?? "");
     }
