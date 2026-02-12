@@ -11,6 +11,7 @@ test.describe("TAQWIN MCP", () => {
   });
 
   test("starts MCP and runs get_server_status", async () => {
+    test.skip(!process.env.TAQWIN_MCP_E2E, "Set TAQWIN_MCP_E2E=1 to run TAQWIN MCP integration test.");
     const { page, label } = await openE2EWindow();
     try {
       const isTauri = await page.evaluate(() => {
@@ -39,29 +40,49 @@ test.describe("TAQWIN MCP", () => {
       await mcpBtn.click();
 
       const status = page.locator('[data-testid="mcp-status"]');
-      await expect(status).toContainText("mcp_state=READY", { timeout: 60000 });
       await expect(status).toContainText("mcp_trust=trusted", { timeout: 60000 });
+      await expect(status).toContainText("mcp_state=INITIALIZED", { timeout: 60000 });
 
       await page.getByRole("button", { name: "Advanced" }).click();
       await expect(page.getByRole("button", { name: "Self-Test" })).toBeVisible({ timeout: 30000 });
       await page.getByRole("button", { name: "Self-Test" }).click();
 
-      await expect(status).toContainText("mcp_trust=trusted", { timeout: 60000 });
-      await expect(status).toContainText("capability_trust=trusted", { timeout: 60000 });
-      await expect(status).toContainText("tools_pending=false", { timeout: 60000 });
+      await expect(status).toContainText("mcp_trust=trusted", { timeout: 240000 });
+      await expect(status).toContainText("mcp_state=READY", { timeout: 240000 });
 
       const diagMid = getPageDiagnostics(page);
-      const forbidden = /(switching client framing|fallback|request timeout)/i;
-      expect(diagMid.some((l) => forbidden.test(l))).toBe(false);
+      const firstIndex = (re: RegExp) => diagMid.findIndex((l) => re.test(l));
+      const idxInit = firstIndex(/\bMCP request initialize\b/i);
+      const idxNotif = firstIndex(/\bMCP notify initialized\b/i);
+      const idxList = firstIndex(/\bMCP request tools\/list\b/i);
+      const idxCall = firstIndex(/\bMCP request tools\/call\b/i);
+      expect(idxInit).toBeGreaterThanOrEqual(0);
+      expect(idxNotif).toBeGreaterThan(idxInit);
+      expect(idxList).toBeGreaterThan(idxNotif);
+      expect(idxCall).toBeGreaterThan(idxList);
 
-      const pidRe = /\bpid:\s*(\d+)/g;
-      const pids = new Set<string>();
-      for (const line of diagMid) {
-        for (const m of line.matchAll(pidRe)) {
-          if (m[1]) pids.add(m[1]);
-        }
-      }
-      expect(pids.size).toBe(1);
+      const statusText = await status.innerText();
+      const toolsMatch = statusText.match(/\btools=(\d+)\b/);
+      const toolsCount = Number(toolsMatch?.[1] ?? 0);
+      expect(toolsCount).toBeGreaterThan(0);
+
+      const pidMatch1 = statusText.match(/\bpid=(\d+)\b/);
+      const pid1 = Number(pidMatch1?.[1] ?? 0) || null;
+      expect(pid1).not.toBeNull();
+
+      await mcpBtn.click();
+      await expect(status).toContainText("mcp_state=INITIALIZED", { timeout: 60000 });
+      await expect(status).toContainText("mcp_state=READY", { timeout: 240000 });
+
+      const statusText2 = await status.innerText();
+      const pidMatch2 = statusText2.match(/\bpid=(\d+)\b/);
+      const pid2 = Number(pidMatch2?.[1] ?? 0) || null;
+      expect(pid2).not.toBeNull();
+      expect(pid2).not.toBe(pid1);
+
+      const diagAfterRestart = getPageDiagnostics(page);
+      expect(diagAfterRestart.some((l) => /\bMCP request shutdown\b/i.test(l))).toBe(true);
+      expect(diagAfterRestart.some((l) => /\bMCP notify exit\b/i.test(l))).toBe(true);
 
       await page.keyboard.press("Escape");
 

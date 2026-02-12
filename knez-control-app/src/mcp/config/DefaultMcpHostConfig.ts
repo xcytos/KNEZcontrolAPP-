@@ -20,6 +20,13 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
         enabled: true,
         tags: ["taqwin", "mcp"]
       },
+      chrome_devtools: {
+        command: "npx",
+        args: ["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics"],
+        env: {},
+        enabled: false,
+        tags: ["chrome", "devtools", "mcp", "npx"]
+      },
       github_remote: {
         type: "http",
         url: "https://api.githubcopilot.com/mcp/",
@@ -54,6 +61,16 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
         env: { ...rawObj.servers.taqwin.env },
         enabled: true,
         tags: rawObj.servers.taqwin.tags.slice()
+      },
+      chrome_devtools: {
+        id: "chrome_devtools",
+        type: "stdio",
+        command: String((rawObj.servers as any).chrome_devtools.command),
+        args: (rawObj.servers as any).chrome_devtools.args.slice(),
+        cwd: undefined,
+        env: { ...(rawObj.servers as any).chrome_devtools.env },
+        enabled: false,
+        tags: (rawObj.servers as any).chrome_devtools.tags.slice()
       },
       github_remote: {
         id: "github_remote",

@@ -23,6 +23,7 @@ function asText(evt: McpTrafficEvent): string {
   if (evt.kind === "parse_error") return `${evt.detail}\n${evt.preview}`;
   if (evt.kind === "request") return JSON.stringify(evt.json, null, 2);
   if (evt.kind === "response") return JSON.stringify(evt.json, null, 2);
+  if (evt.kind === "unsolicited") return JSON.stringify(evt.json, null, 2);
   if (evt.kind === "process_closed") return `[process_closed] code=${String(evt.code)}`;
   if (evt.kind === "spawn_error") return `[spawn_error] ${evt.message}`;
   return "";
@@ -68,6 +69,7 @@ export const McpInspectorPanel: React.FC = () => {
   const [logSearch, setLogSearch] = useState("");
   const [autoScroll, setAutoScroll] = useState(true);
   const logsRef = useRef<HTMLDivElement | null>(null);
+  const configRef = useRef<HTMLTextAreaElement | null>(null);
   const [showAddServer, setShowAddServer] = useState(false);
   const [addServerText, setAddServerText] = useState("");
   const [addServerError, setAddServerError] = useState<string>("");
@@ -80,6 +82,17 @@ export const McpInspectorPanel: React.FC = () => {
   useEffect(() => {
     setRawDraft(cfg.raw);
   }, [cfg.raw]);
+
+  useEffect(() => {
+    const onOpenConfig = () => {
+      try {
+        configRef.current?.focus();
+        configRef.current?.scrollIntoView({ block: "center" });
+      } catch {}
+    };
+    window.addEventListener("mcp-inspector-open-config", onOpenConfig as any);
+    return () => window.removeEventListener("mcp-inspector-open-config", onOpenConfig as any);
+  }, []);
 
   const tools = useMemo(() => {
     if (!selectedId) return [];
@@ -108,7 +121,7 @@ export const McpInspectorPanel: React.FC = () => {
           ? ["raw_stderr"]
           : logTab === "parse"
             ? ["parse_error"]
-            : ["request", "response", "process_closed", "spawn_error", "parse_error"];
+        : ["request", "response", "unsolicited", "process_closed", "spawn_error", "parse_error"];
     const filtered = all.filter((e) => selectedKinds.includes(e.kind));
     const q = logSearch.trim().toLowerCase();
     const searched = q ? filtered.filter((e) => asText(e).toLowerCase().includes(q)) : filtered;
@@ -278,6 +291,15 @@ export const McpInspectorPanel: React.FC = () => {
                   setSaveError("");
                   void (async () => {
                     try {
+                      svc.applyConfig(rawDraft);
+                      const nextCfg = svc.getConfig();
+                      const hasErrors =
+                        (nextCfg.issues ?? []).some((it) => it.level === "error") ||
+                        Object.values(nextCfg.issuesByServerId ?? {}).some((list: any) => (list ?? []).some((it: any) => it?.level === "error"));
+                      if (hasErrors) {
+                        setSaveError("Fix config errors before saving.");
+                        return;
+                      }
                       await svc.saveConfig(rawDraft);
                       setSaveError("");
                     } catch (e: any) {
@@ -298,6 +320,7 @@ export const McpInspectorPanel: React.FC = () => {
             value={rawDraft}
             onChange={(e) => setRawDraft(e.target.value)}
             spellCheck={false}
+            ref={configRef}
           />
           {saveError && (
             <div className="mt-2 border border-red-900/40 bg-red-900/10 rounded p-2 text-red-300 text-xs whitespace-pre-wrap break-words">
@@ -385,13 +408,22 @@ export const McpInspectorPanel: React.FC = () => {
             <>
               <div className="flex flex-wrap items-center gap-2">
                 <button
+                  className="text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors disabled:opacity-50"
+                  disabled={selected.type === "stdio" ? !isTauri : false}
+                  onClick={() => {
+                    void svc.handshake(selectedId, { toolsListTimeoutMs }).catch(() => {});
+                  }}
+                >
+                  Start
+                </button>
+                <button
                   className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors disabled:opacity-50"
                   disabled={selected.type === "stdio" ? !isTauri : false}
                   onClick={() => {
                     void svc.start(selectedId).catch(() => {});
                   }}
                 >
-                  Start
+                  Spawn
                 </button>
                 <button
                   className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors disabled:opacity-50"

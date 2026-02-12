@@ -3,6 +3,8 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::Manager;
 
+mod mcp_host;
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct UiPreferences {
     theme: Option<String>,
@@ -104,6 +106,45 @@ fn close_main_window(app: tauri::AppHandle) -> Result<bool, String> {
     Ok(false)
 }
 
+#[tauri::command]
+fn mcp_status(state: tauri::State<mcp_host::McpHostRuntime>) -> mcp_host::McpRuntimeStatus {
+    state.status()
+}
+
+#[tauri::command]
+fn mcp_start(state: tauri::State<mcp_host::McpHostRuntime>, cfg: mcp_host::McpStdioServerConfig) -> Result<mcp_host::McpRuntimeStatus, String> {
+    state.start(cfg)
+}
+
+#[tauri::command]
+fn mcp_stop(state: tauri::State<mcp_host::McpHostRuntime>) -> Result<(), String> {
+    state.stop()
+}
+
+#[tauri::command]
+fn mcp_list_tools(state: tauri::State<mcp_host::McpHostRuntime>) -> Result<Vec<serde_json::Value>, String> {
+    state.list_tools()
+}
+
+#[tauri::command]
+fn mcp_get_traffic(state: tauri::State<mcp_host::McpHostRuntime>) -> Vec<mcp_host::McpTrafficEvent> {
+    state.get_traffic()
+}
+
+#[tauri::command]
+async fn mcp_request(
+    state: tauri::State<'_, mcp_host::McpHostRuntime>,
+    method: String,
+    params: Option<serde_json::Value>,
+    timeout_ms: Option<u64>,
+) -> Result<serde_json::Value, String> {
+    let rt = state.inner().clone();
+    let timeout = timeout_ms.unwrap_or(30000);
+    tauri::async_runtime::spawn_blocking(move || rt.request(method, params, timeout))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -134,6 +175,7 @@ pub fn run() {
                 let _ = window.show();
             }
 
+            app.manage(mcp_host::McpHostRuntime::new(app.handle().clone()));
             app.handle().plugin(tauri_plugin_shell::init())?;
             app.handle().plugin(tauri_plugin_fs::init())?;
             app.handle().plugin(tauri_plugin_http::init())?;
@@ -145,7 +187,13 @@ pub fn run() {
             open_test_window,
             close_window,
             close_all_test_windows,
-            close_main_window
+            close_main_window,
+            mcp_status,
+            mcp_start,
+            mcp_stop,
+            mcp_list_tools,
+            mcp_get_traffic,
+            mcp_request
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -900,6 +900,7 @@ export class ChatService {
           durationMs: Math.round(performance.now() - t0),
           error: String(e?.message ?? e)
         });
+        return "";
       }
     }
 

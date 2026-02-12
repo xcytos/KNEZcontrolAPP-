@@ -897,7 +897,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
           <div 
             ref={containerRef}
             onScroll={handleScroll}
-            className="flex-1 overflow-y-auto p-4 space-y-6 scroll-smooth"
+            className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-6 scroll-smooth max-w-full min-w-0"
           >
             {renderOfflineOverlay()}
 
@@ -1025,7 +1025,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                     Clear
                   </button>
                 </div>
-                <div ref={termOutRef} className="max-h-44 overflow-y-auto p-2 font-mono text-[11px] text-zinc-200 whitespace-pre-wrap">
+                <div ref={termOutRef} className="max-h-44 overflow-y-auto overflow-x-hidden p-2 font-mono text-[11px] text-zinc-200 whitespace-pre-wrap break-words max-w-full min-w-0">
                   {terminalOut || "Terminal ready."}
                 </div>
               </div>
