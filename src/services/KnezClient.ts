@@ -35,8 +35,20 @@ export type KnezInsight = {
 };
 
 type CompletionMessage = {
-  role: "system" | "user" | "assistant";
+  role: "system" | "user" | "assistant" | "tool";
   content: string;
+};
+
+export type ChatCompletionTool = {
+  name: string;
+  description?: string;
+  parameters: any;
+};
+
+export type ChatCompletionToolCall = {
+  id?: string;
+  type?: string;
+  function?: { name?: string; arguments?: string };
 };
 
 type ChatCompletionsRequest = {
@@ -46,6 +58,8 @@ type ChatCompletionsRequest = {
   temperature?: number;
   max_tokens?: number;
   top_p?: number;
+  tools?: any;
+  tool_choice?: any;
 };
 
 export type ChatCompletionsFinal = {
@@ -53,11 +67,26 @@ export type ChatCompletionsFinal = {
   object: string;
   model?: string;
   choices: Array<{
-    message?: { role: string; content: string };
+    message?: { role: string; content: string; tool_calls?: ChatCompletionToolCall[] };
     finish_reason?: string;
-    delta?: { content?: string };
+    delta?: { content?: string; tool_calls?: ChatCompletionToolCall[] };
   }>;
 };
+
+function toOpenAiTools(tools: ChatCompletionTool[] | undefined): any[] | undefined {
+  if (tools === undefined) return undefined;
+  if (tools.length === 0) return [];
+  return tools
+    .filter((t) => t && t.name)
+    .map((t) => ({
+      type: "function",
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters
+      }
+    }));
+}
 
 type KnezErrorResponse = {
   error: string;
@@ -184,6 +213,7 @@ import { logger } from "./LogService";
 export class KnezClient {
   private profile: KnezConnectionProfile;
   private sessionId: string | null;
+  private toolCallingSupportByEndpoint = new Map<string, "supported" | "unsupported">();
 
   constructor() {
     const savedProfile = localStorage.getItem(PROFILE_STORAGE_KEY);
@@ -779,11 +809,32 @@ export class KnezClient {
     sessionId: string,
     options?: { onMeta?: (meta: { model?: string }) => void }
   ): Promise<string> {
+    const data = await this.chatCompletionsNonStreamRaw(messages, sessionId, { onMeta: options?.onMeta });
+    return data.choices?.[0]?.message?.content ?? "";
+  }
+
+  async chatCompletionsNonStreamRaw(
+    messages: CompletionMessage[],
+    sessionId: string,
+    options?: {
+      tools?: ChatCompletionTool[];
+      toolChoice?: any;
+      temperature?: number;
+      maxTokens?: number;
+      topP?: number;
+      onMeta?: (meta: { model?: string }) => void;
+    }
+  ): Promise<ChatCompletionsFinal> {
     const url = `${this.baseUrl()}/v1/chat/completions`;
     const payload: ChatCompletionsRequest = {
       messages,
       stream: false,
       session_id: sessionId,
+      temperature: options?.temperature,
+      max_tokens: options?.maxTokens,
+      top_p: options?.topP,
+      tools: toOpenAiTools(options?.tools),
+      tool_choice: options?.toolChoice,
     };
     let raw: any;
     try {
@@ -793,7 +844,8 @@ export class KnezClient {
         body: JSON.stringify(payload),
       });
       if (!resp.ok) {
-        throw new AppError("KNEZ_COMPLETION_FAILED", `Completions request failed (${resp.status})`, { status: resp.status, url });
+        const detail = await resp.text().catch(() => "");
+        throw new AppError("KNEZ_COMPLETION_FAILED", `Completions request failed (${resp.status})`, { status: resp.status, url, detail });
       }
       raw = (await resp.json()) as any;
     } catch (e: any) {
@@ -811,7 +863,36 @@ export class KnezClient {
     if (data?.model && options?.onMeta) {
       try { options.onMeta({ model: data.model }); } catch {}
     }
-    return data.choices?.[0]?.message?.content ?? "";
+    return data;
+  }
+
+  async getToolCallingSupport(): Promise<"supported" | "unsupported"> {
+    const key = this.baseUrl();
+    const cached = this.toolCallingSupportByEndpoint.get(key);
+    if (cached) return cached;
+    try {
+      const session = await this.ensureSession();
+      await this.chatCompletionsNonStreamRaw([{ role: "user", content: "ping" }], session, {
+        tools: [],
+        toolChoice: "none",
+        maxTokens: 1
+      });
+      this.toolCallingSupportByEndpoint.set(key, "supported");
+      return "supported";
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      const detail = String((e as any)?.details?.detail ?? "");
+      const combined = `${msg} ${detail}`.toLowerCase();
+      const unsupported =
+        combined.includes("unknown field") ||
+        combined.includes("unexpected") ||
+        combined.includes("tools") && combined.includes("not") && combined.includes("allowed") ||
+        combined.includes("invalid") && combined.includes("tools");
+      if (unsupported) {
+        this.toolCallingSupportByEndpoint.set(key, "unsupported");
+      }
+      return "unsupported";
+    }
   }
 
   async validateCognition(): Promise<boolean> {

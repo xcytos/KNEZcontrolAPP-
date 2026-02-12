@@ -5,6 +5,7 @@ import { useToast } from '../../components/ui/Toast';
 import { logger } from '../../services/LogService';
 import { McpInspectorPanel } from './inspector/McpInspectorPanel';
 import { mcpInspectorService } from '../../mcp/inspector/McpInspectorService';
+import { mcpOrchestrator } from '../../mcp/McpOrchestrator';
 import { extractImportedMcpConfig } from '../../mcp/config/importMcpServers';
 
 const AddServerModal: React.FC<{
@@ -98,10 +99,11 @@ export const McpRegistryView: React.FC<{
 
   useEffect(() => {
     void mcpInspectorService.loadConfig();
-    return mcpInspectorService.subscribe(() => setTick((v) => (v + 1) % 1000000));
+    return mcpOrchestrator.subscribe(() => setTick((v) => (v + 1) % 1000000));
   }, []);
 
-  const localServerIds = useMemo(() => new Set(mcpInspectorService.getServers().map((s) => s.id)), [tick]);
+  const runtimeById = useMemo(() => mcpOrchestrator.getSnapshot().servers, [tick]);
+  const localServerIds = useMemo(() => new Set(Object.keys(runtimeById)), [runtimeById]);
   const inspectorStatusById = useMemo(() => mcpInspectorService.getStatusById(), [tick]);
   const items = useMemo(() => {
     const knezItems = (snapshot as any)?.supported ? ((snapshot as any).items ?? []) : [];
@@ -110,32 +112,31 @@ export const McpRegistryView: React.FC<{
       if (!it?.id) continue;
       byId.set(it.id, { ...it });
     }
-    const localServers = mcpInspectorService.getServers();
-    for (const s of localServers) {
-      if (!s?.id) continue;
-      if (byId.has(s.id)) continue;
-      const st = inspectorStatusById[s.id];
+    for (const s of Object.values(runtimeById)) {
+      if (!s?.serverId) continue;
+      if (byId.has(s.serverId)) continue;
+      const st = inspectorStatusById[s.serverId];
       const status = (() => {
-        const state = st?.state ?? "IDLE";
+        const state = s?.state ?? st?.state ?? "IDLE";
         if (state === "READY" || state === "INITIALIZED") return "active";
         if (state === "STARTING" || state === "LISTING_TOOLS") return "starting";
         if (state === "ERROR") return "error";
         return "inactive";
       })();
-      byId.set(s.id, {
-        id: s.id,
+      byId.set(s.serverId, {
+        id: s.serverId,
         provider: "local_config",
         status,
         capabilities: [],
         enabled: s.enabled,
-        last_error: st?.lastError ?? null,
+        last_error: s.lastError ?? st?.lastError ?? null,
         last_ok: st?.lastOkAt ? Math.floor(st.lastOkAt / 1000) : null,
       });
     }
     const out = Array.from(byId.values());
     out.sort((a, b) => String(a.id ?? "").localeCompare(String(b.id ?? "")));
     return out;
-  }, [snapshot, tick, inspectorStatusById]);
+  }, [snapshot, runtimeById, inspectorStatusById]);
 
   if (!snapshot) return <div className="p-8 text-center text-zinc-500">Loading MCP Registry...</div>;
   if (!snapshot.supported) {
@@ -439,6 +440,34 @@ export const McpRegistryView: React.FC<{
                       <span className="text-zinc-500">enabled</span>
                       <span className="font-mono text-zinc-200">{String((item as any).enabled ?? (item.status === "active"))}</span>
                     </div>
+                    {runtimeById[item.id]?.tools ? (
+                      <div className="space-y-2">
+                        <div className="flex justify-between">
+                          <span className="text-zinc-500">tools_cached</span>
+                          <span className="font-mono text-zinc-200">{String(runtimeById[item.id]?.tools?.length ?? 0)}</span>
+                        </div>
+                        {runtimeById[item.id]?.toolsCacheAt ? (
+                          <div className="flex justify-between">
+                            <span className="text-zinc-500">tools_cache_age_s</span>
+                            <span className="font-mono text-zinc-200">
+                              {Math.max(0, Math.round((Date.now() - Number(runtimeById[item.id]?.toolsCacheAt ?? 0)) / 1000))}
+                            </span>
+                          </div>
+                        ) : null}
+                        {(runtimeById[item.id]?.tools?.length ?? 0) > 0 ? (
+                          <div className="border border-zinc-800 bg-zinc-950/40 rounded p-2">
+                            <div className="text-[10px] text-zinc-500 mb-1 uppercase tracking-wider">Tools</div>
+                            <div className="flex flex-wrap gap-1">
+                              {runtimeById[item.id]?.tools?.slice(0, 10).map((t: any) => (
+                                <span key={String(t?.name ?? "")} className="px-1.5 py-0.5 bg-zinc-800 text-zinc-300 text-[10px] rounded border border-zinc-700">
+                                  {String(t?.name ?? "")}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                     {!!(item as any).updated_at && (
                       <div className="flex justify-between">
                         <span className="text-zinc-500">updated_at</span>

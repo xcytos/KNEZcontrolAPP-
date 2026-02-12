@@ -2,7 +2,7 @@
 import { knezClient } from "./KnezClient";
 import { extractionService } from "./ExtractionService";
 import { persistenceService } from "./PersistenceService";
-import { ChatMessage } from "../domain/DataContracts";
+import { ChatMessage, ToolCallMessage } from "../domain/DataContracts";
 import { asErrorMessage } from "../domain/Errors";
 import { observe } from "../utils/observer";
 import { sessionDatabase } from "./SessionDatabase";
@@ -12,6 +12,8 @@ import { taqwinMcpService } from "../mcp/taqwin/TaqwinMcpService";
 import { logger } from "./LogService";
 import { tabErrorStore } from "./TabErrorStore";
 import { selectPrimaryBackend } from "../utils/health";
+import { toolExposureService, parseNamespacedToolName } from "./ToolExposureService";
+import { mcpOrchestrator } from "../mcp/McpOrchestrator";
 
 export interface ChatState {
   messages: ChatMessage[];
@@ -481,6 +483,279 @@ export class ChatService {
     });
   }
 
+  private stringifyToolPayload(value: any, maxChars: number): string {
+    try {
+      const raw = JSON.stringify(value ?? null);
+      if (raw.length <= maxChars) return raw;
+      return raw.slice(0, maxChars) + "…";
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      return JSON.stringify({ error: "tool_result_unserializable", message: msg }).slice(0, maxChars);
+    }
+  }
+
+  private classifyToolError(rawError: string): { code: string; message: string } {
+    const raw = String(rawError ?? "");
+    const lower = raw.toLowerCase();
+    if (lower.includes("mcp_permission_denied") || lower.includes("permission_denied")) return { code: "mcp_permission_denied", message: raw };
+    if (lower.includes("mcp_tool_not_found")) return { code: "mcp_tool_not_found", message: raw };
+    if (lower.includes("mcp_server_not_found")) return { code: "mcp_server_not_found", message: raw };
+    if (lower.includes("mcp_not_ready") || lower.includes("mcp_server_not_ready")) return { code: "mcp_server_not_ready", message: raw };
+    if (lower.includes("mcp_not_started") || lower.includes("mcp_not_initialized")) return { code: "mcp_server_not_ready", message: raw };
+    if (lower.includes("timeout")) return { code: "mcp_tool_timeout", message: raw };
+    return { code: "mcp_tool_execution_error", message: raw };
+  }
+
+  private async persistToolTrace(sessionId: string, msg: ChatMessage): Promise<void> {
+    await sessionDatabase.saveMessages(sessionId, [msg]);
+    if (this.sessionId === sessionId) {
+      this.state.messages = [...this.state.messages, msg].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+      this.notify();
+    }
+  }
+
+  private async updateToolTrace(sessionId: string, messageId: string, patch: Partial<ChatMessage>): Promise<void> {
+    await sessionDatabase.updateMessage(messageId, patch as any);
+    if (this.sessionId === sessionId) {
+      this.state.messages = this.state.messages.map((m) => m.id === messageId ? { ...m, ...patch } : m);
+      this.notify();
+    }
+  }
+
+  private async runNativeToolLoop(
+    sessionId: string,
+    baseMessages: Array<{ role: string; content: string }>,
+    assistantId: string,
+    toolsForModel: Array<{ name: string; description: string; parameters: any }>,
+    onMeta?: (meta: { model?: string }) => void
+  ): Promise<string> {
+    const conversation: any[] = baseMessages.map((m) => ({ role: m.role, content: m.content }));
+    const maxSteps = 8;
+    for (let step = 0; step < maxSteps; step++) {
+      const res = await knezClient.chatCompletionsNonStreamRaw(conversation, sessionId, {
+        tools: toolsForModel,
+        toolChoice: toolsForModel.length ? "auto" : "none",
+        onMeta
+      });
+      const msg = res?.choices?.[0]?.message as any;
+      const toolCalls: any[] = Array.isArray(msg?.tool_calls) ? msg.tool_calls : [];
+      const assistantContent = String(msg?.content ?? "");
+      if (assistantContent) {
+        conversation.push({ role: "assistant", content: assistantContent, tool_calls: toolCalls.length ? toolCalls : undefined });
+      } else if (toolCalls.length) {
+        conversation.push({ role: "assistant", content: "", tool_calls: toolCalls });
+      }
+      if (!toolCalls.length) {
+        return assistantContent;
+      }
+
+      for (let i = 0; i < toolCalls.length; i++) {
+        const tc = toolCalls[i] ?? {};
+        const toolCallId = String(tc?.id ?? `${assistantId}:tool:${step}:${i}`);
+        const fn = tc?.function ?? {};
+        const toolName = String(fn?.name ?? "");
+        const argsRaw = String(fn?.arguments ?? "");
+        let args: any = {};
+        try {
+          args = argsRaw ? JSON.parse(argsRaw) : {};
+        } catch {
+          args = { _raw: argsRaw };
+        }
+
+        const startedAt = new Date().toISOString();
+        const traceMessageId = `${assistantId}-tool-${step}-${i}`;
+        const toolCall: ToolCallMessage = { tool: toolName, args, status: "calling", startedAt };
+        await this.persistToolTrace(sessionId, {
+          id: traceMessageId,
+          sessionId,
+          from: "knez",
+          text: "",
+          createdAt: startedAt,
+          toolCall,
+          deliveryStatus: "delivered",
+          replyToMessageId: assistantId,
+          correlationId: assistantId
+        });
+
+        let result: any;
+        let ok = false;
+        let errorMsg: string | undefined;
+        let serverId: string | undefined;
+        let originalName: string | undefined;
+        try {
+          const meta = toolExposureService.getToolByName(toolName);
+          if (!meta) {
+            throw new Error("mcp_tool_not_found");
+          }
+          if (!meta.permission.allowed) {
+            throw new Error(`mcp_permission_denied:${meta.permission.reason ?? "blocked"}`);
+          }
+          const parsed = parseNamespacedToolName(toolName);
+          serverId = parsed?.serverId ?? meta.serverId;
+          originalName = parsed?.originalName ?? meta.originalName;
+          void this.tryEmit(
+            "tool_call_started",
+            { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: toolCallId },
+            sessionId
+          );
+          logger.info("mcp_audit", "tool_call_started", { tool: toolName, serverId, originalName, toolCallId });
+          const execStartedAt = performance.now();
+          const callRes = await mcpOrchestrator.callTool(serverId, originalName, args, { timeoutMs: 180000 });
+          const durationMs = Math.round(performance.now() - execStartedAt);
+          result = callRes.result;
+          ok = true;
+          void this.tryEmit(
+            "tool_call_completed",
+            { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: toolCallId, duration_ms: durationMs },
+            sessionId
+          );
+          logger.info("mcp_audit", "tool_call_completed", { tool: toolName, serverId, originalName, toolCallId, durationMs });
+        } catch (e: any) {
+          const classified = this.classifyToolError(String(e?.message ?? e));
+          errorMsg = `${classified.code}:${classified.message}`;
+          result = { ok: false, error: classified };
+          void this.tryEmit(
+            "tool_call_failed",
+            { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: toolCallId, error_code: classified.code },
+            sessionId
+          );
+          logger.warn("mcp_audit", "tool_call_failed", { tool: toolName, serverId, originalName, toolCallId, errorCode: classified.code });
+        }
+
+        const finishedAt = new Date().toISOString();
+        await this.updateToolTrace(sessionId, traceMessageId, {
+          toolCall: { ...toolCall, status: ok ? "succeeded" : "failed", result: ok ? result : undefined, error: ok ? undefined : errorMsg, finishedAt }
+        });
+
+        const toolContent = this.stringifyToolPayload(result, 20000);
+        conversation.push({ role: "tool", tool_call_id: toolCallId, content: toolContent });
+      }
+    }
+    throw new Error("tool_loop_limit_reached");
+  }
+
+  private parsePromptToolRequest(text: string): { tool: string; arguments: any } | null {
+    const raw = String(text ?? "").trim();
+    if (!raw) return null;
+    const direct = (() => {
+      try {
+        const obj = JSON.parse(raw);
+        return obj && typeof obj.tool === "string" ? obj : null;
+      } catch {
+        return null;
+      }
+    })();
+    if (direct) return { tool: String(direct.tool), arguments: direct.arguments ?? {} };
+    const fence = raw.match(/```json\s*([\s\S]*?)```/i);
+    if (fence?.[1]) {
+      try {
+        const obj = JSON.parse(fence[1]);
+        if (obj && typeof obj.tool === "string") return { tool: String(obj.tool), arguments: obj.arguments ?? {} };
+      } catch {}
+    }
+    return null;
+  }
+
+  private async runPromptToolLoop(
+    sessionId: string,
+    baseMessages: Array<{ role: string; content: string }>,
+    assistantId: string,
+    toolsForModel: Array<{ name: string; description: string; parameters: any }>,
+    onMeta?: (meta: { model?: string }) => void
+  ): Promise<string> {
+    const toolNames = toolsForModel.map((t) => t.name).slice(0, 80);
+    const protocol =
+      `\n\n[SYSTEM: TOOL_PROTOCOL]\n` +
+      `If you need to use a tool, reply ONLY with JSON: {"tool":"<name>","arguments":{...}}.\n` +
+      `Allowed tool names:\n${toolNames.map((n) => `- ${n}`).join("\n")}\n` +
+      `Otherwise, reply normally.\n`;
+
+    const conversation: any[] = baseMessages.map((m, idx) => {
+      if (idx === baseMessages.length - 1 && m.role === "user") {
+        return { role: m.role, content: String(m.content ?? "") + protocol };
+      }
+      return { role: m.role, content: m.content };
+    });
+
+    const maxSteps = 8;
+    for (let step = 0; step < maxSteps; step++) {
+      const res = await knezClient.chatCompletionsNonStreamRaw(conversation, sessionId, { onMeta });
+      const msg = res?.choices?.[0]?.message as any;
+      const assistantContent = String(msg?.content ?? "");
+      conversation.push({ role: "assistant", content: assistantContent });
+      const req = this.parsePromptToolRequest(assistantContent);
+      if (!req) return assistantContent;
+
+      const toolName = String(req.tool ?? "");
+      const args = req.arguments ?? {};
+
+      const startedAt = new Date().toISOString();
+      const traceMessageId = `${assistantId}-tool-${step}-0`;
+      const toolCall: ToolCallMessage = { tool: toolName, args, status: "calling", startedAt };
+      await this.persistToolTrace(sessionId, {
+        id: traceMessageId,
+        sessionId,
+        from: "knez",
+        text: "",
+        createdAt: startedAt,
+        toolCall,
+        deliveryStatus: "delivered",
+        replyToMessageId: assistantId,
+        correlationId: assistantId
+      });
+
+      let result: any;
+      let ok = false;
+      let errorMsg: string | undefined;
+      let serverId: string | undefined;
+      let originalName: string | undefined;
+      try {
+        const meta = toolExposureService.getToolByName(toolName);
+        if (!meta) throw new Error("mcp_tool_not_found");
+        if (!meta.permission.allowed) throw new Error(`mcp_permission_denied:${meta.permission.reason ?? "blocked"}`);
+        const parsed = parseNamespacedToolName(toolName);
+        serverId = parsed?.serverId ?? meta.serverId;
+        originalName = parsed?.originalName ?? meta.originalName;
+        void this.tryEmit(
+          "tool_call_started",
+          { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId },
+          sessionId
+        );
+        logger.info("mcp_audit", "tool_call_started", { tool: toolName, serverId, originalName, toolCallId: traceMessageId });
+        const execStartedAt = performance.now();
+        const callRes = await mcpOrchestrator.callTool(serverId, originalName, args, { timeoutMs: 180000 });
+        const durationMs = Math.round(performance.now() - execStartedAt);
+        result = callRes.result;
+        ok = true;
+        void this.tryEmit(
+          "tool_call_completed",
+          { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId, duration_ms: durationMs },
+          sessionId
+        );
+        logger.info("mcp_audit", "tool_call_completed", { tool: toolName, serverId, originalName, toolCallId: traceMessageId, durationMs });
+      } catch (e: any) {
+        const classified = this.classifyToolError(String(e?.message ?? e));
+        errorMsg = `${classified.code}:${classified.message}`;
+        result = { ok: false, error: classified };
+        void this.tryEmit(
+          "tool_call_failed",
+          { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId, error_code: classified.code },
+          sessionId
+        );
+        logger.warn("mcp_audit", "tool_call_failed", { tool: toolName, serverId, originalName, toolCallId: traceMessageId, errorCode: classified.code });
+      }
+
+      const finishedAt = new Date().toISOString();
+      await this.updateToolTrace(sessionId, traceMessageId, {
+        toolCall: { ...toolCall, status: ok ? "succeeded" : "failed", result: ok ? result : undefined, error: ok ? undefined : errorMsg, finishedAt }
+      });
+
+      const toolContent = this.stringifyToolPayload(result, 20000);
+      conversation.push({ role: "tool", content: toolContent });
+    }
+    throw new Error("tool_loop_limit_reached");
+  }
+
   private async deliverQueueItem(id: string, forceContext?: string) {
     const item = await sessionDatabase.getOutgoing(id);
     if (!item) return;
@@ -571,6 +846,68 @@ export class ChatService {
     let firstTokenTimer: number | undefined;
     let watchdogId: number | undefined;
     try {
+      const toolsForModel = toolExposureService.getToolsForModel();
+      if (toolsForModel.length > 0) {
+        let toolModelId: string | undefined = modelId;
+        const onMeta = (meta: { model?: string }) => {
+          const next = meta?.model?.trim();
+          if (next) toolModelId = next;
+        };
+        const support = await knezClient.getToolCallingSupport().catch(() => "unsupported" as const);
+        const finalText =
+          support === "supported"
+            ? await this.runNativeToolLoop(sessionId, completionMessages as any, assistantId, toolsForModel, onMeta)
+            : await this.runPromptToolLoop(sessionId, completionMessages as any, assistantId, toolsForModel, onMeta);
+
+        if (finalText.trim().length === 0) {
+          throw new Error("Empty reply");
+        }
+
+        const finalAssistant: Partial<ChatMessage> = {
+          isPartial: false,
+          text: finalText,
+          deliveryStatus: "delivered",
+          refusal: false,
+          metrics: { finishReason: "completed", totalTokens: 0, modelId: toolModelId ?? modelId, backendStatus }
+        };
+
+        await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered" });
+        await sessionDatabase.updateMessage(assistantId, {
+          deliveryStatus: "delivered",
+          text: finalText,
+          metrics: finalAssistant.metrics,
+          isPartial: false,
+          refusal: false
+        });
+        await sessionDatabase.removeOutgoing(id);
+
+        if (this.sessionId === sessionId) {
+          this.state.messages = this.state.messages.map((m) => {
+            if (m.id === id) return { ...m, deliveryStatus: "delivered" };
+            if (m.id === assistantId) return { ...m, ...finalAssistant };
+            return m;
+          });
+          this.state.sending = false;
+          this.notify();
+        }
+
+        void this.tryEmit(
+          "chat_assistant_message",
+          {
+            message_id: assistantId,
+            from: "knez",
+            reply_to_message_id: id,
+            correlation_id: id,
+            finish_reason: "completed",
+            total_tokens: 0,
+          },
+          sessionId
+        );
+
+        await this.maybeAutoNameSession(sessionId, (await persistenceService.loadChat(sessionId)) ?? []);
+        return;
+      }
+
       let collected = "";
       let firstTokenTime: number | undefined;
       const startTime = Date.now();
