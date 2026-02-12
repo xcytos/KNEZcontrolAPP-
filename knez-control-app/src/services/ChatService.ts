@@ -8,13 +8,14 @@ import { observe } from "../utils/observer";
 import { sessionDatabase } from "./SessionDatabase";
 import { sessionController } from "./SessionController";
 import { isTaqwinToolAllowed } from "./TaqwinToolPermissions";
-import { taqwinMcpService } from "../mcp/taqwin/TaqwinMcpService";
 import { logger } from "./LogService";
 import { tabErrorStore } from "./TabErrorStore";
 import { selectPrimaryBackend } from "../utils/health";
-import { toolExposureService, parseNamespacedToolName } from "./ToolExposureService";
+import { toolExposureService } from "./ToolExposureService";
 import { mcpOrchestrator } from "../mcp/McpOrchestrator";
 import { classifyMcpError } from "../mcp/McpErrorTaxonomy";
+import { toolExecutionService } from "./ToolExecutionService";
+import { memoryInjectionService } from "./MemoryInjectionService";
 
 export interface ChatState {
   messages: ChatMessage[];
@@ -116,6 +117,7 @@ export class ChatService {
     if (!sid) throw new Error("no_session");
 
     const startedAt = new Date().toISOString();
+    const traceId = newMessageId();
     const traceMessageId = `${newMessageId()}-manual-tool`;
     const toolCall: ToolCallMessage = { tool: namespacedToolName, args, status: "calling", startedAt };
     await this.persistToolTrace(sid, {
@@ -124,6 +126,8 @@ export class ChatService {
       from: "knez",
       text: "",
       createdAt: startedAt,
+      traceId,
+      toolCallId: traceMessageId,
       toolCall,
       deliveryStatus: "delivered",
       correlationId: traceMessageId
@@ -135,47 +139,51 @@ export class ChatService {
     let serverId: string | undefined;
     let originalName: string | undefined;
     try {
-      const meta = toolExposureService.getToolByName(namespacedToolName);
-      if (!meta) throw new Error("mcp_tool_not_found");
-      if (!meta.permission.allowed) throw new Error(`mcp_permission_denied:${meta.permission.reason ?? "blocked"}`);
-      const parsed = parseNamespacedToolName(namespacedToolName);
-      serverId = parsed?.serverId ?? meta.serverId;
-      originalName = parsed?.originalName ?? meta.originalName;
-
-      const runtime = mcpOrchestrator.getServer(serverId);
-      if (!runtime || runtime.state !== "READY") {
-        await mcpOrchestrator.ensureStarted(serverId);
-      }
-
+      const exec = await toolExecutionService.executeNamespacedTool(namespacedToolName, args, { timeoutMs: 180000 });
+      serverId = exec.tool.serverId;
+      originalName = exec.tool.originalName;
       void this.tryEmit(
         "tool_call_started",
-        { tool: namespacedToolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId, mode: "manual" },
+        { tool: namespacedToolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId, trace_id: traceId, correlation_id: traceMessageId, mode: "manual" },
         sid
       );
-      logger.info("mcp_audit", "tool_call_started", { tool: namespacedToolName, serverId, originalName, toolCallId: traceMessageId, mode: "manual" });
+      logger.info("mcp_audit", "tool_call_started", { tool: namespacedToolName, serverId, originalName, toolCallId: traceMessageId, traceId, correlationId: traceMessageId, mode: "manual" });
 
-      const execStartedAt = performance.now();
-      const callRes = await mcpOrchestrator.callTool(serverId, originalName, args, { timeoutMs: 180000 });
-      const durationMs = Math.round(performance.now() - execStartedAt);
-      result = callRes.result;
-      ok = true;
+      if (exec.ok) {
+        result = exec.result;
+        ok = true;
+      } else {
+        const classified = exec.error;
+        errorMsg = `${classified.code}:${classified.message}`;
+        result = { ok: false, error: classified };
+      }
 
-      void this.tryEmit(
-        "tool_call_completed",
-        { tool: namespacedToolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId, duration_ms: durationMs, mode: "manual" },
-        sid
-      );
-      logger.info("mcp_audit", "tool_call_completed", { tool: namespacedToolName, serverId, originalName, toolCallId: traceMessageId, durationMs, mode: "manual" });
+      if (ok) {
+        void this.tryEmit(
+          "tool_call_completed",
+          { tool: namespacedToolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId, trace_id: traceId, correlation_id: traceMessageId, mode: "manual" },
+          sid
+        );
+        logger.info("mcp_audit", "tool_call_completed", { tool: namespacedToolName, serverId, originalName, toolCallId: traceMessageId, traceId, correlationId: traceMessageId, mode: "manual" });
+      } else {
+        const errCode = String(result?.error?.code ?? "mcp_tool_execution_error");
+        void this.tryEmit(
+          "tool_call_failed",
+          { tool: namespacedToolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId, trace_id: traceId, correlation_id: traceMessageId, error_code: errCode, mode: "manual" },
+          sid
+        );
+        logger.warn("mcp_audit", "tool_call_failed", { tool: namespacedToolName, serverId, originalName, toolCallId: traceMessageId, traceId, correlationId: traceMessageId, errorCode: errCode, mode: "manual" });
+      }
     } catch (e: any) {
       const classified = this.classifyToolError(String(e?.message ?? e));
       errorMsg = `${classified.code}:${classified.message}`;
       result = { ok: false, error: classified };
       void this.tryEmit(
         "tool_call_failed",
-        { tool: namespacedToolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId, error_code: classified.code, mode: "manual" },
+        { tool: namespacedToolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId, trace_id: traceId, correlation_id: traceMessageId, error_code: classified.code, mode: "manual" },
         sid
       );
-      logger.warn("mcp_audit", "tool_call_failed", { tool: namespacedToolName, serverId, originalName, toolCallId: traceMessageId, errorCode: classified.code, mode: "manual" });
+      logger.warn("mcp_audit", "tool_call_failed", { tool: namespacedToolName, serverId, originalName, toolCallId: traceMessageId, traceId, correlationId: traceMessageId, errorCode: classified.code, mode: "manual" });
     }
 
     const finishedAt = new Date().toISOString();
@@ -629,6 +637,7 @@ export class ChatService {
         }
 
         const startedAt = new Date().toISOString();
+        const traceId = newMessageId();
         const traceMessageId = `${assistantId}-tool-${step}-${i}`;
         const toolCall: ToolCallMessage = { tool: toolName, args, status: "calling", startedAt };
         await this.persistToolTrace(sessionId, {
@@ -637,6 +646,8 @@ export class ChatService {
           from: "knez",
           text: "",
           createdAt: startedAt,
+          traceId,
+          toolCallId,
           toolCall,
           deliveryStatus: "delivered",
           replyToMessageId: assistantId,
@@ -649,43 +660,46 @@ export class ChatService {
         let serverId: string | undefined;
         let originalName: string | undefined;
         try {
-          const meta = toolExposureService.getToolByName(toolName);
-          if (!meta) {
-            throw new Error("mcp_tool_not_found");
-          }
-          if (!meta.permission.allowed) {
-            throw new Error(`mcp_permission_denied:${meta.permission.reason ?? "blocked"}`);
-          }
-          const parsed = parseNamespacedToolName(toolName);
-          serverId = parsed?.serverId ?? meta.serverId;
-          originalName = parsed?.originalName ?? meta.originalName;
+          const exec = await toolExecutionService.executeNamespacedTool(toolName, args, { timeoutMs: 180000 });
+          serverId = exec.tool.serverId;
+          originalName = exec.tool.originalName;
+          const runtime = mcpOrchestrator.getServer(serverId);
           void this.tryEmit(
             "tool_call_started",
-            { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: toolCallId },
+            { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: toolCallId, trace_id: traceId, correlation_id: assistantId, pid: runtime?.pid ?? null, framing: runtime?.framing ?? null },
             sessionId
           );
-          logger.info("mcp_audit", "tool_call_started", { tool: toolName, serverId, originalName, toolCallId });
-          const execStartedAt = performance.now();
-          const callRes = await mcpOrchestrator.callTool(serverId, originalName, args, { timeoutMs: 180000 });
-          const durationMs = Math.round(performance.now() - execStartedAt);
-          result = callRes.result;
-          ok = true;
-          void this.tryEmit(
-            "tool_call_completed",
-            { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: toolCallId, duration_ms: durationMs },
-            sessionId
-          );
-          logger.info("mcp_audit", "tool_call_completed", { tool: toolName, serverId, originalName, toolCallId, durationMs });
+          logger.info("mcp_audit", "tool_call_started", { tool: toolName, serverId, originalName, toolCallId, traceId, correlationId: assistantId, pid: runtime?.pid ?? null, framing: runtime?.framing ?? null });
+          if (exec.ok) {
+            result = exec.result;
+            ok = true;
+            void this.tryEmit(
+              "tool_call_completed",
+              { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: toolCallId, trace_id: traceId, correlation_id: assistantId, pid: runtime?.pid ?? null, framing: runtime?.framing ?? null, duration_ms: exec.durationMs },
+              sessionId
+            );
+            logger.info("mcp_audit", "tool_call_completed", { tool: toolName, serverId, originalName, toolCallId, traceId, correlationId: assistantId, pid: runtime?.pid ?? null, framing: runtime?.framing ?? null, durationMs: exec.durationMs });
+          } else {
+            const classified = exec.error;
+            errorMsg = `${classified.code}:${classified.message}`;
+            result = { ok: false, error: classified };
+            void this.tryEmit(
+              "tool_call_failed",
+              { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: toolCallId, trace_id: traceId, correlation_id: assistantId, pid: runtime?.pid ?? null, framing: runtime?.framing ?? null, error_code: classified.code },
+              sessionId
+            );
+            logger.warn("mcp_audit", "tool_call_failed", { tool: toolName, serverId, originalName, toolCallId, traceId, correlationId: assistantId, pid: runtime?.pid ?? null, framing: runtime?.framing ?? null, errorCode: classified.code });
+          }
         } catch (e: any) {
           const classified = this.classifyToolError(String(e?.message ?? e));
           errorMsg = `${classified.code}:${classified.message}`;
           result = { ok: false, error: classified };
           void this.tryEmit(
             "tool_call_failed",
-            { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: toolCallId, error_code: classified.code },
+            { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: toolCallId, trace_id: traceId, correlation_id: assistantId, error_code: classified.code },
             sessionId
           );
-          logger.warn("mcp_audit", "tool_call_failed", { tool: toolName, serverId, originalName, toolCallId, errorCode: classified.code });
+          logger.warn("mcp_audit", "tool_call_failed", { tool: toolName, serverId, originalName, toolCallId, traceId, correlationId: assistantId, errorCode: classified.code });
         }
 
         const finishedAt = new Date().toISOString();
@@ -700,26 +714,20 @@ export class ChatService {
     throw new Error("tool_loop_limit_reached");
   }
 
-  private parsePromptToolRequest(text: string): { tool: string; arguments: any } | null {
+  private parsePromptToolRequest(text: string): { name: string; arguments: any } | null {
     const raw = String(text ?? "").trim();
     if (!raw) return null;
-    const direct = (() => {
-      try {
-        const obj = JSON.parse(raw);
-        return obj && typeof obj.tool === "string" ? obj : null;
-      } catch {
-        return null;
-      }
-    })();
-    if (direct) return { tool: String(direct.tool), arguments: direct.arguments ?? {} };
-    const fence = raw.match(/```json\s*([\s\S]*?)```/i);
-    if (fence?.[1]) {
-      try {
-        const obj = JSON.parse(fence[1]);
-        if (obj && typeof obj.tool === "string") return { tool: String(obj.tool), arguments: obj.arguments ?? {} };
-      } catch {}
+    try {
+      const obj = JSON.parse(raw);
+      const tc = obj?.tool_call;
+      const name = typeof tc?.name === "string" ? String(tc.name) : "";
+      if (!name) return null;
+      const args = tc?.arguments ?? {};
+      if (args !== null && typeof args !== "object") return null;
+      return { name, arguments: args ?? {} };
+    } catch {
+      return null;
     }
-    return null;
   }
 
   private async runPromptToolLoop(
@@ -732,7 +740,7 @@ export class ChatService {
     const toolNames = toolsForModel.map((t) => t.name).slice(0, 80);
     const protocol =
       `\n\n[SYSTEM: TOOL_PROTOCOL]\n` +
-      `If you need to use a tool, reply ONLY with JSON: {"tool":"<name>","arguments":{...}}.\n` +
+      `If you need to use a tool, reply ONLY with JSON: {"tool_call":{"name":"<name>","arguments":{...}}}.\n` +
       `Allowed tool names:\n${toolNames.map((n) => `- ${n}`).join("\n")}\n` +
       `Otherwise, reply normally.\n`;
 
@@ -752,10 +760,11 @@ export class ChatService {
       const req = this.parsePromptToolRequest(assistantContent);
       if (!req) return assistantContent;
 
-      const toolName = String(req.tool ?? "");
+      const toolName = String(req.name ?? "");
       const args = req.arguments ?? {};
 
       const startedAt = new Date().toISOString();
+      const traceId = newMessageId();
       const traceMessageId = `${assistantId}-tool-${step}-0`;
       const toolCall: ToolCallMessage = { tool: toolName, args, status: "calling", startedAt };
       await this.persistToolTrace(sessionId, {
@@ -764,6 +773,8 @@ export class ChatService {
         from: "knez",
         text: "",
         createdAt: startedAt,
+        traceId,
+        toolCallId: traceMessageId,
         toolCall,
         deliveryStatus: "delivered",
         replyToMessageId: assistantId,
@@ -776,39 +787,46 @@ export class ChatService {
       let serverId: string | undefined;
       let originalName: string | undefined;
       try {
-        const meta = toolExposureService.getToolByName(toolName);
-        if (!meta) throw new Error("mcp_tool_not_found");
-        if (!meta.permission.allowed) throw new Error(`mcp_permission_denied:${meta.permission.reason ?? "blocked"}`);
-        const parsed = parseNamespacedToolName(toolName);
-        serverId = parsed?.serverId ?? meta.serverId;
-        originalName = parsed?.originalName ?? meta.originalName;
+        const exec = await toolExecutionService.executeNamespacedTool(toolName, args, { timeoutMs: 180000 });
+        serverId = exec.tool.serverId;
+        originalName = exec.tool.originalName;
+        const runtime = mcpOrchestrator.getServer(serverId);
         void this.tryEmit(
           "tool_call_started",
-          { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId },
+          { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId, trace_id: traceId, correlation_id: assistantId, pid: runtime?.pid ?? null, framing: runtime?.framing ?? null },
           sessionId
         );
-        logger.info("mcp_audit", "tool_call_started", { tool: toolName, serverId, originalName, toolCallId: traceMessageId });
-        const execStartedAt = performance.now();
-        const callRes = await mcpOrchestrator.callTool(serverId, originalName, args, { timeoutMs: 180000 });
-        const durationMs = Math.round(performance.now() - execStartedAt);
-        result = callRes.result;
-        ok = true;
-        void this.tryEmit(
-          "tool_call_completed",
-          { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId, duration_ms: durationMs },
-          sessionId
-        );
-        logger.info("mcp_audit", "tool_call_completed", { tool: toolName, serverId, originalName, toolCallId: traceMessageId, durationMs });
+        logger.info("mcp_audit", "tool_call_started", { tool: toolName, serverId, originalName, toolCallId: traceMessageId, traceId, correlationId: assistantId, pid: runtime?.pid ?? null, framing: runtime?.framing ?? null });
+        if (exec.ok) {
+          result = exec.result;
+          ok = true;
+          void this.tryEmit(
+            "tool_call_completed",
+            { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId, trace_id: traceId, correlation_id: assistantId, pid: runtime?.pid ?? null, framing: runtime?.framing ?? null, duration_ms: exec.durationMs },
+            sessionId
+          );
+          logger.info("mcp_audit", "tool_call_completed", { tool: toolName, serverId, originalName, toolCallId: traceMessageId, traceId, correlationId: assistantId, pid: runtime?.pid ?? null, framing: runtime?.framing ?? null, durationMs: exec.durationMs });
+        } else {
+          const classified = exec.error;
+          errorMsg = `${classified.code}:${classified.message}`;
+          result = { ok: false, error: classified };
+          void this.tryEmit(
+            "tool_call_failed",
+            { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId, trace_id: traceId, correlation_id: assistantId, pid: runtime?.pid ?? null, framing: runtime?.framing ?? null, error_code: classified.code },
+            sessionId
+          );
+          logger.warn("mcp_audit", "tool_call_failed", { tool: toolName, serverId, originalName, toolCallId: traceMessageId, traceId, correlationId: assistantId, pid: runtime?.pid ?? null, framing: runtime?.framing ?? null, errorCode: classified.code });
+        }
       } catch (e: any) {
         const classified = this.classifyToolError(String(e?.message ?? e));
         errorMsg = `${classified.code}:${classified.message}`;
         result = { ok: false, error: classified };
         void this.tryEmit(
           "tool_call_failed",
-          { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId, error_code: classified.code },
+          { tool: toolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId, trace_id: traceId, correlation_id: assistantId, error_code: classified.code },
           sessionId
         );
-        logger.warn("mcp_audit", "tool_call_failed", { tool: toolName, serverId, originalName, toolCallId: traceMessageId, errorCode: classified.code });
+        logger.warn("mcp_audit", "tool_call_failed", { tool: toolName, serverId, originalName, toolCallId: traceMessageId, traceId, correlationId: assistantId, errorCode: classified.code });
       }
 
       const finishedAt = new Date().toISOString();
@@ -817,7 +835,7 @@ export class ChatService {
       });
 
       const toolContent = this.stringifyToolPayload(result, 20000);
-      conversation.push({ role: "tool", content: toolContent });
+      conversation.push({ role: "tool", tool_call_id: traceMessageId, content: toolContent });
     }
     throw new Error("tool_loop_limit_reached");
   }
@@ -885,6 +903,7 @@ export class ChatService {
 
     const assistantId = `${id}-assistant`;
     const completionMessages = this.buildCompletionMessages(messages, id, assistantId, searchContext);
+    const injectedMessages = await memoryInjectionService.inject(completionMessages as any, { sessionId, userText: item.text });
 
     let modelId: string | undefined;
     let backendStatus: string | undefined;
@@ -922,8 +941,8 @@ export class ChatService {
         const support = await knezClient.getToolCallingSupport().catch(() => "unsupported" as const);
         const finalText =
           support === "supported"
-            ? await this.runNativeToolLoop(sessionId, completionMessages as any, assistantId, toolsForModel, onMeta)
-            : await this.runPromptToolLoop(sessionId, completionMessages as any, assistantId, toolsForModel, onMeta);
+            ? await this.runNativeToolLoop(sessionId, injectedMessages as any, assistantId, toolsForModel, onMeta)
+            : await this.runPromptToolLoop(sessionId, injectedMessages as any, assistantId, toolsForModel, onMeta);
 
         if (finalText.trim().length === 0) {
           throw new Error("Empty reply");
@@ -1009,7 +1028,7 @@ export class ChatService {
         }
       };
 
-      for await (const token of knezClient.chatCompletionsStream(completionMessages, sessionId, {
+      for await (const token of knezClient.chatCompletionsStream(injectedMessages as any, sessionId, {
         signal: controller.signal,
         onMeta: (meta) => {
           const nextModel = meta?.model?.trim();
@@ -1259,9 +1278,19 @@ export class ChatService {
         };
         const t0 = performance.now();
         try {
-          const res = await withTimeout(taqwinMcpService.callTool("web_intelligence", toolArgs), Math.min(1200, timeLeftMs()));
+          const namespaced =
+            toolExecutionService.resolveNamespacedName("taqwin", "web_intelligence") ??
+            (await (async () => {
+              try {
+                await mcpOrchestrator.ensureStarted("taqwin");
+              } catch {}
+              return toolExecutionService.resolveNamespacedName("taqwin", "web_intelligence");
+            })());
+          if (!namespaced) throw new Error("mcp_tool_not_found");
+          const exec = await withTimeout(toolExecutionService.executeNamespacedTool(namespaced, toolArgs, { timeoutMs: 1200 }), Math.min(1200, timeLeftMs()));
+          if (!exec.ok) throw new Error(`${exec.error.code}:${exec.error.message}`);
           await emitToolAuditMessage("web_intelligence", toolArgs, "succeeded", { durationMs: Math.round(performance.now() - t0) });
-          const text = extractMcpText(res);
+          const text = extractMcpText(exec.result);
           const parsed = safeJsonParseLocal<any>(text);
           const body = parsed ?? { raw: text };
           return `\n\n[SYSTEM: Web Extraction (TAQWIN)]\nURL: ${urlMatch[0]}\n${truncateString(JSON.stringify(body), 4000)}`;
@@ -1292,9 +1321,19 @@ export class ChatService {
       };
       const t0 = performance.now();
       try {
-        const res = await withTimeout(taqwinMcpService.callTool("web_intelligence", toolArgs), Math.min(1200, timeLeftMs()));
+        const namespaced =
+          toolExecutionService.resolveNamespacedName("taqwin", "web_intelligence") ??
+          (await (async () => {
+            try {
+              await mcpOrchestrator.ensureStarted("taqwin");
+            } catch {}
+            return toolExecutionService.resolveNamespacedName("taqwin", "web_intelligence");
+          })());
+        if (!namespaced) throw new Error("mcp_tool_not_found");
+        const exec = await withTimeout(toolExecutionService.executeNamespacedTool(namespaced, toolArgs, { timeoutMs: 1200 }), Math.min(1200, timeLeftMs()));
+        if (!exec.ok) throw new Error(`${exec.error.code}:${exec.error.message}`);
         await emitToolAuditMessage("web_intelligence", toolArgs, "succeeded", { durationMs: Math.round(performance.now() - t0) });
-        const text = extractMcpText(res);
+        const text = extractMcpText(exec.result);
         const parsed = safeJsonParseLocal<any>(text);
         const body = parsed ?? { raw: text };
         return `\n\n[SYSTEM: Web Search (TAQWIN)]\nQuery: ${opts.text}\n${truncateString(JSON.stringify(body), 4000)}`;
