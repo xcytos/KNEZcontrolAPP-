@@ -5,6 +5,9 @@ import App from "./App";
 import { ErrorBoundary } from "./components/layout/ErrorBoundary";
 import "./utils/observer"; // Initialize observer
 import "./mcp/rustEventBridge";
+import { governanceService } from "./services/GovernanceService";
+
+void governanceService.getSnapshot().catch(() => null);
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
