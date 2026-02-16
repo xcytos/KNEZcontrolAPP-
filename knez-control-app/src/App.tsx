@@ -43,6 +43,7 @@ import { ThemeProvider } from './contexts/ThemeContext';
 import { analytics } from './services/AnalyticsService';
 import { logger } from './services/LogService';
 import { features } from './config/features';
+import { initMcpBoot } from './mcp/mcpBoot';
 
 // ...
 
@@ -62,6 +63,10 @@ function AppContent() {
   useEffect(() => {
     const unsub = sessionController.subscribe(({ sessionId }) => setSessionId(sessionId));
     return unsub;
+  }, []);
+
+  useEffect(() => {
+    void initMcpBoot();
   }, []);
 
   useEffect(() => {

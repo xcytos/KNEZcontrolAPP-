@@ -244,7 +244,12 @@ export class McpOrchestrator {
       if (this.autoStartInFlight.has(s.serverId)) continue;
 
       this.autoStartInFlight.add(s.serverId);
+      logger.info("mcp", "MCP auto-start attempt", { serverId: s.serverId });
       void this.ensureStarted(s.serverId)
+        .then(() => {
+          const next = this.getServer(s.serverId);
+          logger.info("mcp", "MCP auto-start handshake complete", { serverId: s.serverId, state: next?.state ?? null, pid: next?.pid ?? null });
+        })
         .catch((e: any) => {
           const attempts = (this.autoStartAttemptsByServerId.get(s.serverId) ?? 0) + 1;
           this.autoStartAttemptsByServerId.set(s.serverId, attempts);
@@ -262,28 +267,33 @@ export class McpOrchestrator {
     if (!isTauriRuntime()) return;
     if (getMcpAuthority() !== "rust") return;
 
-    await listen("mcp://state", (e) => {
-      const p = asObj(e.payload);
-      const kind = String(p.kind ?? "");
-      const serverId = String(p.serverId ?? p.server_id ?? p.id ?? "").trim();
-      if (!serverId) return;
+    try {
+      await listen("mcp://state", (e) => {
+        const p = asObj(e.payload);
+        const kind = String(p.kind ?? "");
+        const serverId = String(p.serverId ?? p.server_id ?? p.id ?? "").trim();
+        if (!serverId) return;
 
-      const genRaw = p.generation;
-      const generation = typeof genRaw === "number" ? genRaw : Number(genRaw ?? 0);
-      if (Number.isFinite(generation) && generation >= 0) {
-        const prev = this.rustGenerationByServerId.get(serverId);
-        if (prev !== undefined && prev !== generation) {
-          this.toolsInvalidatedAtByServerId.set(serverId, Date.now());
+        const genRaw = p.generation;
+        const generation = typeof genRaw === "number" ? genRaw : Number(genRaw ?? 0);
+        if (Number.isFinite(generation) && generation >= 0) {
+          const prev = this.rustGenerationByServerId.get(serverId);
+          if (prev !== undefined && prev !== generation) {
+            this.toolsInvalidatedAtByServerId.set(serverId, Date.now());
+          }
+          this.rustGenerationByServerId.set(serverId, generation);
         }
-        this.rustGenerationByServerId.set(serverId, generation);
-      }
 
-      if (kind === "stdout_error" || kind === "stderr_error") {
-        logger.warn("mcp", "MCP rust stream error", { serverId, kind, error: String(p.error ?? "") });
-      }
+        if (kind === "stdout_error" || kind === "stderr_error") {
+          logger.warn("mcp", "MCP rust stream error", { serverId, kind, error: String(p.error ?? "") });
+        }
 
-      this.rebuildFromInspector();
-    });
+        this.rebuildFromInspector();
+      });
+    } catch (e: any) {
+      const log = (logger as any).warn ?? (logger as any).info ?? (() => {});
+      log("mcp", "MCP rust event listener unavailable", { error: String(e?.message ?? e) });
+    }
   }
 }
 

@@ -1,5 +1,6 @@
 
 import { knezClient } from "./KnezClient";
+import { governanceService } from "./GovernanceService";
 
 export type ExtractionMode = 'news' | 'github' | 'raw';
 
@@ -39,11 +40,15 @@ export class ExtractionService {
 
     const proxied = this.proxyUrl(url);
     if (!this.isTauriRuntime()) {
+      const allowed = await governanceService.isExternalFetchAllowed();
+      if (!allowed) throw new Error("mcp_permission_denied:external_fetch_blocked_by_governance");
       return { text: await attempt(proxied), finalUrl: proxied };
     }
     try {
       return { text: await attempt(url), finalUrl: url };
     } catch {
+      const allowed = await governanceService.isExternalFetchAllowed();
+      if (!allowed) throw new Error("mcp_permission_denied:external_fetch_blocked_by_governance");
       return { text: await attempt(proxied), finalUrl: proxied };
     }
   }
@@ -138,6 +143,16 @@ export class ExtractionService {
           data: finalData
         };
       } catch (e: any) {
+        if (String(e?.message ?? e).includes("mcp_permission_denied:external_fetch_blocked_by_governance")) {
+          return {
+            source: url,
+            mode,
+            extracted_at: new Date().toISOString(),
+            summary: "Extraction Blocked (Governance)",
+            data: { ok: false, error: { code: "mcp_permission_denied", message: "external_fetch_blocked_by_governance" } },
+            error: "mcp_permission_denied:external_fetch_blocked_by_governance"
+          };
+        }
         if (String(e).includes("Failed to fetch") || String(e).includes("NetworkError")) {
            return {
             source: url,
