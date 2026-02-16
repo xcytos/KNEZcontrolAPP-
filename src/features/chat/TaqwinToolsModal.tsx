@@ -4,8 +4,6 @@ import { taqwinMcpService } from "../../mcp/taqwin/TaqwinMcpService";
 import { McpToolDefinition } from "../../services/McpTypes";
 import { sessionController } from "../../services/SessionController";
 import { chatService } from "../../services/ChatService";
-import { sessionDatabase } from "../../services/SessionDatabase";
-import { ChatMessage, ToolCallMessage } from "../../domain/DataContracts";
 import { knezClient } from "../../services/KnezClient";
 import { logger } from "../../services/LogService";
 import { mcpHostConfigService } from "../../mcp/config/McpHostConfigService";
@@ -13,13 +11,6 @@ import { normalizeTaqwinMcpServer, parseMcpHostConfigJson, validateTaqwinMcpServ
 import { useTaqwinMcpStatus } from "../../hooks/useTaqwinMcpStatus";
 import { toolExecutionService } from "../../services/ToolExecutionService";
 import { mcpOrchestrator } from "../../mcp/McpOrchestrator";
-
-function newLocalId(prefix: string): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return `${prefix}-${crypto.randomUUID().replace(/-/g, "")}`;
-  }
-  return `${prefix}-${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
-}
 
 function formatMcpUiError(raw: string): string {
   if (/mcp_stdin_write_denied/i.test(raw)) {

@@ -144,7 +144,6 @@ export class ChatService {
     let errorMsg: string | undefined;
     let serverId: string | undefined;
     let originalName: string | undefined;
-    let durationMs: number | undefined;
     try {
       const exec = await this.executeToolDeterministic({
         sessionId: sid,
@@ -159,7 +158,6 @@ export class ChatService {
       errorMsg = exec.errorMsg;
       serverId = exec.serverId;
       originalName = exec.originalName;
-      durationMs = exec.durationMs;
     } catch (e: any) {
       const classified = this.classifyToolError(String(e?.message ?? e));
       errorMsg = `${classified.code}:${classified.message}`;
