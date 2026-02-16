@@ -76,6 +76,8 @@ export class McpInspectorService {
   private opChains = new Map<string, Promise<void>>();
   private knezHealth: KnezHealthSnapshot = { endpoint: "", checkedAt: null, ok: null, error: null };
   private inputValues = new Map<string, string>();
+  private runtimePollTimer: number | null = null;
+  private lastRunningByServerId = new Map<string, boolean>();
 
   subscribe(fn: () => void): () => void {
     this.subscribers.add(fn);
@@ -88,6 +90,36 @@ export class McpInspectorService {
         fn();
       } catch {}
     }
+  }
+
+  private ensureRuntimePoll() {
+    if (this.runtimePollTimer !== null) return;
+    this.runtimePollTimer = window.setInterval(() => {
+      try {
+        this.pollRuntimeState();
+      } catch {}
+    }, 250);
+  }
+
+  private pollRuntimeState() {
+    let changed = false;
+    for (const [id, s] of this.sessions) {
+      const dbg = s.client.getDebugState();
+      const running = Boolean((dbg as any)?.running);
+      const prior = this.lastRunningByServerId.get(id);
+      if (prior === undefined || prior !== running) {
+        this.lastRunningByServerId.set(id, running);
+      }
+      if (!running && s.state !== "IDLE") {
+        if (s.state !== "ERROR") {
+          s.state = "ERROR";
+          s.toolsPending = false;
+          s.lastError = String((dbg as any)?.lastError ?? s.lastError ?? "mcp_process_crashed");
+          changed = true;
+        }
+      }
+    }
+    if (changed) this.emit();
   }
 
   private emitMcpEvent(eventName: string, payload: Record<string, any>, severity: string = "INFO") {
@@ -679,6 +711,13 @@ export class McpInspectorService {
   private buildStatus(s: ServerSession): McpInspectorServerStatus {
     const dbg = s.client.getDebugState();
     const framing = String((dbg as any)?.requestFraming ?? "http");
+    const running = Boolean((dbg as any)?.running);
+    const effectiveState: McpInspectorLifecycle =
+      !running && s.state !== "IDLE" ? "ERROR" : s.state;
+    const effectiveLastError =
+      !running && s.state !== "IDLE"
+        ? String(s.lastError ?? (dbg as any)?.lastError ?? "mcp_process_crashed")
+        : (s.lastError ?? (dbg as any)?.lastError ?? null);
     return {
       id: s.server.id,
       enabled: s.server.enabled,
@@ -690,15 +729,15 @@ export class McpInspectorService {
       env: s.server.type === "stdio" ? s.server.env : undefined,
       url: s.server.type === "http" ? s.server.url : undefined,
       headers: s.server.type === "http" ? s.server.headers : undefined,
-      state: s.state,
+      state: effectiveState,
       pid: dbg.pid ?? null,
-      running: dbg.running,
+      running: running,
       framing: framing === "line" || framing === "content-length" ? framing : "http",
       lastOkAt: s.lastOkAt,
       initializedAt: s.initializedAt,
       initializeDurationMs: s.initializeDurationMs,
       toolsListDurationMs: s.toolsListDurationMs,
-      lastError: s.lastError ?? dbg.lastError ?? null,
+      lastError: effectiveLastError,
       toolsCached: s.tools.length,
       toolsCacheAt: s.toolsCacheAt,
       toolsPending: s.toolsPending,
@@ -744,8 +783,10 @@ export class McpInspectorService {
       try {
         void old.client.stop().catch(() => {});
       } catch {}
+      this.lastRunningByServerId.delete(id);
     }
     this.sessions = next;
+    if (this.sessions.size > 0) this.ensureRuntimePoll();
   }
 }
 

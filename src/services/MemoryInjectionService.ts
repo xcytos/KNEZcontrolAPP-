@@ -28,6 +28,21 @@ function scoreOverlap(queryTokens: Set<string>, snippetTokens: Set<string>): num
   return score;
 }
 
+function stableHash(value: unknown): string {
+  let raw = "";
+  try {
+    raw = JSON.stringify(value) ?? String(value);
+  } catch {
+    raw = String(value);
+  }
+  let h = 2166136261;
+  for (let i = 0; i < raw.length; i++) {
+    h ^= raw.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
   let timeoutId: number | undefined;
   const timeout = new Promise<T | null>((resolve) => {
@@ -47,6 +62,12 @@ export class MemoryInjectionService {
       tags: ["chat:tool_loop", "mcp:tools"],
       text:
         "Tool-call loop is authoritative: model may propose tool calls; orchestrator executes them; tool results are appended; model is re-invoked until no tool_call remains."
+    },
+    {
+      id: "mcp:tool_protocol_strict",
+      tags: ["mcp:tools", "mcp:protocol", "mcp:no_simulation"],
+      text:
+        'If a tool is required, reply ONLY with strict JSON and nothing else: {"tool_call":{"name":"serverId__toolName","arguments":{}}}. No markdown, no prose, no explanations, no simulation, no fake results. If you do not know the exact canonical tool name, do not guess—use the provided tool list.'
     },
     {
       id: "mcp:naming",
@@ -76,25 +97,35 @@ export class MemoryInjectionService {
     }
   }
 
-  private buildRuntimeBlock(): string {
+  private buildRuntimeBlock(): { block: string; signature: string } {
     const snap = mcpOrchestrator.getSnapshot();
     const servers = Object.values(snap.servers);
     servers.sort((a, b) => a.serverId.localeCompare(b.serverId));
     const serverLines = servers.map((s) => {
-      return `- ${s.serverId}: state=${s.state} running=${String(s.running)} pid=${String(s.pid ?? "null")} framing=${s.framing} tools_cached=${s.tools.length}`;
+      return `- ${s.serverId}: state=${s.state} running=${String(s.running)} pid=${String(s.pid ?? "null")} generation=${String(s.generation)} framing=${s.framing} tools_hash=${String(s.toolsHash ?? "null")} tools_cached=${s.tools.length}`;
     });
+    const signatureInput = servers.map((s) => ({
+      serverId: s.serverId,
+      state: s.state,
+      pid: s.pid ?? null,
+      generation: s.generation,
+      toolsHash: s.toolsHash ?? null,
+    }));
+    const signature = stableHash(signatureInput);
 
     const allowedTools = toolExposureService.getToolsForModel().slice(0, 80).map((t) => t.name);
     const toolsLine = allowedTools.length ? allowedTools.join(", ") : "(none)";
 
-    return (
+    const block =
+      `[RUNTIME: MCP_SIGNATURE]\n` +
+      `mcp_signature=${signature}\n\n` +
       "[RUNTIME: MCP_STATE]\n" +
       "Servers:\n" +
       (serverLines.length ? serverLines.join("\n") : "- (none)") +
       "\n\n" +
       "[RUNTIME: ACTIVE_TOOLS]\n" +
       toolsLine
-    );
+    return { block, signature };
   }
 
   private async getGovernanceHash(): Promise<string | null> {
@@ -103,7 +134,10 @@ export class MemoryInjectionService {
     return typeof hash === "string" && hash ? hash : null;
   }
 
-  async inject(messages: CompletionMessage[], opts: { sessionId: string; userText: string }): Promise<CompletionMessage[]> {
+  async inject(
+    messages: CompletionMessage[],
+    opts: { sessionId: string; userText: string }
+  ): Promise<{ messages: CompletionMessage[]; signature: string }> {
     const base = Array.isArray(messages) ? messages.slice() : [];
     const qTokens = tokenize(opts.userText);
     const ranked = this.staticSnippets
@@ -112,17 +146,17 @@ export class MemoryInjectionService {
     const chosen = ranked.filter((r) => r.score > 0).slice(0, 2).map((r) => r.s);
 
     const governanceHash = await this.getGovernanceHash();
-    const runtimeBlock = this.buildRuntimeBlock();
+    const runtime = this.buildRuntimeBlock();
     const staticBlock = [this.staticSnippets[0], this.staticSnippets[1], this.staticSnippets[2], this.staticSnippets[3], ...chosen]
       .map((s) => `- ${s.text}`)
       .filter((v, idx, arr) => arr.indexOf(v) === idx)
       .join("\n");
 
     const govLine = governanceHash ? `\n\n[RUNTIME: GOVERNANCE]\ncombined_sha256=${governanceHash}` : "";
-    const content = `You are operating inside knez-control-app with MCP.\n\n[STATIC: RULES]\n${staticBlock}\n\n${runtimeBlock}${govLine}`;
+    const content = `You are operating inside knez-control-app with MCP.\n\n[STATIC: RULES]\n${staticBlock}\n\n${runtime.block}${govLine}`;
 
     const systemMsg: CompletionMessage = { role: "system", content: content.slice(0, 8000) };
-    return [systemMsg, ...base];
+    return { messages: [systemMsg, ...base], signature: runtime.signature };
   }
 }
 

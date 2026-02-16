@@ -106,7 +106,6 @@ export const McpRegistryView: React.FC<{
 
   const runtimeById = useMemo(() => mcpOrchestrator.getSnapshot().servers, [tick]);
   const localServerIds = useMemo(() => new Set(Object.keys(runtimeById)), [runtimeById]);
-  const inspectorStatusById = useMemo(() => mcpInspectorService.getStatusById(), [tick]);
   const items = useMemo(() => {
     const knezItems = (snapshot as any)?.supported ? ((snapshot as any).items ?? []) : [];
     const byId = new Map<string, any>();
@@ -117,9 +116,8 @@ export const McpRegistryView: React.FC<{
     for (const s of Object.values(runtimeById)) {
       if (!s?.serverId) continue;
       if (byId.has(s.serverId)) continue;
-      const st = inspectorStatusById[s.serverId];
       const status = (() => {
-        const state = s?.state ?? st?.state ?? "IDLE";
+        const state = s?.state ?? "IDLE";
         if (state === "READY" || state === "INITIALIZED") return "active";
         if (state === "STARTING" || state === "LISTING_TOOLS") return "starting";
         if (state === "ERROR") return "error";
@@ -136,14 +134,14 @@ export const McpRegistryView: React.FC<{
           `tools:${String(s.tools?.length ?? 0)}`
         ],
         enabled: s.enabled,
-        last_error: s.lastError ?? st?.lastError ?? null,
-        last_ok: st?.lastOkAt ? Math.floor(st.lastOkAt / 1000) : null,
+        last_error: s.lastError ?? null,
+        last_ok: s.lastOkAt ? Math.floor(s.lastOkAt / 1000) : null,
       });
     }
     const out = Array.from(byId.values());
     out.sort((a, b) => String(a.id ?? "").localeCompare(String(b.id ?? "")));
     return out;
-  }, [snapshot, runtimeById, inspectorStatusById]);
+  }, [snapshot, runtimeById]);
 
   if (!snapshot) return <div className="p-8 text-center text-zinc-500">Loading MCP Registry...</div>;
   if (!snapshot.supported) {
@@ -423,14 +421,14 @@ export const McpRegistryView: React.FC<{
                       }`}>
                         local_config={String(localServerIds.has(item.id))}
                       </span>
-                      {inspectorStatusById[item.id]?.pid ? (
+                      {runtimeById[item.id]?.pid ? (
                         <span className="px-1.5 py-0.5 rounded text-[10px] border bg-zinc-900 text-zinc-400 border-zinc-800">
-                          pid={String(inspectorStatusById[item.id]?.pid)}
+                          pid={String(runtimeById[item.id]?.pid)}
                         </span>
                       ) : null}
-                      {inspectorStatusById[item.id]?.state ? (
+                      {runtimeById[item.id]?.state ? (
                         <span className="px-1.5 py-0.5 rounded text-[10px] border bg-zinc-900 text-zinc-400 border-zinc-800">
-                          inspector={String(inspectorStatusById[item.id]?.state)}
+                          state={String(runtimeById[item.id]?.state)}
                         </span>
                       ) : null}
                     </div>
@@ -640,19 +638,6 @@ export const McpRegistryView: React.FC<{
                         {String((item as any).last_error)}
                       </div>
                     )}
-                    {inspectorStatusById[item.id]?.lastOkAt ? (
-                      <div className="flex justify-between">
-                        <span className="text-zinc-500">inspector_last_ok</span>
-                        <span className="font-mono text-zinc-200">
-                          {new Date(Number(inspectorStatusById[item.id]?.lastOkAt)).toLocaleString()}
-                        </span>
-                      </div>
-                    ) : null}
-                    {inspectorStatusById[item.id]?.lastError ? (
-                      <div className="border border-red-900/40 bg-red-900/10 rounded p-2 text-red-300 whitespace-pre-wrap break-words">
-                        {String(inspectorStatusById[item.id]?.lastError)}
-                      </div>
-                    ) : null}
                     {String(item.id ?? "")
                       .toLowerCase()
                       .includes("chrome") &&

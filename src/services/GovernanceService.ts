@@ -1,5 +1,6 @@
 import { knezClient } from "./KnezClient";
 import type { ExposedToolMeta } from "./ToolExposureService";
+import type { ServerRuntime } from "../mcp/McpOrchestrator";
 
 type GovernanceDecision = { allowed: boolean; reason?: string; combinedSha256?: string | null };
 
@@ -67,8 +68,46 @@ export class GovernanceService {
     return Array.from(new Set([...direct, ...nested].map((s) => s.trim()).filter(Boolean)));
   }
 
-  async decideTool(meta: ExposedToolMeta): Promise<GovernanceDecision> {
+  async isExternalFetchAllowed(): Promise<boolean> {
+    const { snapshot } = await this.getSnapshot();
+    if (!snapshot) return false;
+    const direct =
+      snapshot?.allow_external_fetch ??
+      snapshot?.allowExternalFetch ??
+      snapshot?.external_fetch_allowed ??
+      snapshot?.externalFetchAllowed ??
+      snapshot?.policy?.allow_external_fetch ??
+      snapshot?.policy?.allowExternalFetch ??
+      null;
+    if (direct === true) return true;
+    const allowedProxies = [
+      ...extractStringArray(snapshot?.allowed_proxies),
+      ...extractStringArray(snapshot?.allowedProxies),
+      ...extractStringArray(snapshot?.policy?.allowed_proxies),
+      ...extractStringArray(snapshot?.policy?.allowedProxies),
+    ];
+    return allowedProxies.some((p) => p.includes("r.jina.ai"));
+  }
+
+  async decideTool(meta: ExposedToolMeta, runtime: ServerRuntime | null): Promise<GovernanceDecision> {
     const { snapshot, combinedSha256 } = await this.getSnapshot();
+
+    if (runtime) {
+      const allow = Array.isArray(runtime.allowed_tools) ? runtime.allowed_tools : [];
+      const block = Array.isArray(runtime.blocked_tools) ? runtime.blocked_tools : [];
+      if (block.includes("*") || block.includes(meta.originalName)) {
+        return { allowed: false, reason: "blocked_by_config", combinedSha256 };
+      }
+      if (allow.length > 0 && !allow.includes("*") && !allow.includes(meta.originalName)) {
+        return { allowed: false, reason: "not_in_allowlist", combinedSha256 };
+      }
+    }
+
+    const trust = knezClient.getProfile().trustLevel;
+    const riskyByName = new Set(["delete_file", "scan_database", "web_intelligence"]);
+    if (trust !== "verified" && (meta.riskLevel === "high" || riskyByName.has(meta.originalName))) {
+      return { allowed: false, reason: "unverified_knez_profile", combinedSha256 };
+    }
 
     const isHighRisk = meta.riskLevel === "high";
     if (!snapshot) {

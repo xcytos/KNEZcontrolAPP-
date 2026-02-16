@@ -79,9 +79,6 @@ describe("ChatService tool loop", () => {
     vi.doMock("../../src/utils/observer", () => ({
       observe: (_fn: any) => {},
     }));
-    vi.doMock("../../src/services/TaqwinToolPermissions", () => ({
-      isTaqwinToolAllowed: () => true,
-    }));
     vi.doMock("../../src/services/KnezClient", () => ({
       knezClient: {
         chatCompletionsNonStreamRaw,
@@ -90,7 +87,17 @@ describe("ChatService tool loop", () => {
     }));
     vi.doMock("../../src/services/ToolExposureService", () => ({
       toolExposureService: {
-        getToolByName: () => ({ name: "taqwin__debug_test", serverId: "taqwin", originalName: "debug_test", permission: { allowed: true } }),
+        getToolByName: () => ({
+          name: "taqwin__debug_test",
+          description: "ping",
+          parameters: { type: "object" },
+          serverId: "taqwin",
+          originalName: "debug_test",
+          authority: "rust",
+          riskLevel: "low",
+          category: "taqwin",
+          schemaHash: "h"
+        }),
       },
     }));
     vi.doMock("../../src/services/GovernanceService", () => ({
@@ -100,9 +107,8 @@ describe("ChatService tool loop", () => {
     }));
     vi.doMock("../../src/mcp/McpOrchestrator", () => ({
       mcpOrchestrator: {
-        getServer: () => ({ state: "READY", running: true, pid: 1, framing: "line" }),
+        getServer: () => ({ serverId: "taqwin", state: "READY", running: true, pid: 1, framing: "line", generation: null, allowed_tools: [], blocked_tools: [] }),
         callTool,
-        ensureStarted: async () => {},
         getServerTools: () => [{ name: "debug_test" }],
       },
     }));
@@ -162,13 +168,22 @@ describe("ChatService tool loop", () => {
     vi.doMock("../../src/services/ExtractionService", () => ({ extractionService: {} }));
     vi.doMock("../../src/services/TabErrorStore", () => ({ tabErrorStore: { set: () => {} } }));
     vi.doMock("../../src/utils/observer", () => ({ observe: (_fn: any) => {} }));
-    vi.doMock("../../src/services/TaqwinToolPermissions", () => ({ isTaqwinToolAllowed: () => true }));
     vi.doMock("../../src/services/KnezClient", () => ({
       knezClient: { emitEvent: async () => {} },
     }));
     vi.doMock("../../src/services/ToolExposureService", () => ({
       toolExposureService: {
-        getToolByName: () => ({ name: "taqwin__debug_test", serverId: "taqwin", originalName: "debug_test", permission: { allowed: true } }),
+        getToolByName: () => ({
+          name: "taqwin__debug_test",
+          description: "ping",
+          parameters: { type: "object" },
+          serverId: "taqwin",
+          originalName: "debug_test",
+          authority: "rust",
+          riskLevel: "low",
+          category: "taqwin",
+          schemaHash: "h"
+        }),
       },
     }));
     vi.doMock("../../src/services/GovernanceService", () => ({
@@ -178,8 +193,7 @@ describe("ChatService tool loop", () => {
     }));
     vi.doMock("../../src/mcp/McpOrchestrator", () => ({
       mcpOrchestrator: {
-        getServer: () => ({ state: "READY", running: true, pid: 1, framing: "line" }),
-        ensureStarted: async () => {},
+        getServer: () => ({ serverId: "taqwin", state: "READY", running: true, pid: 1, framing: "line", generation: null, allowed_tools: [], blocked_tools: [] }),
         getServerTools: () => [{ name: "debug_test" }],
         callTool,
       },
@@ -258,7 +272,6 @@ describe("ChatService tool loop", () => {
     vi.doMock("../../src/services/ExtractionService", () => ({ extractionService: {} }));
     vi.doMock("../../src/services/TabErrorStore", () => ({ tabErrorStore: { set: () => {} } }));
     vi.doMock("../../src/utils/observer", () => ({ observe: (_fn: any) => {} }));
-    vi.doMock("../../src/services/TaqwinToolPermissions", () => ({ isTaqwinToolAllowed: () => true }));
     vi.doMock("../../src/services/KnezClient", () => ({
       knezClient: {
         chatCompletionsNonStreamRaw,
@@ -267,7 +280,17 @@ describe("ChatService tool loop", () => {
     }));
     vi.doMock("../../src/services/ToolExposureService", () => ({
       toolExposureService: {
-        getToolByName: () => ({ name: "taqwin__debug_test", serverId: "taqwin", originalName: "debug_test", permission: { allowed: true } }),
+        getToolByName: () => ({
+          name: "taqwin__debug_test",
+          description: "ping",
+          parameters: { type: "object" },
+          serverId: "taqwin",
+          originalName: "debug_test",
+          authority: "rust",
+          riskLevel: "low",
+          category: "taqwin",
+          schemaHash: "h"
+        }),
         getToolsForModel: () => [{ name: "taqwin__debug_test", description: "ping", parameters: { type: "object" } }],
       },
     }));
@@ -278,8 +301,7 @@ describe("ChatService tool loop", () => {
     }));
     vi.doMock("../../src/mcp/McpOrchestrator", () => ({
       mcpOrchestrator: {
-        getServer: () => ({ state: "READY", running: true, pid: 1, framing: "line" }),
-        ensureStarted: async () => {},
+        getServer: () => ({ serverId: "taqwin", state: "READY", running: true, pid: 1, framing: "line", generation: null, allowed_tools: [], blocked_tools: [] }),
         getServerTools: () => [{ name: "debug_test" }],
         callTool,
       },

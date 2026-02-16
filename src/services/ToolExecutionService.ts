@@ -37,8 +37,11 @@ export class ToolExecutionService {
 
   private validateNamespacedName(namespacedName: string): boolean {
     const raw = String(namespacedName ?? "");
-    const idx = raw.indexOf("__");
-    return idx > 0 && idx < raw.length - 2;
+    if (!raw) return false;
+    if (raw.length > 128) return false;
+    if (raw.includes(" ") || raw.includes("\n") || raw.includes("\r") || raw.includes("\t")) return false;
+    const m = raw.match(/^([a-zA-Z0-9_-]{1,64})__([a-zA-Z0-9_:-]{1,64})$/);
+    return Boolean(m && m[1] && m[2]);
   }
 
   private getMeta(namespacedName: string): ExposedToolMeta | null {
@@ -66,25 +69,6 @@ export class ToolExecutionService {
       };
     }
 
-    if (!meta.permission.allowed) {
-      return {
-        ok: false,
-        kind: "denied",
-        error: { code: "mcp_permission_denied", message: meta.permission.reason ?? "blocked" },
-        tool: { namespacedName: toolName, serverId: meta.serverId, originalName: meta.originalName }
-      };
-    }
-
-    const gov = await governanceService.decideTool(meta);
-    if (!gov.allowed) {
-      return {
-        ok: false,
-        kind: "denied",
-        error: { code: "mcp_permission_denied", message: gov.reason ?? "blocked_by_governance" },
-        tool: { namespacedName: toolName, serverId: meta.serverId, originalName: meta.originalName }
-      };
-    }
-
     const runtime = mcpOrchestrator.getServer(meta.serverId);
     if (!runtime) {
       return {
@@ -95,9 +79,24 @@ export class ToolExecutionService {
       };
     }
 
+    const gov = await governanceService.decideTool(meta, runtime);
+    if (!gov.allowed) {
+      return {
+        ok: false,
+        kind: "denied",
+        error: { code: "mcp_permission_denied", message: gov.reason ?? "blocked_by_governance" },
+        tool: { namespacedName: toolName, serverId: meta.serverId, originalName: meta.originalName }
+      };
+    }
+
     try {
       if (runtime.state !== "READY") {
-        await mcpOrchestrator.ensureStarted(meta.serverId);
+        return {
+          ok: false,
+          kind: "denied",
+          error: { code: "mcp_not_ready", message: runtime.state },
+          tool: { namespacedName: toolName, serverId: meta.serverId, originalName: meta.originalName }
+        };
       }
 
       const tools = mcpOrchestrator.getServerTools(meta.serverId);

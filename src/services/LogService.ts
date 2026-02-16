@@ -30,7 +30,6 @@ class LogService {
     warn: console.warn.bind(console),
     error: console.error.bind(console),
   };
-  private consoleHooked = false;
 
   constructor() {
     // Capture unhandled errors
@@ -51,45 +50,6 @@ class LogService {
     });
 
     this.hydrate();
-    this.hookConsole();
-  }
-
-  private hookConsole() {
-    if (this.consoleHooked) return;
-    this.consoleHooked = true;
-
-    const toText = (args: any[]) =>
-      args
-        .map((a) => {
-          if (typeof a === "string") return a;
-          try {
-            return JSON.stringify(a);
-          } catch {
-            try {
-              return String(a);
-            } catch {
-              return "[unprintable]";
-            }
-          }
-        })
-        .join(" ");
-
-    console.log = (...args: any[]) => {
-      this.consoleMirror.log(...args);
-      this.debug("console", toText(args));
-    };
-    console.info = (...args: any[]) => {
-      this.consoleMirror.info(...args);
-      this.info("console", toText(args));
-    };
-    console.warn = (...args: any[]) => {
-      this.consoleMirror.warn(...args);
-      this.warn("console", toText(args));
-    };
-    console.error = (...args: any[]) => {
-      this.consoleMirror.error(...args);
-      this.error("console", toText(args));
-    };
   }
 
   private async hydrate() {

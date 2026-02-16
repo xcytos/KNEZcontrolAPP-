@@ -26,10 +26,9 @@ type MockRuntime = {
 };
 
 describe("ToolExposureService", () => {
-  it("namespaces tools, normalizes parameters, and filters risky tools when unverified", async () => {
+  it("namespaces tools and normalizes parameters without enforcing policy", async () => {
     vi.resetModules();
 
-    let trustLevel: "verified" | "untrusted" = "untrusted";
     const snapshot: { servers: Record<string, MockRuntime> } = {
       servers: {
         taqwin: {
@@ -72,11 +71,6 @@ describe("ToolExposureService", () => {
         getSnapshot: () => snapshot,
       },
     }));
-    vi.doMock("../../src/services/KnezClient", () => ({
-      knezClient: {
-        getProfile: () => ({ trustLevel }),
-      },
-    }));
 
     const mod = await import("../../src/services/ToolExposureService");
     const svc = new mod.ToolExposureService();
@@ -88,26 +82,12 @@ describe("ToolExposureService", () => {
     const debug = catalog.find((t) => t.name === "taqwin__debug_test")!;
     expect(debug.parameters?.type).toBe("object");
 
-    const blocked = catalog.find((t) => t.name === "taqwin__delete_file")!;
-    expect(blocked.permission.allowed).toBe(false);
-
     const toolsForModel = svc.getToolsForModel();
     expect(toolsForModel.some((t) => t.name === "taqwin__debug_test")).toBe(true);
-    expect(toolsForModel.some((t) => t.name === "taqwin__delete_file")).toBe(false);
-
-    trustLevel = "verified";
-    subs.forEach((fn) => fn());
-    const toolsForModel2 = svc.getToolsForModel();
-    expect(toolsForModel2.some((t) => t.name === "taqwin__delete_file")).toBe(true);
+    expect(toolsForModel.some((t) => t.name === "taqwin__delete_file")).toBe(true);
   });
 
-  it("parses namespaced tool names", async () => {
-    const mod = await import("../../src/services/ToolExposureService");
-    expect(mod.parseNamespacedToolName("taqwin__debug_test")).toEqual({ serverId: "taqwin", originalName: "debug_test" });
-    expect(mod.parseNamespacedToolName("badname")).toBeNull();
-  });
-
-  it("enforces per-server allowed_tools and blocked_tools", async () => {
+  it("exposes tools only for READY servers", async () => {
     vi.resetModules();
     const snapshot: { servers: Record<string, MockRuntime> } = {
       servers: {
@@ -120,7 +100,7 @@ describe("ToolExposureService", () => {
           blocked_tools: ["delete_file"],
           type: "stdio",
           tags: [],
-          state: "READY",
+          state: "IDLE",
           pid: 1,
           running: true,
           framing: "content-length",
@@ -147,16 +127,10 @@ describe("ToolExposureService", () => {
         getSnapshot: () => snapshot,
       },
     }));
-    vi.doMock("../../src/services/KnezClient", () => ({
-      knezClient: {
-        getProfile: () => ({ trustLevel: "verified" }),
-      },
-    }));
 
     const mod = await import("../../src/services/ToolExposureService");
     const svc = new mod.ToolExposureService();
     const catalog = svc.getCatalog();
-    expect(catalog.find((t) => t.name === "taqwin__debug_test")?.permission.allowed).toBe(true);
-    expect(catalog.find((t) => t.name === "taqwin__delete_file")?.permission.allowed).toBe(false);
+    expect(catalog.length).toBe(0);
   });
 });

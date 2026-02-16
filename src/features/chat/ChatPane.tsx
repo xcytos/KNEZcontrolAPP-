@@ -352,7 +352,7 @@ const ToolInvokeModal: React.FC<{
 
   if (!isOpen || !tool) return null;
   const isHighRisk = String(tool.riskLevel ?? "") === "high";
-  const canRun = !running && (!isHighRisk || confirmHighRisk) && Boolean(tool.permission?.allowed);
+  const canRun = !running && (!isHighRisk || confirmHighRisk);
 
   const run = async () => {
     setError(null);
@@ -383,7 +383,7 @@ const ToolInvokeModal: React.FC<{
               <h2 className="text-lg font-light text-zinc-200">Invoke Tool</h2>
               <div className="font-mono text-xs text-zinc-300 break-all mt-1">{String(tool.name ?? "")}</div>
               <div className="text-[10px] text-zinc-500 mt-1">
-                {tool.permission?.allowed ? "allowed" : `blocked:${tool.permission?.reason ?? "policy"}`}{tool.riskLevel ? ` • risk:${tool.riskLevel}` : ""}
+                execution governed by governance{tool.riskLevel ? ` • risk:${tool.riskLevel}` : ""}
               </div>
             </div>
             <button onClick={onClose} className="text-xs text-zinc-400 hover:text-white">Close</button>
@@ -494,11 +494,10 @@ const AvailableToolsModal: React.FC<{
                             </div>
                             <div className="flex items-center gap-2">
                               <div className="text-[10px] text-zinc-400">
-                                {t.permission?.allowed ? "allowed" : `blocked:${t.permission?.reason ?? "policy"}`}{t.riskLevel ? ` • risk:${t.riskLevel}` : ""}
+                                execution governed by governance{t.riskLevel ? ` • risk:${t.riskLevel}` : ""}
                               </div>
                               <button
                                 onClick={() => onInvoke(t)}
-                                disabled={!t.permission?.allowed}
                                 className="text-[11px] px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50"
                               >
                                 Invoke

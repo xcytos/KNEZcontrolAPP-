@@ -45,10 +45,6 @@ vi.mock("../../src/services/SessionController", () => ({
   },
 }));
 
-vi.mock("../../src/services/TaqwinToolPermissions", () => ({
-  isTaqwinToolAllowed: () => false,
-}));
-
 vi.mock("../../src/mcp/taqwin/TaqwinMcpService", () => ({
   taqwinMcpService: {},
 }));

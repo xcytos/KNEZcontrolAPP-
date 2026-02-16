@@ -85,11 +85,6 @@ vi.mock("../../src/services/LogService", () => ({
   },
 }));
 
-vi.mock("../../src/services/TaqwinToolPermissions", () => ({
-  getTaqwinToolPermissions: () => ({}),
-  isTaqwinToolAllowed: () => true,
-}));
-
 describe("TaqwinToolsModal status rendering", () => {
   beforeEach(() => {
     (window as any).__TAURI__ = { invoke: () => {} };

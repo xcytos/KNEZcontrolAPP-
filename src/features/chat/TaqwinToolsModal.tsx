@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Command } from "@tauri-apps/plugin-shell";
 import { taqwinMcpService } from "../../mcp/taqwin/TaqwinMcpService";
-import { getTaqwinToolPermissions, isTaqwinToolAllowed, setTaqwinToolEnabled } from "../../services/TaqwinToolPermissions";
 import { McpToolDefinition } from "../../services/McpTypes";
 import { sessionController } from "../../services/SessionController";
 import { chatService } from "../../services/ChatService";
@@ -12,6 +11,8 @@ import { logger } from "../../services/LogService";
 import { mcpHostConfigService } from "../../mcp/config/McpHostConfigService";
 import { normalizeTaqwinMcpServer, parseMcpHostConfigJson, validateTaqwinMcpServer, isStdioServer } from "../../mcp/config/McpHostConfig";
 import { useTaqwinMcpStatus } from "../../hooks/useTaqwinMcpStatus";
+import { toolExecutionService } from "../../services/ToolExecutionService";
+import { mcpOrchestrator } from "../../mcp/McpOrchestrator";
 
 function newLocalId(prefix: string): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -65,7 +66,6 @@ export const TaqwinToolsModal: React.FC<{
   const [error, setError] = useState<string>("");
   const [errorRaw, setErrorRaw] = useState<string>("");
   const mcpStatus = useTaqwinMcpStatus();
-  const [permissions, setPermissions] = useState<Record<string, boolean>>(() => getTaqwinToolPermissions());
   const [query, setQuery] = useState<string>("");
   const [favorites, setFavorites] = useState<Set<string>>(() => {
     try {
@@ -219,11 +219,6 @@ export const TaqwinToolsModal: React.FC<{
     }
     setLoadingTools(false);
   }, [isOpen, e2eMode, isTauri, (mcpStatus as any)?.running, (mcpStatus as any)?.initialized]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    setPermissions(getTaqwinToolPermissions());
-  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -383,13 +378,9 @@ export const TaqwinToolsModal: React.FC<{
     setError("");
     setErrorRaw("");
     const sessionId = sessionController.getSessionId();
-    const tool = selectedTool;
+    const tool = selectedTool.trim();
     if (!tool) {
       setError("Select a tool");
-      return;
-    }
-    if (!isTaqwinToolAllowed(tool)) {
-      setError(`Tool not allowed: ${tool}`);
       return;
     }
     let args: any;
@@ -400,49 +391,21 @@ export const TaqwinToolsModal: React.FC<{
       return;
     }
 
-    const now = new Date().toISOString();
-    const messageId = newLocalId("tool");
-
-    const toolCall: ToolCallMessage = {
-      tool,
-      args,
-      status: "calling",
-      startedAt: now
-    };
-
-    const msg: ChatMessage = {
-      id: messageId,
-      sessionId,
-      from: "knez",
-      text: "",
-      createdAt: now,
-      toolCall,
-      deliveryStatus: "delivered"
-    };
-
     setBusy(true);
-    await sessionDatabase.saveMessages(sessionId, [msg]);
-    await chatService.load(sessionId);
-
     try {
-      const result = await taqwinMcpService.callTool(tool, args);
+      await mcpOrchestrator.ensureStarted("taqwin");
+      const namespaced =
+        toolExecutionService.resolveNamespacedName("taqwin", tool) ??
+        toolExecutionService.resolveNamespacedName("taqwin", tool.replace(/^mcp_taqwin_/, ""));
+      if (!namespaced) throw new Error("mcp_tool_not_found");
+      await chatService.invokeToolManually(sessionId, namespaced, args);
       markRecent(tool);
-      const finishedAt = new Date().toISOString();
-      await sessionDatabase.updateMessage(messageId, {
-        toolCall: { ...toolCall, status: "succeeded", result, finishedAt }
-      });
-      await chatService.load(sessionId);
     } catch (e: any) {
-      const finishedAt = new Date().toISOString();
       const raw = String(e?.message ?? e);
       logger.error("mcp", "TAQWIN tool call failed", { tool, error: raw });
       markRecent(tool);
       setError(formatMcpUiError(raw));
       setErrorRaw(raw);
-      await sessionDatabase.updateMessage(messageId, {
-        toolCall: { ...toolCall, status: "failed", error: formatMcpUiError(raw), finishedAt }
-      });
-      await chatService.load(sessionId);
     } finally {
       setBusy(false);
     }
@@ -852,8 +815,6 @@ export const TaqwinToolsModal: React.FC<{
                 </div>
               ) : (
                 visibleTools.map((t) => {
-                  const enabled = permissions[t.name] !== false;
-                  const allowed = isTaqwinToolAllowed(t.name);
                   return (
                     <div
                       key={t.name}
@@ -882,19 +843,6 @@ export const TaqwinToolsModal: React.FC<{
                         title="favorite"
                       >
                         {favorites.has(t.name) ? "★" : "☆"}
-                      </button>
-                      <button
-                        onClick={() => {
-                          const next = !enabled;
-                          setTaqwinToolEnabled(t.name, next);
-                          setPermissions(getTaqwinToolPermissions());
-                        }}
-                        className={`text-[10px] font-mono px-2 py-1 rounded border transition-colors ${
-                          enabled ? "bg-blue-900/20 text-blue-200 border-blue-900/40" : "bg-zinc-950/50 text-zinc-500 border-zinc-800"
-                        }`}
-                        title={allowed ? "enabled" : "blocked by trust policy (visible, not callable)"}
-                      >
-                        {allowed ? (enabled ? "on" : "off") : "policy"}
                       </button>
                     </div>
                   );
