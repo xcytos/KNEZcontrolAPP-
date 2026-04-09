@@ -662,8 +662,15 @@ export const McpInspectorPanel: React.FC = () => {
                         void (async () => {
                           try {
                             const args = JSON.parse(toolArgsText || "{}");
-                            const res = await svc.callTool(selectedId, selectedTool, args, toolTimeoutMs);
-                            setToolResult(JSON.stringify(res, null, 2));
+                            const traceId = `inspector_${Date.now().toString(16)}_${Math.random().toString(16).slice(2, 8)}`;
+                            const toolCallId = `${selectedId}:${selectedTool}:${Date.now()}`;
+                            const res = await mcpOrchestrator.callTool(selectedId, selectedTool, args, {
+                              timeoutMs: toolTimeoutMs,
+                              traceId,
+                              toolCallId,
+                              correlationId: toolCallId
+                            });
+                            setToolResult(JSON.stringify(res.result, null, 2));
                           } catch (e: any) {
                             setToolError(String(e?.message ?? e));
                           }

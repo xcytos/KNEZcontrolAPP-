@@ -128,7 +128,12 @@ describe("ChatService tool loop", () => {
 
     expect(text).toBe("done");
     expect(callTool).toHaveBeenCalledTimes(1);
-    expect(callTool).toHaveBeenCalledWith("taqwin", "debug_test", { message: "ping" }, { timeoutMs: 180000 });
+    expect(callTool).toHaveBeenCalledWith(
+      "taqwin",
+      "debug_test",
+      { message: "ping" },
+      expect.objectContaining({ timeoutMs: 180000 })
+    );
     expect(saveMessages).toHaveBeenCalled();
     expect(updateMessage).toHaveBeenCalled();
   });
@@ -206,7 +211,12 @@ describe("ChatService tool loop", () => {
 
     expect(saveMessages).toHaveBeenCalled();
     expect(saved[0]?.toolCall?.status).toBe("calling");
-    expect(callTool).toHaveBeenCalledWith("taqwin", "debug_test", { message: "ping" }, { timeoutMs: 180000 });
+    expect(callTool).toHaveBeenCalledWith(
+      "taqwin",
+      "debug_test",
+      { message: "ping" },
+      expect.objectContaining({ timeoutMs: 180000 })
+    );
     expect(updateMessage).toHaveBeenCalled();
   });
 
@@ -319,7 +329,12 @@ describe("ChatService tool loop", () => {
     );
 
     expect(text).toBe("done");
-    expect(callTool).toHaveBeenCalledWith("taqwin", "debug_test", { message: "ping" }, { timeoutMs: 180000 });
+    expect(callTool).toHaveBeenCalledWith(
+      "taqwin",
+      "debug_test",
+      { message: "ping" },
+      expect.objectContaining({ timeoutMs: 180000 })
+    );
     expect(saveMessages).toHaveBeenCalled();
     expect(updateMessage).toHaveBeenCalled();
   });

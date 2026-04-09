@@ -586,7 +586,16 @@ export class McpInspectorService {
     });
   }
 
-  async callTool(serverId: string, name: string, args: any, timeoutMs: number): Promise<{ result: any; durationMs: number }> {
+  async callTool(
+    serverId: string,
+    name: string,
+    args: any,
+    optsOrTimeout: number | { timeoutMs?: number; traceId?: string; toolCallId?: string; correlationId?: string }
+  ): Promise<{ result: any; durationMs: number }> {
+    const timeoutMs = typeof optsOrTimeout === "number" ? optsOrTimeout : (optsOrTimeout?.timeoutMs ?? 180000);
+    const traceId = typeof optsOrTimeout === "number" ? undefined : optsOrTimeout?.traceId;
+    const toolCallId = typeof optsOrTimeout === "number" ? undefined : optsOrTimeout?.toolCallId;
+    const correlationId = typeof optsOrTimeout === "number" ? undefined : optsOrTimeout?.correlationId;
     return this.enqueue(serverId, async () => {
       const s = this.sessions.get(serverId);
       if (!s) throw new Error("mcp_server_not_found");
@@ -634,21 +643,66 @@ export class McpInspectorService {
         throw new Error(`mcp_tool_not_found:${name}`);
       }
       const startedAt = performance.now();
-      this.emitMcpEvent("tool_call_started", { server_id: serverId, tool: name });
-      logger.info("mcp_audit", "tool_call_started", { serverId, tool: name });
+      this.emitMcpEvent("tool_call_started", {
+        server_id: serverId,
+        tool: name,
+        trace_id: traceId ?? null,
+        tool_call_id: toolCallId ?? null,
+        correlation_id: correlationId ?? null
+      });
+      logger.info("mcp_audit", "tool_call_started", {
+        serverId,
+        tool: name,
+        traceId: traceId ?? null,
+        toolCallId: toolCallId ?? null,
+        correlationId: correlationId ?? null
+      });
       try {
         const res = await s.client.callTool(name, args, { timeoutMs });
         const durationMs = Math.round(performance.now() - startedAt);
         s.lastOkAt = Date.now();
         this.emit();
-        this.emitMcpEvent("tool_call_completed", { server_id: serverId, tool: name, duration_ms: durationMs });
-        logger.info("mcp_audit", "tool_call_completed", { serverId, tool: name, durationMs });
+        this.emitMcpEvent("tool_call_completed", {
+          server_id: serverId,
+          tool: name,
+          trace_id: traceId ?? null,
+          tool_call_id: toolCallId ?? null,
+          correlation_id: correlationId ?? null,
+          duration_ms: durationMs,
+          durationMs
+        });
+        logger.info("mcp_audit", "tool_call_completed", {
+          serverId,
+          tool: name,
+          traceId: traceId ?? null,
+          toolCallId: toolCallId ?? null,
+          correlationId: correlationId ?? null,
+          durationMs
+        });
         return { result: res, durationMs };
       } catch (e: any) {
         const durationMs = Math.round(performance.now() - startedAt);
         const classified = classifyMcpError(e);
-        this.emitMcpEvent("tool_call_failed", { server_id: serverId, tool: name, duration_ms: durationMs, error_code: classified.code, error: classified.message }, "WARN");
-        logger.warn("mcp_audit", "tool_call_failed", { serverId, tool: name, durationMs, errorCode: classified.code });
+        this.emitMcpEvent("tool_call_failed", {
+          server_id: serverId,
+          tool: name,
+          trace_id: traceId ?? null,
+          tool_call_id: toolCallId ?? null,
+          correlation_id: correlationId ?? null,
+          duration_ms: durationMs,
+          durationMs,
+          error_code: classified.code,
+          error: classified.message
+        }, "WARN");
+        logger.warn("mcp_audit", "tool_call_failed", {
+          serverId,
+          tool: name,
+          traceId: traceId ?? null,
+          toolCallId: toolCallId ?? null,
+          correlationId: correlationId ?? null,
+          durationMs,
+          errorCode: classified.code
+        });
         throw e;
       }
     });
