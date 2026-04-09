@@ -1,32 +1,167 @@
-# CP6.1 Verification Log
+READ C:\Users\syedm\Downloads\ASSETS\controlAPP\knez-control-app\.taqwin\memory\mcparchitecture.md AND apply all fixes A-H{FIX GROUP A — EXECUTION LOOP (CRITICAL)
+✅ A1 — FORCE AUTO EXECUTION
+Replace:
+return assistantMessage;
+With:
+if (tool_call_detected) {
+  const result = await executeTool();
 
-## Test Execution Summary
-**Date:** 2026-02-05
-**Checkpoint:** CP6.1 — Observation, Automation & Truth Verification Layer
-**Test Suite:** `tests/playwright/journey.spec.ts`
-**Status:** ✅ PASS
+  appendToolMessage(result);
 
-## Evidence & Observation
-| Feature | UI Works | Backend Confirms | Automated Test Status |
-| :--- | :--- | :--- | :--- |
-| **Boot & Trust** | ✅ Displays "Launch" | ✅ Health Check Mocked | ✅ PASS |
-| **Orchestration** | ✅ Transitions State | ✅ Session Created | ✅ PASS |
-| **Chat Reality** | ✅ Streams Tokens | ✅ Events Correlated | ✅ PASS |
-| **Perception** | ✅ Panel Opens | ✅ Snapshot Mocked | ✅ PASS |
-| **MCP Registry** | ✅ Lists Items | ✅ Registry Mocked | ✅ PASS |
-| **Agent Loop** | ✅ Navigation Works | ✅ State Persists | ✅ PASS |
-| **Persistence** | ✅ Memory View | ✅ Graph Mocked | ✅ PASS |
+  continue; // ← NOT return
+}
 
-## Test Artifacts
-- **Trace:** `test-results/journey-KNEZ-User-Journey-Full-Feature-Verification-chromium/trace.zip`
-- **Video:** `test-results/journey-KNEZ-User-Journey-Full-Feature-Verification-chromium/video.webm`
-- **Screenshots:** Captured during failure diagnosis (resolved).
+✅ A2 — SINGLE LOOP OWNER
+Only ChatService should control:
+model call
+tool execution
+re-invocation
+👉 No UI / inspector / external execution
 
-## Key Adjustments
-1.  **Observer Pattern:** Implemented `window.__KNEZ_OBSERVER__` to decouple tests from brittle DOM polling.
-2.  **Mocking Strategy:** Switched from `setTimeout`-based streaming to synchronous chunking in `mocks.ts` to ensure deterministic execution in CI/Test environment.
-3.  **Selector Hardening:** Added `data-testid="message-bubble"` to `MessageItem.tsx` to prevent regression.
-4.  **Syntax Fix:** Resolved JSX syntax error in `ChatPane.tsx` related to `renderOfflineOverlay`.
+✅ A3 — NO EARLY EXIT
+Never allow:
+if (tool_call_detected) return;
 
-## Conclusion
-The Control App has successfully demonstrated that its features are observable and verifiable. The "Truth Layer" is now active.
+✅ A4 — HARD LOOP STRUCTURE
+let step = 0;
+
+while (step < MAX_STEPS) {
+  const response = await callModel();
+
+  if (isToolCall(response)) {
+    await executeTool();
+    step++;
+    continue;
+  }
+
+  return response;
+}
+
+🔧 FIX GROUP B — MODEL BEHAVIOR CONTROL
+✅ B1 — SYSTEM PROMPT HARD RULE
+Add:
+If tool_call is required:
+- DO NOT ask for permission
+- DO NOT explain
+- DO NOT simulate
+- OUTPUT ONLY JSON
+
+✅ B2 — BLOCK NON-COMPLIANT OUTPUT
+If model says:
+"Would you like me to..."
+👉 Then:
+injectSystemCorrection();
+retryModel();
+
+✅ B3 — STRICT TOOL NAME ENFORCEMENT
+You already added:
+/^([a-zA-Z0-9_-]{1,64})__([a-zA-Z0-9_:-]{1,64})$/
+✅ Keep this — it's correct
+
+🔧 FIX GROUP C — TOOL RESULT FLOW
+✅ C1 — ALWAYS APPEND TOOL MESSAGE
+{
+  "role": "tool",
+  "content": "{actual_result}"
+}
+👉 REQUIRED by MCP
+
+✅ C2 — FORCE SECOND MODEL CALL
+After tool:
+messages.push(tool_result);
+
+return callModel(messages);
+
+❗ C3 — NEVER SHOW RAW TOOL JSON
+❌ remove:
+{"tool_call": ...}
+from UI
+
+🔧 FIX GROUP D — UI BEHAVIOR (IMPORTANT)
+✅ D1 — HIDE TOOL_CALL
+UI must NOT render:
+tool_call JSON
+internal messages
+
+✅ D2 — SHOW EXECUTION STATE
+Instead show:
+⚡ Executing...
+✅ Completed
+
+❗ D3 — REMOVE "RUN" PATTERN
+User should NEVER trigger execution
+
+🔧 FIX GROUP E — BOOTSTRAP (CRITICAL)
+✅ E1 — AUTO LOAD MCP
+At app start:
+await mcpInspectorService.loadConfig();
+await mcpOrchestrator.ensureStarted();
+
+❗ WHY
+MCP tools exist ONLY after:
+tools/list → tools available
+
+🔧 FIX GROUP F — TRACE CONSISTENCY (YOU PARTIALLY FIXED)
+You already fixed:
+✔ trace_id
+✔ tool_call_id
+✔ duration
+
+✅ F1 — ENSURE SAME TRACE FLOWS
+From:
+ChatService → ToolExecutionService → Orchestrator → Inspector
+NO breaks.
+
+🔧 FIX GROUP G — ERROR HANDLING
+✅ G1 — INVALID JSON → STILL EXECUTE FLOW
+Instead of breaking:
+return error;
+Do:
+append tool_error_message;
+continue loop;
+
+🔧 FIX GROUP H — SIMULATION BLOCK (IMPORTANT)
+You added partial handling.
+Make it strict:
+if (isSimulation(response)) {
+   injectCorrection();
+   continue;
+}
+
+🧠 4. FINAL SYSTEM MODEL (CORRECT STATE)
+✅ EXPECTED FLOW
+User:
+activate taqwin
+
+INTERNAL:
+1. Model → tool_call
+2. ChatService → execute
+3. Tool → result
+4. ChatService → append result
+5. Model → final answer
+
+USER SEES:
+Activating Taqwin...
+✅ Activated successfully
+
+🏁 FINAL DIAGNOSIS
+❌ CURRENT
+You built MCP infra
+but NOT MCP runtime
+
+✅ TARGET
+MCP host-controlled execution loop}   THEN CHECK IN CHAT {You
+HI
+K
+Assistant
+{"tool_call":{"name":"taqwin__ping","arguments":{}}}
+qwen2.5:7b-instruct-q4_K_M
+16 tokens
+You
+HI
+K
+Assistant
+{"tool_call":{"name":"taqwin__ping","arguments":{}}}
+qwen2.5:7b-instruct-q4_K_M
+16 tokens
+Copy} Hi reply shuld come from ai not a tool call reply.

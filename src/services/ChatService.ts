@@ -118,67 +118,6 @@ export class ChatService {
     this.notify();
   }
 
-  async invokeToolManually(sessionId: string, namespacedToolName: string, args: any): Promise<void> {
-    const sid = sessionId || this.sessionId;
-    if (!sid) throw new Error("no_session");
-
-    const startedAt = new Date().toISOString();
-    const traceId = newMessageId();
-    const traceMessageId = `${newMessageId()}-manual-tool`;
-    const toolCall: ToolCallMessage = { tool: namespacedToolName, args, status: "calling", startedAt };
-    await this.persistToolTrace(sid, {
-      id: traceMessageId,
-      sessionId: sid,
-      from: "knez",
-      text: "",
-      createdAt: startedAt,
-      traceId,
-      toolCallId: traceMessageId,
-      toolCall,
-      deliveryStatus: "delivered",
-      correlationId: traceMessageId
-    });
-
-    let result: any;
-    let ok = false;
-    let errorMsg: string | undefined;
-    let serverId: string | undefined;
-    let originalName: string | undefined;
-    try {
-      const exec = await this.executeToolDeterministic({
-        sessionId: sid,
-        assistantId: traceMessageId,
-        toolCallId: traceMessageId,
-        toolName: namespacedToolName,
-        args,
-        traceId
-      });
-      result = exec.payload;
-      ok = exec.ok;
-      errorMsg = exec.errorMsg;
-      serverId = exec.serverId;
-      originalName = exec.originalName;
-    } catch (e: any) {
-      const classified = this.classifyToolError(String(e?.message ?? e));
-      errorMsg = `${classified.code}:${classified.message}`;
-      result = { ok: false, error: classified };
-      const runtime = serverId ? mcpOrchestrator.getServer(serverId) : null;
-      void this.tryEmit(
-        "tool_call_failed",
-        { tool: namespacedToolName, server_id: serverId, original_name: originalName, tool_call_id: traceMessageId, trace_id: traceId, correlation_id: traceMessageId, pid: runtime?.pid ?? null, framing: runtime?.framing ?? null, generation: runtime?.generation ?? null, error_code: classified.code, mode: "manual" },
-        sid
-      );
-      logger.warn("mcp_audit", "tool_call_failed", { tool: namespacedToolName, serverId, originalName, toolCallId: traceMessageId, traceId, correlationId: traceMessageId, pid: runtime?.pid ?? null, framing: runtime?.framing ?? null, generation: runtime?.generation ?? null, errorCode: classified.code, mode: "manual" });
-    }
-
-    const finishedAt = new Date().toISOString();
-    const toolContent = this.stringifyToolPayload(result, 20000);
-    await this.updateToolTrace(sid, traceMessageId, {
-      text: toolContent,
-      toolCall: { ...toolCall, status: ok ? "succeeded" : "failed", result: ok ? result : undefined, error: ok ? undefined : errorMsg, finishedAt }
-    });
-  }
-
   async sendMessage(text: string, forceContext?: string): Promise<void> {
     if (!text.trim()) return;
 
@@ -740,6 +679,65 @@ export class ChatService {
     }
   }
 
+  private isPermissionSeekingResponse(text: string): boolean {
+    const lowered = String(text ?? "").toLowerCase();
+    if (!lowered) return false;
+    return (
+      lowered.includes("would you like me to") ||
+      lowered.includes("do you want me to") ||
+      lowered.includes("should i ") ||
+      lowered.includes("can i ") ||
+      lowered.includes("shall i ")
+    );
+  }
+
+  private async appendSyntheticToolError(input: {
+    sessionId: string;
+    assistantId: string;
+    step: number;
+    toolCallId: string;
+    toolName: string;
+    errorCode: string;
+    errorMessage: string;
+    conversation: any[];
+  }): Promise<void> {
+    const startedAt = new Date().toISOString();
+    const finishedAt = new Date().toISOString();
+    const traceId = newMessageId();
+    const traceMessageId = `${input.assistantId}-tool-${input.step}-error`;
+    const errorPayload = { ok: false, error: { code: input.errorCode, message: input.errorMessage } };
+    const toolCall: ToolCallMessage = {
+      tool: input.toolName,
+      args: {},
+      status: "calling",
+      startedAt
+    };
+    await this.persistToolTrace(input.sessionId, {
+      id: traceMessageId,
+      sessionId: input.sessionId,
+      from: "knez",
+      text: "",
+      createdAt: startedAt,
+      traceId,
+      toolCallId: input.toolCallId,
+      toolCall,
+      deliveryStatus: "delivered",
+      replyToMessageId: input.assistantId,
+      correlationId: input.assistantId
+    });
+    const toolContent = this.stringifyToolPayload(errorPayload, 20000);
+    await this.updateToolTrace(input.sessionId, traceMessageId, {
+      text: toolContent,
+      toolCall: {
+        ...toolCall,
+        status: "failed",
+        error: `${input.errorCode}:${input.errorMessage}`,
+        finishedAt
+      }
+    });
+    input.conversation.push({ role: "tool", tool_call_id: input.toolCallId, content: toolContent });
+  }
+
   private async runNativeToolLoop(
     sessionId: string,
     baseMessages: Array<{ role: string; content: string }>,
@@ -774,7 +772,33 @@ export class ChatService {
       } else if (toolCalls.length) {
         conversation.push({ role: "assistant", content: "", tool_calls: toolCalls });
       }
+      if (
+        !toolCalls.length &&
+        toolsForModel.length > 0 &&
+        (this.isSimulationResponse(assistantContent) || this.isPermissionSeekingResponse(assistantContent))
+      ) {
+        logger.warn("mcp_loop", "native_non_compliant_output_blocked", { assistantId, step });
+        conversation.push({
+          role: "system",
+          content:
+            "Tool protocol violation. If a tool is required: DO NOT ask permission, DO NOT explain, DO NOT simulate, OUTPUT ONLY strict tool_call JSON/arguments."
+        });
+        continue; // [FIX A1/A3] — NEVER return non-compliant output
+      }
+      // [FIX D1/C3] — If no tool calls and content doesn't look like escaped tool JSON, return it
       if (!toolCalls.length) {
+        // Guard: native loop should never surface raw JSON that looks like a prompt-mode tool call
+        if (
+          assistantContent.trim().startsWith("{") &&
+          assistantContent.includes('"tool_call"')
+        ) {
+          logger.warn("mcp_loop", "native_raw_tool_json_blocked", { assistantId, step });
+          conversation.push({
+            role: "system",
+            content: "Tool protocol violation: do not output tool_call JSON as plain text. Use the native tool_calls format only."
+          });
+          continue;
+        }
         return assistantContent;
       }
 
@@ -815,6 +839,7 @@ export class ChatService {
         let ok = false;
         let errorMsg: string | undefined;
         if (argsParseError) {
+          // [FIX G1] — Invalid JSON args: do NOT break loop; append error and continue
           errorMsg = `mcp_invalid_tool_arguments_json:${argsParseError}`;
           result = { ok: false, error: { code: "mcp_invalid_tool_arguments_json", message: argsParseError } };
           logger.warn("mcp_loop", "native_tool_args_parse_failed", { assistantId, step, toolCallId, tool: toolName, error: argsParseError });
@@ -893,8 +918,15 @@ export class ChatService {
     const toolNames = toolsForModel.map((t) => t.name).slice(0, 80);
     const protocol =
       `\n\n[SYSTEM: TOOL_PROTOCOL]\n` +
+      `CRITICAL: Only call a tool if the user's request EXPLICITLY requires a tool action.\n` +
+      `Simple messages (greetings, questions, conversation) MUST receive direct plain-text replies.\n` +
+      `Do NOT call tools on messages like "hi", "hello", "how are you", "what can you do" etc.\n` +
       `If you need to use a tool, reply with JSON ONLY and NOTHING ELSE: {"tool_call":{"name":"<allowed_tool_name>","arguments":{...}}}.\n` +
       `STRICT REQUIREMENTS:\n` +
+      `- If tool_call is required: DO NOT ask for permission.\n` +
+      `- If tool_call is required: DO NOT explain.\n` +
+      `- If tool_call is required: DO NOT simulate.\n` +
+      `- If tool_call is required: OUTPUT ONLY JSON.\n` +
       `- Entire message must be valid JSON.\n` +
       `- Root must be exactly {"tool_call":{...}} with no extra keys.\n` +
       `- "tool_call" must contain EXACTLY "name" and "arguments" (no extra keys).\n` +
@@ -902,7 +934,7 @@ export class ChatService {
       `- Do not include explanations.\n` +
       `- Use ONLY tool names from the Allowed Tool Names list.\n` +
       `Allowed tool names:\n${toolNames.map((n) => `- ${n}`).join("\n")}\n` +
-      `Otherwise, reply normally.\n`;
+      `Otherwise, reply normally with plain text.\n`;
 
     const conversation: any[] = baseMessages.map((m, idx) => {
       if (idx === baseMessages.length - 1 && m.role === "user") {
@@ -928,26 +960,48 @@ export class ChatService {
         toolDetected: Boolean(req)
       });
       if (!req) {
-        if (this.isSimulationResponse(assistantContent)) {
-          logger.warn("mcp_loop", "simulation_response_blocked", { assistantId, step });
+        // [FIX A1/B2/H] — STRICT: Never return raw tool_call JSON or simulation to UI
+        // Any response that looks like a tool call but failed parse must be corrected and retried
+        const isToolCallAttempt =
+          looksLikeToolJson ||
+          assistantContent.trim().includes('"tool_call"') ||
+          assistantContent.trim().includes("tool_call");
+
+        if (this.isSimulationResponse(assistantContent) || this.isPermissionSeekingResponse(assistantContent)) {
+          logger.warn("mcp_loop", "simulation_or_permission_blocked", { assistantId, step });
           conversation.push({
             role: "system",
             content:
-              "Simulation is forbidden. Do not simulate tool output. If a tool is needed, return strict JSON only: " +
+              "Tool protocol violation. If a tool is needed, return strict JSON only; do not ask for permission and do not simulate: " +
               '{"tool_call":{"name":"serverId__toolName","arguments":{}}}. Otherwise answer directly without simulation.'
           });
-          continue;
+          continue; // [FIX A1/A3] — NEVER return; always continue loop
         }
-        if (looksLikeToolJson) {
+        if (isToolCallAttempt) {
+          // [FIX H/C3/D1] — Model tried to emit a tool call but format was invalid.
+          // Block from reaching UI; inject correction and retry.
           logger.warn("mcp_loop", "strict_json_parse_failed", { assistantId, step, rawModelOutput: assistantContent.slice(0, 2000) });
+          const toolCallId = `${assistantId}:protocol_error:${step}`;
+          await this.appendSyntheticToolError({
+            sessionId,
+            assistantId,
+            step,
+            toolCallId,
+            toolName: "mcp_protocol__strict_json",
+            errorCode: "mcp_invalid_tool_call_json",
+            errorMessage: "Invalid tool_call JSON emitted by model",
+            conversation
+          });
           conversation.push({
             role: "system",
             content:
-              "Invalid tool_call JSON detected. Re-emit valid strict JSON only with root " +
-              '{"tool_call":{"name":"serverId__toolName","arguments":{}}} and no extra keys, markdown, or prose.'
+              "Invalid tool_call JSON detected. NEVER output raw tool_call JSON as a reply. Re-emit valid strict JSON only with root " +
+              '{"tool_call":{"name":"serverId__toolName","arguments":{}}} and no extra keys, markdown, or prose. ' +
+              "If no tool is needed, reply with a plain natural language answer instead."
           });
-          continue;
+          continue; // [FIX A1/A3] — NEVER return tool JSON to caller
         }
+        // No tool call detected and content is safe — return final assistant answer
         return assistantContent;
       }
 

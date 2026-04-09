@@ -3,14 +3,11 @@ import { Command } from "@tauri-apps/plugin-shell";
 import { taqwinMcpService } from "../../mcp/taqwin/TaqwinMcpService";
 import { McpToolDefinition } from "../../services/McpTypes";
 import { sessionController } from "../../services/SessionController";
-import { chatService } from "../../services/ChatService";
 import { knezClient } from "../../services/KnezClient";
 import { logger } from "../../services/LogService";
 import { mcpHostConfigService } from "../../mcp/config/McpHostConfigService";
 import { normalizeTaqwinMcpServer, parseMcpHostConfigJson, validateTaqwinMcpServer, isStdioServer } from "../../mcp/config/McpHostConfig";
 import { useTaqwinMcpStatus } from "../../hooks/useTaqwinMcpStatus";
-import { toolExecutionService } from "../../services/ToolExecutionService";
-import { mcpOrchestrator } from "../../mcp/McpOrchestrator";
 
 function formatMcpUiError(raw: string): string {
   if (/mcp_stdin_write_denied/i.test(raw)) {
@@ -368,7 +365,6 @@ export const TaqwinToolsModal: React.FC<{
   const runTool = async () => {
     setError("");
     setErrorRaw("");
-    const sessionId = sessionController.getSessionId();
     const tool = selectedTool.trim();
     if (!tool) {
       setError("Select a tool");
@@ -384,12 +380,9 @@ export const TaqwinToolsModal: React.FC<{
 
     setBusy(true);
     try {
-      await mcpOrchestrator.ensureStarted("taqwin");
-      const namespaced =
-        toolExecutionService.resolveNamespacedName("taqwin", tool) ??
-        toolExecutionService.resolveNamespacedName("taqwin", tool.replace(/^mcp_taqwin_/, ""));
-      if (!namespaced) throw new Error("mcp_tool_not_found");
-      await chatService.invokeToolManually(sessionId, namespaced, args);
+      const sessionId = sessionController.getSessionId();
+      logger.info("mcp", "manual_tool_run_blocked", { tool, sessionId, args });
+      setError("Manual tool execution is disabled. Ask in chat and ChatService will auto-execute MCP tools.");
       markRecent(tool);
     } catch (e: any) {
       const raw = String(e?.message ?? e);
@@ -855,7 +848,7 @@ export const TaqwinToolsModal: React.FC<{
                   disabled={busy || !selectedTool}
                   className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {busy ? "Running..." : "Run Tool"}
+                  {busy ? "Checking..." : "Run Disabled"}
                 </button>
               </div>
               <div className="mt-4">

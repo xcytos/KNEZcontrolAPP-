@@ -70,6 +70,18 @@ export class MemoryInjectionService {
         'If a tool is required, reply ONLY with strict JSON and nothing else: {"tool_call":{"name":"serverId__toolName","arguments":{}}}. No markdown, no prose, no explanations, no simulation, no fake results. If you do not know the exact canonical tool name, do not guess—use the provided tool list.'
     },
     {
+      // [FIX B1] — Hard rule: tools only when user request REQUIRES a tool action.
+      // Simple greetings, questions, and chat MUST receive direct text replies.
+      id: "mcp:tool_call_only_when_required",
+      tags: ["mcp:tools", "mcp:protocol", "mcp:no_simulation"],
+      text:
+        "CRITICAL: Only call a tool if the user's request explicitly requires a tool action. " +
+        "Simple messages (greetings, questions, conversation) must receive direct plain-text replies. " +
+        "Do NOT call tools on messages like 'hi', 'hello', 'how are you', 'what can you do', etc. " +
+        "Do NOT call tools to confirm status unless the user explicitly requests it. " +
+        "Do NOT ask for permission before using a tool if one is needed—just call it directly."
+    },
+    {
       id: "mcp:naming",
       tags: ["mcp:tools", "mcp:naming"],
       text:
@@ -147,7 +159,7 @@ export class MemoryInjectionService {
 
     const governanceHash = await this.getGovernanceHash();
     const runtime = this.buildRuntimeBlock();
-    const staticBlock = [this.staticSnippets[0], this.staticSnippets[1], this.staticSnippets[2], this.staticSnippets[3], ...chosen]
+    const staticBlock = [this.staticSnippets[0], this.staticSnippets[1], this.staticSnippets[2], this.staticSnippets[3], this.staticSnippets[4], ...chosen]
       .map((s) => `- ${s.text}`)
       .filter((v, idx, arr) => arr.indexOf(v) === idx)
       .join("\n");
