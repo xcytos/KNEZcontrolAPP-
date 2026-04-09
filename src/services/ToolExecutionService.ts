@@ -48,7 +48,11 @@ export class ToolExecutionService {
     return toolExposureService.getToolByName(namespacedName);
   }
 
-  async executeNamespacedTool(namespacedName: string, args: any, opts?: { timeoutMs?: number }): Promise<ToolExecutionOutcome> {
+  async executeNamespacedTool(
+    namespacedName: string,
+    args: any,
+    opts?: { timeoutMs?: number; traceId?: string; toolCallId?: string; correlationId?: string }
+  ): Promise<ToolExecutionOutcome> {
     const toolName = String(namespacedName ?? "");
     if (!this.validateNamespacedName(toolName)) {
       return {
@@ -110,7 +114,16 @@ export class ToolExecutionService {
       }
 
       const timeoutMs = opts?.timeoutMs ?? 180000;
-      const res = await mcpOrchestrator.callTool(meta.serverId, meta.originalName, args, { timeoutMs });
+      const callOpts: {
+        timeoutMs: number;
+        traceId?: string;
+        toolCallId?: string;
+        correlationId?: string;
+      } = { timeoutMs };
+      if (typeof opts?.traceId === "string" && opts.traceId.trim()) callOpts.traceId = opts.traceId.trim();
+      if (typeof opts?.toolCallId === "string" && opts.toolCallId.trim()) callOpts.toolCallId = opts.toolCallId.trim();
+      if (typeof opts?.correlationId === "string" && opts.correlationId.trim()) callOpts.correlationId = opts.correlationId.trim();
+      const res = await mcpOrchestrator.callTool(meta.serverId, meta.originalName, args, callOpts);
       return {
         ok: true,
         kind: "succeeded",

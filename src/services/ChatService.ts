@@ -172,7 +172,9 @@ export class ChatService {
     }
 
     const finishedAt = new Date().toISOString();
+    const toolContent = this.stringifyToolPayload(result, 20000);
     await this.updateToolTrace(sid, traceMessageId, {
+      text: toolContent,
       toolCall: { ...toolCall, status: ok ? "succeeded" : "failed", result: ok ? result : undefined, error: ok ? undefined : errorMsg, finishedAt }
     });
   }
@@ -586,6 +588,7 @@ export class ChatService {
     const serverIdHint = idx > 0 ? toolName.slice(0, idx) : undefined;
     const originalNameHint = idx > 0 && idx < toolName.length - 2 ? toolName.slice(idx + 2) : undefined;
     const runtimeHint = serverIdHint ? mcpOrchestrator.getServer(serverIdHint) : null;
+    const startedAt = performance.now();
 
     void this.tryEmit(
       "tool_call_started",
@@ -616,10 +619,24 @@ export class ChatService {
       correlationId: input.assistantId
     });
 
-    const exec = await toolExecutionService.executeNamespacedTool(toolName, input.args, { timeoutMs: 180000 });
+    logger.info("mcp_loop", "entering_tool_execution", {
+      traceId: input.traceId,
+      toolCallId: input.toolCallId,
+      correlationId: input.assistantId,
+      tool: toolName
+    });
+    const exec = await toolExecutionService.executeNamespacedTool(toolName, input.args, {
+      timeoutMs: 180000,
+      traceId: input.traceId,
+      toolCallId: input.toolCallId,
+      correlationId: input.assistantId
+    });
     const serverId = exec.tool.serverId;
     const originalName = exec.tool.originalName;
     const runtime = serverId ? mcpOrchestrator.getServer(serverId) : null;
+    const durationMs = exec.ok
+      ? (typeof exec.durationMs === "number" ? exec.durationMs : Math.round(performance.now() - startedAt))
+      : Math.round(performance.now() - startedAt);
 
     if (exec.ok) {
       void this.tryEmit(
@@ -633,7 +650,8 @@ export class ChatService {
           pid: runtime?.pid ?? null,
           framing: runtime?.framing ?? null,
           generation: runtime?.generation ?? null,
-          duration_ms: exec.durationMs,
+          duration_ms: durationMs,
+          durationMs,
           status: "succeeded",
           correlation_id: input.assistantId
         },
@@ -648,7 +666,7 @@ export class ChatService {
         pid: runtime?.pid ?? null,
         framing: runtime?.framing ?? null,
         generation: runtime?.generation ?? null,
-        durationMs: exec.durationMs,
+        durationMs,
         status: "succeeded",
         correlationId: input.assistantId
       });
@@ -657,7 +675,7 @@ export class ChatService {
         payload: exec.result,
         serverId,
         originalName,
-        durationMs: exec.durationMs
+        durationMs
       };
     }
 
@@ -673,6 +691,8 @@ export class ChatService {
         pid: runtime?.pid ?? null,
         framing: runtime?.framing ?? null,
         generation: runtime?.generation ?? null,
+        duration_ms: durationMs,
+        durationMs,
         error_code: exec.error.code,
         status: exec.kind === "denied" ? "denied" : "failed",
         correlation_id: input.assistantId
@@ -688,6 +708,7 @@ export class ChatService {
       pid: runtime?.pid ?? null,
       framing: runtime?.framing ?? null,
       generation: runtime?.generation ?? null,
+      durationMs,
       errorCode: exec.error.code,
       status: exec.kind === "denied" ? "denied" : "failed",
       correlationId: input.assistantId
@@ -698,7 +719,8 @@ export class ChatService {
       errorMsg,
       errorCode: exec.error.code,
       serverId,
-      originalName
+      originalName,
+      durationMs
     };
   }
 
@@ -741,6 +763,12 @@ export class ChatService {
       const msg = res?.choices?.[0]?.message as any;
       const toolCalls: any[] = Array.isArray(msg?.tool_calls) ? msg.tool_calls : [];
       const assistantContent = String(msg?.content ?? "");
+      logger.info("mcp_loop", "native_model_output", {
+        assistantId,
+        step,
+        toolCallCount: toolCalls.length,
+        hasAssistantContent: assistantContent.length > 0
+      });
       if (assistantContent) {
         conversation.push({ role: "assistant", content: assistantContent, tool_calls: toolCalls.length ? toolCalls : undefined });
       } else if (toolCalls.length) {
@@ -756,11 +784,13 @@ export class ChatService {
         const fn = tc?.function ?? {};
         const toolName = String(fn?.name ?? "");
         const argsRaw = String(fn?.arguments ?? "");
-        let args: any = {};
+        let args: any;
+        let argsParseError: string | undefined;
         try {
           args = argsRaw ? JSON.parse(argsRaw) : {};
-        } catch {
-          args = { _raw: argsRaw };
+        } catch (e: any) {
+          argsParseError = String(e?.message ?? e);
+          args = {};
         }
 
         const startedAt = new Date().toISOString();
@@ -782,24 +812,33 @@ export class ChatService {
         });
 
         let result: any;
-        const exec = await this.executeToolDeterministic({
-          sessionId,
-          assistantId,
-          toolCallId,
-          toolName,
-          args,
-          traceId
-        });
-        const ok = exec.ok;
-        const errorMsg = exec.errorMsg;
-        result = exec.payload;
+        let ok = false;
+        let errorMsg: string | undefined;
+        if (argsParseError) {
+          errorMsg = `mcp_invalid_tool_arguments_json:${argsParseError}`;
+          result = { ok: false, error: { code: "mcp_invalid_tool_arguments_json", message: argsParseError } };
+          logger.warn("mcp_loop", "native_tool_args_parse_failed", { assistantId, step, toolCallId, tool: toolName, error: argsParseError });
+        } else {
+          const exec = await this.executeToolDeterministic({
+            sessionId,
+            assistantId,
+            toolCallId,
+            toolName,
+            args,
+            traceId
+          });
+          ok = exec.ok;
+          errorMsg = exec.errorMsg;
+          result = exec.payload;
+        }
 
         const finishedAt = new Date().toISOString();
+        const toolContent = this.stringifyToolPayload(result, 20000);
         await this.updateToolTrace(sessionId, traceMessageId, {
+          text: toolContent,
           toolCall: { ...toolCall, status: ok ? "succeeded" : "failed", result: ok ? result : undefined, error: ok ? undefined : errorMsg, finishedAt }
         });
 
-        const toolContent = this.stringifyToolPayload(result, 20000);
         conversation.push({ role: "tool", tool_call_id: toolCallId, content: toolContent });
       }
     }
@@ -809,10 +848,6 @@ export class ChatService {
   private parsePromptToolRequest(text: string): { name: string; arguments: any } | null {
     const raw = String(text ?? "").trim();
     if (!raw) return null;
-    const lowered = raw.toLowerCase();
-    if (lowered.includes("let's simulate") || lowered.includes("assume it succeeded") || lowered.includes("expected response")) {
-      return null;
-    }
     try {
       const obj = JSON.parse(raw);
       if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
@@ -825,7 +860,8 @@ export class ChatService {
 
       const name = typeof (tc as any).name === "string" ? String((tc as any).name).trim() : "";
       if (!name) return null;
-      if (!name.includes("__") || name.includes(" ") || name.length > 128) return null;
+      const canonical = /^([a-zA-Z0-9_-]{1,64})__([a-zA-Z0-9_:-]{1,64})$/;
+      if (!canonical.test(name)) return null;
 
       const args = (tc as any).arguments ?? {};
       if (!args || typeof args !== "object" || Array.isArray(args)) return null;
@@ -833,6 +869,18 @@ export class ChatService {
     } catch {
       return null;
     }
+  }
+
+  private isSimulationResponse(text: string): boolean {
+    const lowered = String(text ?? "").toLowerCase();
+    if (!lowered) return false;
+    return (
+      lowered.includes("let's simulate") ||
+      lowered.includes("assume it succeeded") ||
+      lowered.includes("expected response") ||
+      lowered.includes("simulated response") ||
+      lowered.includes("mock response")
+    );
   }
 
   private async runPromptToolLoop(
@@ -862,6 +910,7 @@ export class ChatService {
       }
       return { role: m.role, content: m.content };
     });
+    const allowedToolNames = new Set(toolNames);
 
     const maxSteps = 8;
     for (let step = 0; step < maxSteps; step++) {
@@ -870,10 +919,43 @@ export class ChatService {
       const assistantContent = String(msg?.content ?? "");
       conversation.push({ role: "assistant", content: assistantContent });
       const req = this.parsePromptToolRequest(assistantContent);
-      if (!req) return assistantContent;
+      const looksLikeToolJson = assistantContent.trim().startsWith("{") || assistantContent.includes("\"tool_call\"");
+      logger.info("mcp_loop", "prompt_model_output", {
+        assistantId,
+        step,
+        rawModelOutput: assistantContent.slice(0, 2000),
+        parseResult: req ? "tool_call" : "none",
+        toolDetected: Boolean(req)
+      });
+      if (!req) {
+        if (this.isSimulationResponse(assistantContent)) {
+          logger.warn("mcp_loop", "simulation_response_blocked", { assistantId, step });
+          conversation.push({
+            role: "system",
+            content:
+              "Simulation is forbidden. Do not simulate tool output. If a tool is needed, return strict JSON only: " +
+              '{"tool_call":{"name":"serverId__toolName","arguments":{}}}. Otherwise answer directly without simulation.'
+          });
+          continue;
+        }
+        if (looksLikeToolJson) {
+          logger.warn("mcp_loop", "strict_json_parse_failed", { assistantId, step, rawModelOutput: assistantContent.slice(0, 2000) });
+          conversation.push({
+            role: "system",
+            content:
+              "Invalid tool_call JSON detected. Re-emit valid strict JSON only with root " +
+              '{"tool_call":{"name":"serverId__toolName","arguments":{}}} and no extra keys, markdown, or prose.'
+          });
+          continue;
+        }
+        return assistantContent;
+      }
 
       const toolName = String(req.name ?? "");
       const args = req.arguments ?? {};
+      if (!allowedToolNames.has(toolName)) {
+        logger.warn("mcp_loop", "non_canonical_tool_name", { assistantId, step, toolName });
+      }
 
       const startedAt = new Date().toISOString();
       const traceId = newMessageId();
@@ -907,11 +989,12 @@ export class ChatService {
       result = exec.payload;
 
       const finishedAt = new Date().toISOString();
+      const toolContent = this.stringifyToolPayload(result, 20000);
       await this.updateToolTrace(sessionId, traceMessageId, {
+        text: toolContent,
         toolCall: { ...toolCall, status: ok ? "succeeded" : "failed", result: ok ? result : undefined, error: ok ? undefined : errorMsg, finishedAt }
       });
 
-      const toolContent = this.stringifyToolPayload(result, 20000);
       conversation.push({ role: "tool", tool_call_id: traceMessageId, content: toolContent });
     }
     throw new Error("tool_loop_limit_reached");

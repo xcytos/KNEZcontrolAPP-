@@ -127,9 +127,18 @@ export class McpOrchestrator {
     return tools.slice();
   }
 
-  async callTool(serverId: string, name: string, args: any, opts?: { timeoutMs?: number }): Promise<{ result: any; durationMs: number }> {
-    const timeoutMs = opts?.timeoutMs ?? 180000;
-    return await mcpInspectorService.callTool(serverId, name, args, timeoutMs);
+  async callTool(
+    serverId: string,
+    name: string,
+    args: any,
+    opts?: { timeoutMs?: number; traceId?: string; toolCallId?: string; correlationId?: string }
+  ): Promise<{ result: any; durationMs: number }> {
+    return await mcpInspectorService.callTool(serverId, name, args, {
+      timeoutMs: opts?.timeoutMs ?? 180000,
+      traceId: opts?.traceId,
+      toolCallId: opts?.toolCallId,
+      correlationId: opts?.correlationId
+    });
   }
 
   private emit() {
