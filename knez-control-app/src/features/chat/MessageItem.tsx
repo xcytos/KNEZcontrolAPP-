@@ -105,6 +105,22 @@ const MessageItemInner: React.FC<{
   const parts = parseMessageContent(msg.text);
   // const hasThink = parts.some(p => p.type === 'think');
 
+  // [FIX D1/C3] — Guard: never render raw tool_call JSON blobs to the user.
+  // If the text is ONLY a {"tool_call":...} payload with no toolCall metadata,
+  // it means the execution loop leaked internal JSON. Show execution state instead.
+  const isRawToolCallJson = useMemo(() => {
+    if (msg.toolCall) return false; // already handled by toolCall renderer below
+    if (msg.from === 'user') return false;
+    const t = String(msg.text ?? '').trim();
+    if (!t.startsWith('{')) return false;
+    try {
+      const obj = JSON.parse(t);
+      return obj && typeof obj === 'object' && 'tool_call' in obj;
+    } catch {
+      return false;
+    }
+  }, [msg.text, msg.toolCall, msg.from]);
+
   const handleCopy = () => {
     copyToClipboard(msg.text);
     setCopied(true);
@@ -145,7 +161,7 @@ const MessageItemInner: React.FC<{
         {msg.toolCall ? (
           <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-3">
             <div className="flex items-center justify-between mb-2">
-              <div className="text-xs font-mono text-zinc-200 break-all min-w-0">{msg.toolCall.tool}</div>
+              <div className="text-xs font-mono text-zinc-200 break-all min-w-0">MCP Tool Execution</div>
               <div className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
                 msg.toolCall.status === "succeeded"
                   ? "bg-green-900/20 text-green-300 border-green-900/40"
@@ -153,27 +169,27 @@ const MessageItemInner: React.FC<{
                     ? "bg-red-900/20 text-red-300 border-red-900/40"
                     : "bg-blue-900/20 text-blue-200 border-blue-900/40"
               }`}>
-                {msg.toolCall.status}
+                {msg.toolCall.status === "calling" ? "executing" : msg.toolCall.status}
               </div>
             </div>
-            <div className="text-[10px] font-mono text-zinc-500 mb-1">args</div>
-            <pre className="text-[10px] bg-zinc-950 p-2 rounded overflow-x-hidden whitespace-pre-wrap break-words text-zinc-300 border border-zinc-900 max-w-full">
-              {JSON.stringify(msg.toolCall.args ?? {}, null, 2)}
-            </pre>
-            {msg.toolCall.status !== "calling" && (
-              <>
-                <div className="text-[10px] font-mono text-zinc-500 mt-3 mb-1">
-                  {msg.toolCall.status === "failed" ? "error" : "result"}
-                </div>
-                <pre className={`text-[10px] bg-zinc-950 p-2 rounded overflow-x-hidden whitespace-pre-wrap break-words border border-zinc-900 max-w-full ${
-                  msg.toolCall.status === "failed" ? "text-red-300" : "text-green-300"
-                }`}>
-                  {msg.toolCall.status === "failed"
-                    ? String(msg.toolCall.error ?? "unknown error")
-                    : JSON.stringify(msg.toolCall.result ?? {}, null, 2)}
-                </pre>
-              </>
+            {msg.toolCall.status === "calling" ? (
+              <div className="text-xs text-blue-200">⚡ Executing...</div>
+            ) : msg.toolCall.status === "succeeded" ? (
+              <div className="text-xs text-green-300">✅ Completed</div>
+            ) : (
+              <div className="text-xs text-red-300">Failed: {String(msg.toolCall.error ?? "unknown error")}</div>
             )}
+          </div>
+        ) : isRawToolCallJson ? (
+          // [FIX D1/D2] — Raw tool call JSON leaked through; show execution state, not JSON
+          <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs font-mono text-zinc-200 break-all min-w-0">MCP Tool Execution</div>
+              <div className="text-[10px] font-mono px-2 py-0.5 rounded border bg-blue-900/20 text-blue-200 border-blue-900/40">
+                executing
+              </div>
+            </div>
+            <div className="text-xs text-blue-200">⚡ Executing...</div>
           </div>
         ) : (
           parts.map((part, i) => {

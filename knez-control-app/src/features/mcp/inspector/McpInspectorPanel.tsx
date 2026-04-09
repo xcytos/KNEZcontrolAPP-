@@ -653,31 +653,11 @@ export const McpInspectorPanel: React.FC = () => {
                     />
                     <div className="text-[11px] text-zinc-500">timeout ms</div>
                     <button
-                      disabled={((selected?.type ?? "stdio") === "stdio" ? !isTauri : false) || !selectedId || !selectedTool}
-                      className="ml-auto text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors disabled:opacity-50"
-                      onClick={() => {
-                        setToolResult("");
-                        setToolError("");
-                        if (!selectedId || !selectedTool) return;
-                        void (async () => {
-                          try {
-                            const args = JSON.parse(toolArgsText || "{}");
-                            const traceId = `inspector_${Date.now().toString(16)}_${Math.random().toString(16).slice(2, 8)}`;
-                            const toolCallId = `${selectedId}:${selectedTool}:${Date.now()}`;
-                            const res = await mcpOrchestrator.callTool(selectedId, selectedTool, args, {
-                              timeoutMs: toolTimeoutMs,
-                              traceId,
-                              toolCallId,
-                              correlationId: toolCallId
-                            });
-                            setToolResult(JSON.stringify(res.result, null, 2));
-                          } catch (e: any) {
-                            setToolError(String(e?.message ?? e));
-                          }
-                        })();
-                      }}
+                      disabled
+                      className="ml-auto text-xs px-2 py-1 rounded bg-zinc-700 text-zinc-300 transition-colors disabled:opacity-70"
+                      onClick={() => {}}
                     >
-                      Call
+                      Call Disabled
                     </button>
                   </div>
                   <textarea
@@ -686,6 +666,9 @@ export const McpInspectorPanel: React.FC = () => {
                     className="w-full h-[120px] bg-zinc-900 border border-zinc-800 rounded p-2 text-[11px] font-mono text-zinc-200"
                     spellCheck={false}
                   />
+                  <div className="mt-2 text-[11px] text-zinc-500">
+                    Manual inspector tool execution is disabled. Use chat; ChatService owns model and MCP tool loops.
+                  </div>
                   {toolError && (
                     <div className="mt-2 border border-red-900/40 bg-red-900/10 rounded p-2 text-red-300 text-xs whitespace-pre-wrap break-words">
                       {toolError}

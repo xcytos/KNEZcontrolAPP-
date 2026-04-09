@@ -122,6 +122,24 @@ export class McpOrchestrator {
     return await this.handshake(serverId);
   }
 
+  async ensureStartedAll(opts?: { onlyEnabled?: boolean; startOnBootOnly?: boolean }): Promise<void> {
+    const onlyEnabled = opts?.onlyEnabled ?? true;
+    const startOnBootOnly = opts?.startOnBootOnly ?? false;
+    const servers = this.getServers()
+      .filter((s) => (onlyEnabled ? s.enabled : true))
+      .filter((s) => (startOnBootOnly ? s.start_on_boot : true));
+    for (const s of servers) {
+      try {
+        await this.ensureStarted(s.serverId);
+      } catch (e: any) {
+        logger.warn("mcp", "MCP ensureStartedAll server failed", {
+          serverId: s.serverId,
+          error: String(e?.message ?? e)
+        });
+      }
+    }
+  }
+
   async refreshTools(serverId: string, opts?: { timeoutMs?: number; waitForResult?: boolean }): Promise<McpToolDefinition[]> {
     const tools = await mcpInspectorService.listTools(serverId, { timeoutMs: opts?.timeoutMs, waitForResult: opts?.waitForResult });
     return tools.slice();
