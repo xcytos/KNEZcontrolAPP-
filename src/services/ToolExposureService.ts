@@ -64,7 +64,11 @@ function categoryForTool(originalName: string, serverId: string): string {
 function toolToMeta(tool: McpToolDefinition, runtime: ServerRuntime): ExposedToolMeta {
   const originalName = String(tool?.name ?? "").trim();
   const name = namespaceToolName(runtime.serverId, originalName);
-  const description = String(tool?.description ?? "").trim();
+  let description = String(tool?.description ?? "").trim();
+  // [FIX #10] Enhance tool descriptions with clear usage guidelines
+  if (description && !description.includes("Use this tool")) {
+    description = `${description}\n\nUse this tool when: the user explicitly requests this operation or when the task requires this specific capability.\nDo NOT use this tool for: general conversation, greetings, or simple questions.`;
+  }
   const parameters = normalizeParameters(tool?.inputSchema);
   const riskLevel = riskForTool(originalName, runtime.serverId);
   const category = categoryForTool(originalName, runtime.serverId);
