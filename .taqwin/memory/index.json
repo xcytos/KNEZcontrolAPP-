@@ -1,0 +1,226 @@
+{
+  "version": "1.0",
+  "last_updated": "2026-04-12T18:07:00Z",
+  "memory_files": [
+    {
+      "id": "mem-001",
+      "path": ".taqwin/memory/decisions.md",
+      "domain": "legacy",
+      "type": "decision_record",
+      "tags": ["decisions", "trade-offs", "architecture"],
+      "size_bytes": 1295,
+      "created_at": "2026-02-08",
+      "last_modified": "2026-02-08",
+      "status": "active"
+    },
+    {
+      "id": "mem-002",
+      "path": ".taqwin/memory/history.md",
+      "domain": "legacy",
+      "type": "project_history",
+      "tags": ["history", "milestones", "evolution"],
+      "size_bytes": 1206,
+      "created_at": "2026-02-08",
+      "last_modified": "2026-02-08",
+      "status": "active"
+    },
+    {
+      "id": "mem-003",
+      "path": ".taqwin/memory/log.md",
+      "domain": "legacy",
+      "type": "session_log",
+      "tags": ["log", "sessions", "events"],
+      "size_bytes": 2268,
+      "created_at": "2026-02-08",
+      "last_modified": "2026-02-10",
+      "status": "active"
+    },
+    {
+      "id": "mem-004",
+      "path": ".taqwin/memory/mistakes.md",
+      "domain": "legacy",
+      "type": "mistake_tracking",
+      "tags": ["mistakes", "errors", "learning"],
+      "size_bytes": 1248,
+      "created_at": "2026-02-08",
+      "last_modified": "2026-02-08",
+      "status": "active"
+    },
+    {
+      "id": "mem-005",
+      "path": ".taqwin/memory/patterns.md",
+      "domain": "legacy",
+      "type": "pattern_tracking",
+      "tags": ["patterns", "recognition", "behavior"],
+      "size_bytes": 755,
+      "created_at": "2026-02-08",
+      "last_modified": "2026-02-08",
+      "status": "active"
+    },
+    {
+      "id": "mem-006",
+      "path": ".taqwin/memory/system_map.md",
+      "domain": "system",
+      "type": "documentation",
+      "tags": ["memory", "domains", "relationships", "map"],
+      "size_bytes": null,
+      "created_at": "2026-04-12",
+      "last_modified": "2026-04-12",
+      "status": "active"
+    },
+    {
+      "id": "mem-007",
+      "path": ".taqwin/memory/aimodels/README.md",
+      "domain": "aimodels",
+      "type": "domain_documentation",
+      "tags": ["aimodels", "domain", "configuration", "metrics"],
+      "size_bytes": null,
+      "created_at": "2026-04-12",
+      "last_modified": "2026-04-12",
+      "status": "active"
+    },
+    {
+      "id": "mem-008",
+      "path": ".taqwin/memory/chat/README.md",
+      "domain": "chat",
+      "type": "domain_documentation",
+      "tags": ["chat", "domain", "history", "context"],
+      "size_bytes": null,
+      "created_at": "2026-04-12",
+      "last_modified": "2026-04-12",
+      "status": "active"
+    },
+    {
+      "id": "mem-009",
+      "path": ".taqwin/memory/controlapp/README.md",
+      "domain": "controlapp",
+      "type": "domain_documentation",
+      "tags": ["controlapp", "domain", "ui", "state"],
+      "size_bytes": null,
+      "created_at": "2026-04-12",
+      "last_modified": "2026-04-12",
+      "status": "active"
+    },
+    {
+      "id": "mem-010",
+      "path": ".taqwin/memory/development/README.md",
+      "domain": "development",
+      "type": "domain_documentation",
+      "tags": ["development", "domain", "decisions", "architecture"],
+      "size_bytes": null,
+      "created_at": "2026-04-12",
+      "last_modified": "2026-04-12",
+      "status": "active"
+    },
+    {
+      "id": "mem-011",
+      "path": ".taqwin/memory/mcp/README.md",
+      "domain": "mcp",
+      "type": "domain_documentation",
+      "tags": ["mcp", "domain", "tools", "configuration"],
+      "size_bytes": null,
+      "created_at": "2026-04-12",
+      "last_modified": "2026-04-12",
+      "status": "active"
+    },
+    {
+      "id": "mem-012",
+      "path": ".taqwin/memory/monitor/README.md",
+      "domain": "monitor",
+      "type": "domain_documentation",
+      "tags": ["monitor", "domain", "metrics", "health"],
+      "size_bytes": null,
+      "created_at": "2026-04-12",
+      "last_modified": "2026-04-12",
+      "status": "active"
+    },
+    {
+      "id": "mem-013",
+      "path": ".taqwin/memory/settings/README.md",
+      "domain": "settings",
+      "type": "domain_documentation",
+      "tags": ["settings", "domain", "configuration", "preferences"],
+      "size_bytes": null,
+      "created_at": "2026-04-12",
+      "last_modified": "2026-04-12",
+      "status": "active"
+    },
+    {
+      "id": "mem-014",
+      "path": ".taqwin/memory/index.json",
+      "domain": "system",
+      "type": "index",
+      "tags": ["index", "memory", "inventory"],
+      "size_bytes": null,
+      "created_at": "2026-04-12",
+      "last_modified": "2026-04-12",
+      "status": "active"
+    },
+    {
+      "id": "mem-015",
+      "path": ".taqwin/memory/relations.json",
+      "domain": "system",
+      "type": "relations",
+      "tags": ["relations", "links", "graph"],
+      "size_bytes": null,
+      "created_at": "2026-04-12",
+      "last_modified": "2026-04-12",
+      "status": "active"
+    }
+  ],
+  "domains": {
+    "aimodels": {
+      "description": "AI model memory",
+      "file_count": 1,
+      "status": "active"
+    },
+    "chat": {
+      "description": "Chat session memory",
+      "file_count": 1,
+      "status": "active"
+    },
+    "controlapp": {
+      "description": "Control App memory",
+      "file_count": 1,
+      "status": "active"
+    },
+    "development": {
+      "description": "Development memory",
+      "file_count": 1,
+      "status": "active"
+    },
+    "legacy": {
+      "description": "Legacy flat memory files",
+      "file_count": 5,
+      "status": "active"
+    },
+    "mcp": {
+      "description": "MCP tool memory",
+      "file_count": 1,
+      "status": "active"
+    },
+    "monitor": {
+      "description": "Monitoring memory",
+      "file_count": 1,
+      "status": "active"
+    },
+    "settings": {
+      "description": "Settings memory",
+      "file_count": 1,
+      "status": "active"
+    },
+    "system": {
+      "description": "System memory files",
+      "file_count": 3,
+      "status": "active"
+    }
+  },
+  "statistics": {
+    "total_files": 15,
+    "total_domains": 9,
+    "legacy_files": 5,
+    "domain_files": 7,
+    "system_files": 3,
+    "last_index_update": "2026-04-12T18:07:00Z"
+  }
+}

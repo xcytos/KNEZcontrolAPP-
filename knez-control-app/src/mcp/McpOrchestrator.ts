@@ -72,6 +72,10 @@ export class McpOrchestrator {
     });
     this.rebuildFromInspector();
     void this.maybeAttachRustEventListeners();
+    // [FIX #15] Ensure MCP servers bootstrap on app start
+    void this.ensureStartedAll({ onlyEnabled: true, startOnBootOnly: true }).catch((e) => {
+      logger.warn("mcp", "MCP bootstrap failed on startup", { error: String(e?.message ?? e) });
+    });
     void this.maybeAutoStartServers();
   }
 

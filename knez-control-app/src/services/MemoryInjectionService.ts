@@ -159,13 +159,23 @@ export class MemoryInjectionService {
 
     const governanceHash = await this.getGovernanceHash();
     const runtime = this.buildRuntimeBlock();
-    const staticBlock = [this.staticSnippets[0], this.staticSnippets[1], this.staticSnippets[2], this.staticSnippets[3], this.staticSnippets[4], ...chosen]
+    // [FIX Phase 3] Include MCP control rules in static block
+    const mcpRules = this.staticSnippets
+      .filter((s) => s.tags.includes("mcp:tools") || s.tags.includes("mcp:protocol"))
+      .map((s) => `- ${s.text}`)
+      .join("\n");
+    const staticBlock = [
+      ...this.staticSnippets.slice(0, 5),
+      ...chosen,
+      ...this.staticSnippets.filter((s) => s.tags.includes("mcp:tools") || s.tags.includes("mcp:protocol"))
+    ]
       .map((s) => `- ${s.text}`)
       .filter((v, idx, arr) => arr.indexOf(v) === idx)
       .join("\n");
 
     const govLine = governanceHash ? `\n\n[RUNTIME: GOVERNANCE]\ncombined_sha256=${governanceHash}` : "";
-    const content = `You are operating inside knez-control-app with MCP.\n\n[STATIC: RULES]\n${staticBlock}\n\n${runtime.block}${govLine}`;
+    const mcpControlLine = mcpRules ? `\n\n[STATIC: MCP CONTROL RULES]\n${mcpRules}` : "";
+    const content = `You are operating inside knez-control-app with MCP.\n\n[STATIC: RULES]\n${staticBlock}${mcpControlLine}\n\n${runtime.block}${govLine}`;
 
     const systemMsg: CompletionMessage = { role: "system", content: content.slice(0, 8000) };
     return { messages: [systemMsg, ...base], signature: runtime.signature };

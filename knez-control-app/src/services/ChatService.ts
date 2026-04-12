@@ -12,7 +12,6 @@ import { tabErrorStore } from "./TabErrorStore";
 import { selectPrimaryBackend } from "../utils/health";
 import { toolExposureService } from "./ToolExposureService";
 import { mcpOrchestrator } from "../mcp/McpOrchestrator";
-import { classifyMcpError } from "../mcp/McpErrorTaxonomy";
 import { toolExecutionService } from "./ToolExecutionService";
 import { memoryInjectionService } from "./MemoryInjectionService";
 import { governanceService } from "./GovernanceService";
@@ -45,12 +44,9 @@ export class ChatService {
         stopRequested: boolean;
       }
     | null = null;
-  private maxOutgoingAttempts = 6;
-  private maxOutgoingAgeMs = 10 * 60 * 1000;
-  private firstTokenTimeoutMs = 12000;
-  private maxOutgoingPerSession = 5;
-  private streamIdleTimeoutMs = 20000;
-  private streamTotalTimeoutMs = 180000;
+  private maxOutgoingAttempts = 3;
+  private maxOutgoingAgeMs = 300000;
+  private maxOutgoingPerSession = 1;
   private lastMcpSignatureBySessionId = new Map<string, string>();
   
   private async tryEmit(event_name: string, payload: Record<string, any>, sessionId: string) {
@@ -502,10 +498,6 @@ export class ChatService {
     }
   }
 
-  private classifyToolError(rawError: string): { code: string; message: string } {
-    return classifyMcpError(rawError);
-  }
-
   private async executeToolDeterministic(input: {
     sessionId: string;
     assistantId: string;
@@ -899,13 +891,16 @@ export class ChatService {
   private isSimulationResponse(text: string): boolean {
     const lowered = String(text ?? "").toLowerCase();
     if (!lowered) return false;
-    return (
-      lowered.includes("let's simulate") ||
-      lowered.includes("assume it succeeded") ||
-      lowered.includes("expected response") ||
-      lowered.includes("simulated response") ||
-      lowered.includes("mock response")
-    );
+    
+    // Only block explicit simulation indicators, not normal chat
+    const simulationPatterns = [
+      /\bi (would|will) simulate\b/i,
+      /\bassuming (it )?(succeeds?|works?)\b/i,
+      /\bthis is a (simulated|mock) response\b/i,
+      /\bexpected response[:\s]/i
+    ];
+    
+    return simulationPatterns.some(pattern => pattern.test(lowered));
   }
 
   private async runPromptToolLoop(
@@ -1152,156 +1147,42 @@ export class ChatService {
     let watchdogId: number | undefined;
     try {
       const toolsForModel = toolExposureService.getToolsForModel();
-      if (toolsForModel.length > 0) {
-        let toolModelId: string | undefined = modelId;
-        const onMeta = (meta: { model?: string }) => {
-          const next = meta?.model?.trim();
-          if (next) toolModelId = next;
-        };
-        const support = await knezClient.getToolCallingSupport().catch(() => "unsupported" as const);
-        logger.info("mcp_model", "tool_calling_support", {
-          support,
-          toolsCount: toolsForModel.length,
-          toolChoice: support === "supported" && toolsForModel.length ? "auto" : "none"
-        });
-        const finalText =
-          support === "supported"
-            ? await this.runNativeToolLoop(sessionId, injectedMessages as any, assistantId, toolsForModel, onMeta)
-            : await this.runPromptToolLoop(sessionId, injectedMessages as any, assistantId, toolsForModel, onMeta);
-
-        if (finalText.trim().length === 0) {
-          throw new Error("Empty reply");
-        }
-
-        const finalAssistant: Partial<ChatMessage> = {
-          isPartial: false,
-          text: finalText,
-          deliveryStatus: "delivered",
-          refusal: false,
-          metrics: { finishReason: "completed", totalTokens: 0, modelId: toolModelId ?? modelId, backendStatus }
-        };
-
-        await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered" });
-        await sessionDatabase.updateMessage(assistantId, {
-          deliveryStatus: "delivered",
-          text: finalText,
-          metrics: finalAssistant.metrics,
-          isPartial: false,
-          refusal: false
-        });
-        await sessionDatabase.removeOutgoing(id);
-
-        if (this.sessionId === sessionId) {
-          this.state.messages = this.state.messages.map((m) => {
-            if (m.id === id) return { ...m, deliveryStatus: "delivered" };
-            if (m.id === assistantId) return { ...m, ...finalAssistant };
-            return m;
-          });
-          this.state.sending = false;
-          this.notify();
-        }
-
-        void this.tryEmit(
-          "chat_assistant_message",
-          {
-            message_id: assistantId,
-            from: "knez",
-            reply_to_message_id: id,
-            correlation_id: id,
-            finish_reason: "completed",
-            total_tokens: 0,
-          },
-          sessionId
-        );
-
-        await this.maybeAutoNameSession(sessionId, (await persistenceService.loadChat(sessionId)) ?? []);
-        return;
-      }
-
-      let collected = "";
-      let firstTokenTime: number | undefined;
-      const startTime = Date.now();
-      let tokenCount = 0;
-      let lastPersistAt = 0;
-      let lastUiAt = 0;
-      const controller = new AbortController();
-      this.activeDelivery = { sessionId, outgoingId: id, assistantId, controller, stopRequested: false };
-      let metaModelSet = false;
-      firstTokenTimer = window.setTimeout(() => {
-        if (!firstTokenTime) controller.abort();
-      }, this.firstTokenTimeoutMs);
-      let lastTokenAt = Date.now();
-      watchdogId = window.setInterval(() => {
-        const now = Date.now();
-        if (now - startTime > this.streamTotalTimeoutMs) {
-          controller.abort();
-          return;
-        }
-        if (!firstTokenTime) return;
-        if (now - lastTokenAt > this.streamIdleTimeoutMs) {
-          controller.abort();
-        }
-      }, 500);
-
-      const applyAssistantMetrics = async (patch: Partial<NonNullable<ChatMessage["metrics"]>>) => {
-        const currentInState = this.state.messages.find((m) => m.id === assistantId);
-        const merged = { ...(currentInState?.metrics ?? {}), ...(patch ?? {}) };
-        await sessionDatabase.updateMessage(assistantId, { metrics: merged });
-        if (this.sessionId === sessionId) {
-          this.state.messages = this.state.messages.map((m) => m.id === assistantId ? { ...m, metrics: merged } : m);
-          this.notify();
-        }
+      let toolModelId: string | undefined = modelId;
+      const onMeta = (meta: { model?: string }) => {
+        const next = meta?.model?.trim();
+        if (next) toolModelId = next;
       };
+      const support = await knezClient.getToolCallingSupport().catch(() => "unsupported" as const);
+      logger.info("mcp_model", "tool_calling_support", {
+        support,
+        toolsCount: toolsForModel.length,
+        toolChoice: support === "supported" && toolsForModel.length ? "auto" : "none"
+      });
+      const finalText =
+        support === "supported"
+          ? await this.runNativeToolLoop(sessionId, injectedMessages as any, assistantId, toolsForModel, onMeta)
+          : await this.runPromptToolLoop(sessionId, injectedMessages as any, assistantId, toolsForModel, onMeta);
 
-      for await (const token of knezClient.chatCompletionsStream(injectedMessages as any, sessionId, {
-        signal: controller.signal,
-        onMeta: (meta) => {
-          const nextModel = meta?.model?.trim();
-          if (!nextModel) return;
-          if (metaModelSet && nextModel === modelId) return;
-          modelId = nextModel;
-          metaModelSet = true;
-          void applyAssistantMetrics({ modelId });
-        }
-      })) {
-        if (!firstTokenTime) firstTokenTime = Date.now();
-        lastTokenAt = Date.now();
-        collected += token;
-        tokenCount++;
-        const patch: Partial<ChatMessage> = {
-          text: collected,
-          metrics: {
-            timeToFirstTokenMs: firstTokenTime - startTime,
-            totalTokens: tokenCount,
-            modelId,
-            backendStatus
-          }
-        };
-        const now = Date.now();
-        if (this.sessionId === sessionId && now - lastUiAt > 50) {
-          lastUiAt = now;
-          this.state.messages = this.state.messages.map((m) => m.id === assistantId ? { ...m, ...patch } : m);
-          this.notify();
-        }
-        if (now - lastPersistAt > 650) {
-          lastPersistAt = now;
-          await sessionDatabase.updateMessage(assistantId, { text: collected, metrics: patch.metrics, isPartial: true });
-        }
-      }
-
-      if (tokenCount === 0 && collected.trim().length === 0) {
+      if (finalText.trim().length === 0) {
         throw new Error("Empty reply");
       }
 
       const finalAssistant: Partial<ChatMessage> = {
         isPartial: false,
-        text: collected,
+        text: finalText,
         deliveryStatus: "delivered",
-        metrics: { finishReason: "completed", totalTokens: tokenCount, modelId, backendStatus }
+        refusal: false,
+        metrics: { finishReason: "completed", totalTokens: 0, modelId: toolModelId ?? modelId, backendStatus }
       };
 
       await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered" });
-      await sessionDatabase.updateMessage(assistantId, { deliveryStatus: "delivered", text: collected, metrics: finalAssistant.metrics, isPartial: false, refusal: false });
+      await sessionDatabase.updateMessage(assistantId, {
+        deliveryStatus: "delivered",
+        text: finalText,
+        metrics: finalAssistant.metrics,
+        isPartial: false,
+        refusal: false
+      });
       await sessionDatabase.removeOutgoing(id);
 
       if (this.sessionId === sessionId) {
@@ -1310,7 +1191,10 @@ export class ChatService {
           if (m.id === assistantId) return { ...m, ...finalAssistant };
           return m;
         });
+        this.state.sending = false;
+        this.notify();
       }
+
       void this.tryEmit(
         "chat_assistant_message",
         {
@@ -1319,7 +1203,7 @@ export class ChatService {
           reply_to_message_id: id,
           correlation_id: id,
           finish_reason: "completed",
-          total_tokens: tokenCount,
+          total_tokens: 0,
         },
         sessionId
       );

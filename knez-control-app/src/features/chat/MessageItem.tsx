@@ -4,15 +4,8 @@ import { parseMessageContent, formatMarkdown, copyToClipboard } from './ChatUtil
 
 const CodeBlock: React.FC<{ language: string; content: string }> = ({ language, content }) => {
   const [copied, setCopied] = useState(false);
-  const isTauri = useMemo(() => {
-    const w = window as any;
-    return !!(w.__TAURI__?.core?.invoke ?? w.__TAURI__?.invoke ?? w.__TAURI_INTERNALS__ ?? w.__TAURI_IPC__);
-  }, []);
-  const canRun = useMemo(() => {
-    const lang = String(language || "").toLowerCase().trim();
-    if (!lang) return false;
-    return ["sh", "bash", "shell", "cmd", "bat", "powershell", "ps1", "pwsh"].includes(lang);
-  }, [language]);
+  // [FIX #7] Manual code execution disabled per MCP protocol
+  // Code execution should only happen through chat requests
 
   const handleCopy = () => {
     copyToClipboard(content);
@@ -20,27 +13,12 @@ const CodeBlock: React.FC<{ language: string; content: string }> = ({ language, 
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleRun = () => {
-    try {
-      window.dispatchEvent(new CustomEvent("knez-terminal-run", { detail: { command: content, source: "codeblock" } }));
-    } catch {}
-  };
-
   return (
     <div className="my-2 rounded-md overflow-hidden bg-zinc-950 border border-zinc-800">
       <div className="flex justify-between items-center px-3 py-1 bg-zinc-900 border-b border-zinc-800">
         <span className="text-xs text-zinc-500 font-mono">{language}</span>
         <div className="flex items-center gap-3">
-          {canRun && (
-            <button
-              onClick={handleRun}
-              disabled={!isTauri}
-              className="text-xs text-zinc-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title={isTauri ? "Send to in-chat terminal" : "Requires desktop app (Tauri)"}
-            >
-              Run
-            </button>
-          )}
+          {/* [FIX #7] Manual execution removed per MCP protocol */}
           <button 
             onClick={handleCopy}
             className="text-xs text-zinc-400 hover:text-white transition-colors"

@@ -1,0 +1,270 @@
+{
+  "version": "1.0",
+  "last_updated": "2026-04-12T18:07:00Z",
+  "relations": [
+    {
+      "id": "rel-001",
+      "source": "mem-001",
+      "target": "mem-010",
+      "type": "domain_migration",
+      "description": "decisions.md should be migrated to development/ domain",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-002",
+      "source": "mem-002",
+      "target": "mem-010",
+      "type": "domain_migration",
+      "description": "history.md should be migrated to development/ domain",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-003",
+      "source": "mem-003",
+      "target": "mem-012",
+      "type": "domain_migration",
+      "description": "log.md should be migrated to monitor/ domain",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-004",
+      "source": "mem-004",
+      "target": "mem-010",
+      "type": "domain_migration",
+      "description": "mistakes.md should be migrated to development/ domain",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-005",
+      "source": "mem-005",
+      "target": "mem-010",
+      "type": "domain_migration",
+      "description": "patterns.md should be migrated to development/ domain",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-006",
+      "source": "mem-006",
+      "target": "mem-007",
+      "type": "domain_definition",
+      "description": "system_map.md defines aimodels/ domain",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-007",
+      "source": "mem-006",
+      "target": "mem-008",
+      "type": "domain_definition",
+      "description": "system_map.md defines chat/ domain",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-008",
+      "source": "mem-006",
+      "target": "mem-009",
+      "type": "domain_definition",
+      "description": "system_map.md defines controlapp/ domain",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-009",
+      "source": "mem-006",
+      "target": "mem-010",
+      "type": "domain_definition",
+      "description": "system_map.md defines development/ domain",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-010",
+      "source": "mem-006",
+      "target": "mem-011",
+      "type": "domain_definition",
+      "description": "system_map.md defines mcp/ domain",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-011",
+      "source": "mem-006",
+      "target": "mem-012",
+      "type": "domain_definition",
+      "description": "system_map.md defines monitor/ domain",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-012",
+      "source": "mem-006",
+      "target": "mem-013",
+      "type": "domain_definition",
+      "description": "system_map.md defines settings/ domain",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-013",
+      "source": "mem-007",
+      "target": "mem-008",
+      "type": "domain_relationship",
+      "description": "aimodels/ relates to chat/ (model usage in chat)",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-014",
+      "source": "mem-007",
+      "target": "mem-010",
+      "type": "domain_relationship",
+      "description": "aimodels/ relates to development/ (model development)",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-015",
+      "source": "mem-008",
+      "target": "mem-009",
+      "type": "domain_relationship",
+      "description": "chat/ relates to controlapp/ (chat UI interactions)",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-016",
+      "source": "mem-009",
+      "target": "mem-011",
+      "type": "domain_relationship",
+      "description": "controlapp/ relates to mcp/ (MCP UI integration)",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-017",
+      "source": "mem-010",
+      "target": "mem-013",
+      "type": "domain_relationship",
+      "description": "development/ relates to settings/ (development configuration)",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-018",
+      "source": "mem-011",
+      "target": "mem-013",
+      "type": "domain_relationship",
+      "description": "mcp/ relates to settings/ (MCP configuration)",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-019",
+      "source": "mem-012",
+      "target": "mem-007",
+      "type": "domain_relationship",
+      "description": "monitor/ relates to aimodels/ (model monitoring)",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-020",
+      "source": "mem-012",
+      "target": "mem-008",
+      "type": "domain_relationship",
+      "description": "monitor/ relates to chat/ (chat monitoring)",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-021",
+      "source": "mem-012",
+      "target": "mem-009",
+      "type": "domain_relationship",
+      "description": "monitor/ relates to controlapp/ (app monitoring)",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-022",
+      "source": "mem-012",
+      "target": "mem-011",
+      "type": "domain_relationship",
+      "description": "monitor/ relates to mcp/ (MCP monitoring)",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-023",
+      "source": "mem-013",
+      "target": "mem-007",
+      "type": "domain_relationship",
+      "description": "settings/ relates to aimodels/ (model settings)",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-024",
+      "source": "mem-013",
+      "target": "mem-008",
+      "type": "domain_relationship",
+      "description": "settings/ relates to chat/ (chat settings)",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-025",
+      "source": "mem-013",
+      "target": "mem-009",
+      "type": "domain_relationship",
+      "description": "settings/ relates to controlapp/ (app settings)",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-026",
+      "source": "mem-014",
+      "target": "mem-015",
+      "type": "system_link",
+      "description": "index.json links to relations.json",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-027",
+      "source": "TICKET-001",
+      "target": "mem-006",
+      "type": "ticket_to_memory",
+      "description": "TICKET-001 links to system_map.md",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-028",
+      "source": "TICKET-001",
+      "target": "mem-014",
+      "type": "ticket_to_memory",
+      "description": "TICKET-001 creates index.json",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-029",
+      "source": "TICKET-001",
+      "target": "mem-015",
+      "type": "ticket_to_memory",
+      "description": "TICKET-001 creates relations.json",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-030",
+      "source": "TICKET-002",
+      "target": "mem-004",
+      "type": "ticket_to_memory",
+      "description": "TICKET-002 links to mistakes.md",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-031",
+      "source": "TICKET-002",
+      "target": "mem-010",
+      "type": "ticket_to_memory",
+      "description": "TICKET-002 creates development/mistakes.md",
+      "created_at": "2026-04-12"
+    }
+  ],
+  "relation_types": {
+    "domain_migration": "Legacy file to be migrated to domain",
+    "domain_definition": "System map defines domain",
+    "domain_relationship": "Domain-to-domain relationship",
+    "system_link": "System file to system file link",
+    "ticket_to_memory": "Ticket links to memory file"
+  },
+  "statistics": {
+    "total_relations": 31,
+    "domain_migration_relations": 5,
+    "domain_definition_relations": 7,
+    "domain_relationship_relations": 12,
+    "system_link_relations": 1,
+    "ticket_to_memory_relations": 4,
+    "last_update": "2026-04-12T18:07:00Z"
+  }
+}
