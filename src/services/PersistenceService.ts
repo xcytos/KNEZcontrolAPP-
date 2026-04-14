@@ -1,6 +1,7 @@
 
 import { sessionDatabase } from './SessionDatabase';
 import { ChatMessage } from '../domain/DataContracts';
+import { logger } from './LogService';
 
 export class PersistenceService {
   
@@ -14,7 +15,7 @@ export class PersistenceService {
       }
       await sessionDatabase.saveMessages(sessionId, messages);
     } catch (e) {
-      console.error("DB Save Failed", e);
+      logger.error("persistence", "db_save_failed", { sessionId, error: String(e) });
     }
   }
 
@@ -23,7 +24,7 @@ export class PersistenceService {
       const msgs = await sessionDatabase.loadMessages(sessionId);
       return msgs.length > 0 ? msgs : null;
     } catch (e) {
-      console.error("DB Load Failed", e);
+      logger.error("persistence", "db_load_failed", { sessionId, error: String(e) });
       return null;
     }
   }

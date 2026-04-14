@@ -46,6 +46,11 @@ Push-Location $KnezPath.Path
 try {
     $env:PYTHONPATH = $PWD.Path + ";" + $env:PYTHONPATH
     Log "Final PYTHONPATH: $env:PYTHONPATH"
+    
+    # Set DEFAULT_MODEL environment variable for LocalBackend
+    $env:DEFAULT_MODEL = "qwen2.5:7b-instruct-q4_K_M"
+    Log "Set DEFAULT_MODEL: $env:DEFAULT_MODEL"
+    
     Log "Starting uvicorn process..."
     
     $proc = Start-Process "uvicorn" -ArgumentList "knez.knez_core.app:app --app-dir . --host 127.0.0.1 --port 8000 --reload" -PassThru -NoNewWindow

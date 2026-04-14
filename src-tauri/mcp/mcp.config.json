@@ -1,18 +1,24 @@
 {
   "schema_version": "1",
-  "servers": {
-    "taqwin-v1-ultimate-session": {
-      "command": "python",
-      "args": ["main.py"],
+  "mcpServers": {
+    "taqwin": {
+      "command": "C:\\Users\\syedm\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+      "args": [
+        "-u",
+        "C:\\Users\\syedm\\Downloads\\ASSETS\\controlAPP\\TAQWIN_V1\\main.py"
+      ],
       "env": {
-        "TAQWIN_LOG_LEVEL": "INFO",
-        "PYTHONUNBUFFERED": "1",
-        "PYTHONUTF8": "1",
-        "TAQWIN_SESSION_RECORDING": "ENABLED",
-        "PYTHONIOENCODING": "utf-8",
-        "TAQWIN_STORAGE_TYPE": "HYBRID_SQLITE_JSON"
+        "PYTHONUNBUFFERED": "1"
       },
-      "working_directory": "TAQWIN_V1"
+      "disabled": false
+    },
+    "io.windsurf/puppeteer": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-puppeteer"
+      ],
+      "disabled": false
     }
   }
 }

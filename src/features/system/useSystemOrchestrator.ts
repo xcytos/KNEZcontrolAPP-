@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from "react";
 import { Command, Child } from "@tauri-apps/plugin-shell";
 import { knezClient } from "../../services/KnezClient";
 import { isOverallHealthyStatus } from "../../utils/health";
+import { logger } from "../../services/LogService";
 
 export type SystemStatus = "idle" | "starting" | "running" | "failed" | "degraded";
 
@@ -116,7 +117,7 @@ export function useSystemOrchestrator(onReady?: () => void) {
       verifyHealthLoop();
 
     } catch (e) {
-      console.error("[SystemPanel] Spawn error:", e);
+      logger.error("system_orchestrator", "spawn_failed", { error: String(e) });
       setOutput((prev) => prev + `\n[Failed to spawn command] ${e}`);
       setStatus("failed");
     }

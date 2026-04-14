@@ -245,16 +245,30 @@ const MessageItemInner: React.FC<{
                {msg.metrics.modelId}
              </span>
            )}
-           {msg.isPartial && msg.from !== "user" && (msg.metrics?.totalTokens ?? 0) === 0 && (
-             <span className="text-[10px] font-mono bg-zinc-900/50 px-1.5 py-0.5 rounded border border-zinc-800">
-               waiting for response
+           {msg.isPartial && msg.from !== "user" && !msg.hasReceivedFirstToken && (
+             <span data-testid="delivery-status" data-status="pending" className="text-[10px] text-zinc-400 flex items-center gap-1.5">
+               <span className="flex gap-0.5 items-center">
+                 <span className="w-1 h-1 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                 <span className="w-1 h-1 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                 <span className="w-1 h-1 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+               </span>
+               Typing...
              </span>
            )}
-           {msg.metrics?.totalTokens !== undefined && (!msg.isPartial || (msg.metrics.totalTokens ?? 0) > 0) && (
+           {msg.metrics?.totalTokens !== undefined && (msg.metrics.totalTokens ?? 0) > 0 && (
              <span className="text-[10px] font-mono bg-zinc-900/50 px-1.5 py-0.5 rounded border border-zinc-800">
                {msg.metrics.totalTokens} tokens
                {msg.metrics.timeToFirstTokenMs && ` · ${(msg.metrics.timeToFirstTokenMs/1000).toFixed(1)}s latency`}
              </span>
+           )}
+           {msg.metrics?.responseTimeMs !== undefined && !msg.isPartial && (
+             <span className="text-[10px] font-mono bg-zinc-900/50 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-400" title="Full response time">
+              {msg.metrics.responseTimeMs < 1000
+                ? `${msg.metrics.responseTimeMs}ms`
+                : msg.metrics.responseTimeMs < 60000
+                  ? `${(msg.metrics.responseTimeMs / 1000).toFixed(1)}s`
+                  : `${Math.floor(msg.metrics.responseTimeMs / 60000)}m ${Math.floor((msg.metrics.responseTimeMs % 60000) / 1000)}s`}
+            </span>
            )}
            
            {(isHovered || copied) && (

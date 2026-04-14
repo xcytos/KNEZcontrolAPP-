@@ -15,12 +15,16 @@ import { mcpOrchestrator } from "../mcp/McpOrchestrator";
 import { toolExecutionService } from "./ToolExecutionService";
 import { memoryInjectionService } from "./MemoryInjectionService";
 import { governanceService } from "./GovernanceService";
+import { interpretOutput, canClassifyEarly, OutputClass } from "./OutputInterpreter";
 
 export interface ChatState {
   messages: ChatMessage[];
   sending: boolean;
+  streaming: boolean;
+  currentStreamId: string | null;
   activeTools: { search: boolean };
   searchProvider: "off" | "taqwin" | "proxy";
+  pendingToolApproval: { id: string; toolName: string; args: Record<string, any> } | null;
 }
 
 export type StateListener = (state: ChatState) => void;
@@ -30,8 +34,11 @@ export class ChatService {
   private state: ChatState = {
     messages: [],
     sending: false,
+    streaming: false,
+    currentStreamId: null,
     activeTools: { search: false },
-    searchProvider: "off"
+    searchProvider: "off",
+    pendingToolApproval: null
   };
   private sessionId: string;
   private queueFlushInFlight = false;
@@ -48,6 +55,15 @@ export class ChatService {
   private maxOutgoingAgeMs = 300000;
   private maxOutgoingPerSession = 1;
   private lastMcpSignatureBySessionId = new Map<string, string>();
+  private static get MCP_ENABLED(): boolean {
+    try { return localStorage.getItem("knez_mcp_enabled") === "1"; } catch { return false; }
+  }
+  static setMcpEnabled(enabled: boolean): void {
+    try { localStorage.setItem("knez_mcp_enabled", enabled ? "1" : "0"); } catch {}
+  }
+  private approvalResolvers = new Map<string, (approved: boolean) => void>();
+  private _pendingNotify = false;
+  private _notifyTimer: number | null = null;
   
   private async tryEmit(event_name: string, payload: Record<string, any>, sessionId: string) {
     try {
@@ -60,7 +76,9 @@ export class ChatService {
         payload,
         tags: ["chat"],
       });
-    } catch {}
+    } catch (e) {
+      logger.warn("chat_service", "tryEmit_failed", { event_name, error: String(e) });
+    }
   }
 
   private async updateSearchProvider(searchEnabled: boolean) {
@@ -94,7 +112,23 @@ export class ChatService {
   }
 
   private notify() {
-    this.listeners.forEach(l => l(this.state));
+    if (this.state.streaming) {
+      if (!this._pendingNotify) {
+        this._pendingNotify = true;
+        this._notifyTimer = window.setTimeout(() => {
+          this._pendingNotify = false;
+          this._notifyTimer = null;
+          this.listeners.forEach(l => l(this.state));
+        }, 33);
+      }
+    } else {
+      if (this._notifyTimer !== null) {
+        clearTimeout(this._notifyTimer);
+        this._notifyTimer = null;
+        this._pendingNotify = false;
+      }
+      this.listeners.forEach(l => l(this.state));
+    }
   }
 
   async load(sessionId: string) {
@@ -160,8 +194,8 @@ export class ChatService {
       logger.warn("chat", "Queue limit reached", { sessionId: this.sessionId });
       tabErrorStore.mark("chat");
       tabErrorStore.mark("logs");
-      await sessionDatabase.updateMessage(assistantId, { deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, refusal: true, text: `Error: ${errorMsg}` });
-      this.state.messages = this.state.messages.map((m) => m.id === assistantId ? { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, refusal: true, text: `Error: ${errorMsg}` } : m);
+      await sessionDatabase.updateMessage(assistantId, { deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, refusal: true, text: "⚠️ Failed to generate response" });
+      this.state.messages = this.state.messages.map((m) => m.id === assistantId ? { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, refusal: true, text: "⚠️ Failed to generate response" } : m);
       this.notify();
       return;
     }
@@ -226,9 +260,9 @@ export class ChatService {
       logger.warn("chat", "Queue limit reached", { sessionId });
       tabErrorStore.mark("chat");
       tabErrorStore.mark("logs");
-      await sessionDatabase.updateMessage(assistantId, { deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, refusal: true, text: `Error: ${errorMsg}` });
+      await sessionDatabase.updateMessage(assistantId, { deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, refusal: true, text: "⚠️ Failed to generate response" });
       if (this.sessionId === sessionId) {
-        this.state.messages = this.state.messages.map((m) => m.id === assistantId ? { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, refusal: true, text: `Error: ${errorMsg}` } : m);
+        this.state.messages = this.state.messages.map((m) => m.id === assistantId ? { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, refusal: true, text: "⚠️ Failed to generate response" } : m);
         this.notify();
       }
       return userId;
@@ -247,6 +281,20 @@ export class ChatService {
   // Exposed for Tests
   getMessages() { return this.state.messages; }
   clear() { this.state.messages = []; this.notify(); }
+  appendToMessage(messageId: string, text: string) {
+    const msgs = this.state.messages;
+    const idx = msgs.findIndex((m) => m.id === messageId);
+    if (idx === -1) {
+      logger.warn("chat_service", "append_message_not_found", { messageId });
+      return;
+    }
+    this.state.messages = msgs.map((m, i) =>
+      i === idx
+        ? { ...m, text: (m.text ?? "") + text, hasReceivedFirstToken: true }
+        : m
+    );
+    this.notify();
+  }
   stopCurrentResponse() {
     void this.forceStopForSession(this.sessionId);
   }
@@ -424,6 +472,7 @@ export class ChatService {
 
   private async flushOutgoingQueue(forceContexts?: Record<string, string>) {
     if (this.queueFlushInFlight) return;
+    if (this.state.streaming) return;
     this.queueFlushInFlight = true;
     try {
       const now = Date.now();
@@ -730,7 +779,10 @@ export class ChatService {
     input.conversation.push({ role: "tool", tool_call_id: input.toolCallId, content: toolContent });
   }
 
-  private async runNativeToolLoop(
+  // runNativeToolLoop removed — superseded by runPromptToolLoop + OutputInterpreter routing.
+  // Tool execution path: deliverQueueItem → interpretOutput → runPromptToolLoop (maxSteps=3)
+  // @ts-ignore — intentionally retained as reference; never called
+  private async runNativeToolLoop_REMOVED_SEE_runPromptToolLoop(
     sessionId: string,
     baseMessages: Array<{ role: string; content: string }>,
     assistantId: string,
@@ -743,7 +795,7 @@ export class ChatService {
       toolChoice: toolsForModel.length ? "auto" : "none"
     });
     const conversation: any[] = baseMessages.map((m) => ({ role: m.role, content: m.content }));
-    const maxSteps = 8;
+    const maxSteps = 3;
     for (let step = 0; step < maxSteps; step++) {
       const res = await knezClient.chatCompletionsNonStreamRaw(conversation, sessionId, {
         tools: toolsForModel,
@@ -785,6 +837,96 @@ export class ChatService {
           assistantContent.includes('"tool_call"')
         ) {
           logger.warn("mcp_loop", "native_raw_tool_json_blocked", { assistantId, step });
+          // Attempt to parse plain text tool JSON and convert to native format
+          try {
+            const parsed = JSON.parse(assistantContent);
+            if (parsed && parsed.tool_call) {
+              // Convert prompt-mode tool_call to native tool_calls format
+              const toolCall = parsed.tool_call;
+              if (toolCall.function && toolCall.function.name) {
+                // Create synthetic tool_calls array from parsed tool_call
+                const syntheticToolCalls = [{
+                  id: `call_${Date.now()}`,
+                  type: "function",
+                  function: toolCall.function
+                }];
+                logger.info("mcp_loop", "native_raw_tool_json_converted", { assistantId, step });
+                // Process the synthetic tool calls directly
+                for (let i = 0; i < syntheticToolCalls.length; i++) {
+                  const tc = syntheticToolCalls[i] ?? {};
+                  const toolCallId = String(tc?.id ?? `${assistantId}:tool:${step}:${i}`);
+                  const fn = tc?.function ?? {};
+                  const toolName = String(fn?.name ?? "");
+                  const argsRaw = String(fn?.arguments ?? "");
+                  let args: any;
+                  let argsParseError: string | undefined;
+                  try {
+                    args = argsRaw ? JSON.parse(argsRaw) : {};
+                  } catch (e: any) {
+                    argsParseError = String(e?.message ?? e);
+                    args = {};
+                  }
+
+                  const startedAt = new Date().toISOString();
+                  const traceId = newMessageId();
+                  const traceMessageId = `${assistantId}-tool-${step}-${i}`;
+                  const toolCallMessage: ToolCallMessage = { tool: toolName, args, status: "calling", startedAt };
+                  await this.persistToolTrace(sessionId, {
+                    id: traceMessageId,
+                    sessionId,
+                    from: "knez",
+                    text: "",
+                    createdAt: startedAt,
+                    traceId,
+                    toolCallId,
+                    toolCall: toolCallMessage,
+                    deliveryStatus: "delivered",
+                    replyToMessageId: assistantId,
+                    correlationId: assistantId
+                  });
+
+                  let result: any;
+                  let ok = false;
+                  let errorMsg: string | undefined;
+                  if (argsParseError) {
+                    errorMsg = `mcp_invalid_tool_arguments_json:${argsParseError}`;
+                    result = { ok: false, error: { code: "mcp_invalid_tool_arguments_json", message: argsParseError } };
+                    logger.warn("mcp_loop", "native_tool_args_parse_failed", { assistantId, step, toolCallId, tool: toolName, error: argsParseError });
+                  } else {
+                    const exec = await this.executeToolDeterministic({
+                      sessionId,
+                      assistantId,
+                      toolCallId,
+                      toolName,
+                      args,
+                      traceId
+                    });
+                    ok = exec.ok;
+                    errorMsg = exec.errorMsg;
+                    result = exec.payload;
+                  }
+
+                  const finishedAt = new Date().toISOString();
+                  const toolContent = this.stringifyToolPayload(result, 20000);
+                  await this.updateToolTrace(sessionId, traceMessageId, {
+                    text: toolContent,
+                    toolCall: { ...toolCallMessage, status: ok ? "succeeded" : "failed", result: ok ? result : undefined, error: ok ? undefined : errorMsg, finishedAt }
+                  });
+
+                  conversation.push({
+                    role: "tool",
+                    content: toolContent,
+                    tool_call_id: toolCallId,
+                    tool_name: toolName,
+                  });
+                }
+                continue;
+              }
+            }
+          } catch (e) {
+            logger.warn("mcp_loop", "native_raw_tool_json_parse_failed", { assistantId, step, error: String(e) });
+          }
+          // If conversion failed, add system message and continue
           conversation.push({
             role: "system",
             content: "Tool protocol violation: do not output tool_call JSON as plain text. Use the native tool_calls format only."
@@ -939,7 +1081,7 @@ export class ChatService {
     });
     const allowedToolNames = new Set(toolNames);
 
-    const maxSteps = 8;
+    const maxSteps = 3;
     for (let step = 0; step < maxSteps; step++) {
       const res = await knezClient.chatCompletionsNonStreamRaw(conversation, sessionId, { onMeta });
       const msg = res?.choices?.[0]?.message as any;
@@ -1049,9 +1191,120 @@ export class ChatService {
     throw new Error("tool_loop_limit_reached");
   }
 
+  // ─── P2.4 PHASE 2: OUTPUT SANITIZATION ────────────────────────────────
+  private sanitizeOutput(text: string): string {
+    // Interpreter has already classified this as plain_text.
+    // No regex. No structured removal. Trim only.
+    return text.trim();
+  }
+
+  // ─── P2.4 PHASE 3: STRICT INTENT CLASSIFIER ───────────────────────────
+  private classifyIntent(userText: string): { intent: "chat_only" | "tool_required"; confidence: number } {
+    if (!ChatService.MCP_ENABLED) return { intent: "chat_only", confidence: 1.0 };
+    const lower = userText.toLowerCase().trim();
+    const toolKeywords = ["run tool", "execute", "use tool", "call tool", "invoke"];
+    if (!toolKeywords.some((k) => lower.includes(k))) return { intent: "chat_only", confidence: 1.0 };
+    const confidence = 0.9;
+    if (confidence < 0.8) return { intent: "chat_only", confidence };
+    return { intent: "tool_required", confidence };
+  }
+
+  // ─── P2.4 PHASE 3 TASK 9: MANUAL APPROVAL ─────────────────────────────
+  private async requestToolApproval(
+    sessionId: string,
+    toolName: string,
+    args: Record<string, any>
+  ): Promise<boolean> {
+    if (this.sessionId !== sessionId) return false;
+    const approvalId = `approval-${Date.now()}`;
+    this.state.pendingToolApproval = { id: approvalId, toolName, args };
+    this.notify();
+    return new Promise<boolean>((resolve) => {
+      this.approvalResolvers.set(approvalId, resolve);
+      setTimeout(() => {
+        if (this.approvalResolvers.has(approvalId)) {
+          this.approvalResolvers.delete(approvalId);
+          this.state.pendingToolApproval = null;
+          this.notify();
+          resolve(false);
+        }
+      }, 60000);
+    });
+  }
+
+  approveToolExecution(approvalId: string, approved: boolean) {
+    const resolver = this.approvalResolvers.get(approvalId);
+    if (resolver) {
+      this.approvalResolvers.delete(approvalId);
+      this.state.pendingToolApproval = null;
+      this.notify();
+      resolver(approved);
+    }
+  }
+
+  // ─── P2.6 PHASE 5: RECOVERY RESPONSE ───────────────────────────────
+  private async generateRecoveryResponse(input: {
+    sessionId: string;
+    baseMessages: Array<{ role: string; content: string }>;
+    assistantId: string;
+    streamId: string;
+    controller: AbortController;
+    onMeta?: (meta: { model?: string }) => void;
+  }): Promise<string> {
+    const { sessionId, baseMessages, assistantId, streamId, controller, onMeta } = input;
+    const recoveryMessages = [
+      ...baseMessages,
+      { role: "user", content: "Provide a clean human-readable answer to the previous question. No JSON. No tool calls. Plain text only." },
+    ];
+    this.state.messages = this.state.messages.map((m) =>
+      m.id === assistantId ? { ...m, text: "", hasReceivedFirstToken: false } : m
+    );
+    this.notify();
+    // Buffer and classify recovery stream — Law #2: ALL model output must be interpreted
+    let recoveryBuffer = "";
+    let recoveryClass: OutputClass | null = null;
+    try {
+      for await (const chunk of knezClient.chatCompletionsStream(recoveryMessages as any, sessionId, { signal: controller.signal, onMeta })) {
+        if (streamId !== this.state.currentStreamId) break;
+        if (controller.signal.aborted) break;
+        if (recoveryClass === null) {
+          recoveryBuffer += chunk;
+          if (canClassifyEarly(recoveryBuffer)) {
+            const interp = interpretOutput(recoveryBuffer);
+            recoveryClass = interp.classification;
+            if (recoveryClass === "plain_text") {
+              this.appendToMessage(assistantId, recoveryBuffer);
+              recoveryBuffer = "";
+            } else {
+              break;
+            }
+          }
+        } else if (recoveryClass === "plain_text") {
+          this.appendToMessage(assistantId, chunk);
+        }
+      }
+    } catch (err) {
+      logger.warn("output_interpreter", "recovery_stream_failed", { error: String(err) });
+    }
+    if (recoveryClass === null && recoveryBuffer) {
+      const interp = interpretOutput(recoveryBuffer);
+      recoveryClass = interp.classification;
+      if (recoveryClass === "plain_text") {
+        this.appendToMessage(assistantId, recoveryBuffer);
+      }
+    }
+    if (recoveryClass === "plain_text") {
+      const accText = this.state.messages.find((m) => m.id === assistantId)?.text ?? "";
+      return accText.trim() || "⚠️ Unable to generate a proper response. Please try again.";
+    }
+    logger.warn("output_interpreter", "recovery_also_non_plain", { classification: recoveryClass, preview: recoveryBuffer.slice(0, 80) });
+    return "⚠️ Unable to generate a proper response. Please try again.";
+  }
+
   private async deliverQueueItem(id: string, forceContext?: string) {
     const item = await sessionDatabase.getOutgoing(id);
     if (!item) return;
+    const responseStart = Date.now();
 
     const ageMs = Date.now() - Date.parse(item.createdAt);
     if (item.attempts >= this.maxOutgoingAttempts || ageMs > this.maxOutgoingAgeMs) {
@@ -1064,7 +1317,7 @@ export class ChatService {
         deliveryStatus: "failed",
         deliveryError: errorMsg,
         isPartial: false,
-        text: `Error: ${errorMsg}`,
+        text: "⚠️ Failed to generate response",
         refusal: true
       });
       await sessionDatabase.removeOutgoing(id);
@@ -1072,7 +1325,7 @@ export class ChatService {
         this.state.messages = this.state.messages.map((m) => {
           if (m.id === id) return { ...m, deliveryStatus: "delivered", deliveryError: undefined };
           if (m.id === `${id}-assistant`) {
-            return { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: `Error: ${errorMsg}`, refusal: true };
+            return { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: "⚠️ Failed to generate response", refusal: true };
           }
           return m;
         });
@@ -1143,14 +1396,17 @@ export class ChatService {
       }
     }
 
+    let streamId: string | undefined;
     let firstTokenTimer: number | undefined;
     let watchdogId: number | undefined;
     try {
       const toolsForModel = toolExposureService.getToolsForModel();
       let toolModelId: string | undefined = modelId;
-      const onMeta = (meta: { model?: string }) => {
+      let streamedTokenCount = 0;
+      const onMeta = (meta: { model?: string; totalTokens?: number }) => {
         const next = meta?.model?.trim();
         if (next) toolModelId = next;
+        if (meta?.totalTokens) streamedTokenCount = meta.totalTokens;
       };
       const support = await knezClient.getToolCallingSupport().catch(() => "unsupported" as const);
       logger.info("mcp_model", "tool_calling_support", {
@@ -1158,27 +1414,108 @@ export class ChatService {
         toolsCount: toolsForModel.length,
         toolChoice: support === "supported" && toolsForModel.length ? "auto" : "none"
       });
-      const finalText =
-        support === "supported"
-          ? await this.runNativeToolLoop(sessionId, injectedMessages as any, assistantId, toolsForModel, onMeta)
-          : await this.runPromptToolLoop(sessionId, injectedMessages as any, assistantId, toolsForModel, onMeta);
 
-      if (finalText.trim().length === 0) {
-        throw new Error("Empty reply");
+      streamId = newMessageId();
+      const controller = new AbortController();
+      this.activeDelivery = { sessionId, outgoingId: id, assistantId, controller, stopRequested: false };
+      if (this.sessionId === sessionId) {
+        this.state.streaming = true;
+        this.state.currentStreamId = streamId;
+        this.notify();
       }
+
+      // ─── P2.6 PHASES 1-5: buffer → classify → route ──────────────────────
+      let interpretBuffer = "";
+      let outputClass: OutputClass | null = null;
+
+      for await (const chunk of knezClient.chatCompletionsStream(injectedMessages as any, sessionId, { signal: controller.signal, onMeta })) {
+        if (streamId !== this.state.currentStreamId) return;
+        if (controller.signal.aborted) return;
+
+        if (outputClass === null) {
+          interpretBuffer += chunk;
+          if (canClassifyEarly(interpretBuffer)) {
+            const interp = interpretOutput(interpretBuffer);
+            outputClass = interp.classification;
+            if (outputClass === "plain_text") {
+              this.appendToMessage(assistantId, interpretBuffer);
+              interpretBuffer = ""; // free buffer after flush
+            } else {
+              break;
+            }
+          }
+        } else if (outputClass === "plain_text") {
+          this.appendToMessage(assistantId, chunk);
+        }
+      }
+
+      if (controller.signal.aborted) return;
+
+      if (outputClass === null) {
+        const interp = interpretOutput(interpretBuffer);
+        outputClass = interp.classification;
+        if (outputClass === "plain_text") {
+          this.appendToMessage(assistantId, interpretBuffer);
+        }
+      }
+
+      let processedText = "";
+
+      if (outputClass === "plain_text") {
+        processedText = this.sanitizeOutput(this.state.messages.find((m) => m.id === assistantId)?.text ?? "");
+        if (!processedText.trim()) {
+          processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
+        }
+      } else if (outputClass === "tool_call" && ChatService.MCP_ENABLED) {
+        const interp = interpretOutput(interpretBuffer);
+        if (interp.toolCall) {
+          const { intent, confidence } = this.classifyIntent(item.text);
+          if (intent === "tool_required" && confidence >= 0.8) {
+            const approved = await this.requestToolApproval(sessionId, interp.toolCall.name, interp.toolCall.arguments);
+            if (approved) {
+              try {
+                processedText = await this.runPromptToolLoop(sessionId, injectedMessages as any, assistantId, toolsForModel, onMeta);
+              } catch (mcpErr) {
+                logger.warn("mcp_execution", "tool_execution_failed", { toolName: interp.toolCall.name, error: String(mcpErr) });
+                processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
+              }
+            } else {
+              processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
+            }
+          } else {
+            processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
+          }
+        } else {
+          processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
+        }
+      } else if (outputClass === "system_payload") {
+        logger.warn("output_interpreter", "system_payload_blocked", { preview: interpretBuffer.slice(0, 80) });
+        processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
+      } else {
+        if (outputClass === "tool_call") {
+          logger.info("output_interpreter", "tool_call_mcp_disabled", { preview: interpretBuffer.slice(0, 80) });
+        }
+        processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
+      }
+
+      if (!processedText.trim()) {
+        throw new Error("CRITICAL: Empty model response after interpretation");
+      }
+
+      const responseTimeMs = Date.now() - responseStart;
 
       const finalAssistant: Partial<ChatMessage> = {
         isPartial: false,
-        text: finalText,
+        text: processedText,
         deliveryStatus: "delivered",
         refusal: false,
-        metrics: { finishReason: "completed", totalTokens: 0, modelId: toolModelId ?? modelId, backendStatus }
+        metrics: { finishReason: "completed", totalTokens: streamedTokenCount, modelId: toolModelId ?? modelId, backendStatus, responseTimeMs }
       };
 
       await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered" });
       await sessionDatabase.updateMessage(assistantId, {
         deliveryStatus: "delivered",
-        text: finalText,
+        text: processedText,
         metrics: finalAssistant.metrics,
         isPartial: false,
         refusal: false
@@ -1192,6 +1529,10 @@ export class ChatService {
           return m;
         });
         this.state.sending = false;
+        if (streamId === this.state.currentStreamId) {
+          this.state.streaming = false;
+          this.state.currentStreamId = null;
+        }
         this.notify();
       }
 
@@ -1291,7 +1632,7 @@ export class ChatService {
         });
       } else {
         await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered", deliveryError: undefined });
-        await sessionDatabase.updateMessage(`${id}-assistant`, { deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: `Error: ${errorMsg}`, refusal: true });
+        await sessionDatabase.updateMessage(`${id}-assistant`, { deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: "⚠️ Failed to generate response", refusal: true });
       }
 
       if (this.sessionId === sessionId) {
@@ -1300,7 +1641,7 @@ export class ChatService {
           if (m.id === `${id}-assistant`) {
             return isTransient
               ? { ...m, deliveryStatus: "queued", deliveryError: errorMsg, isPartial: false, refusal: false }
-              : { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: `Error: ${errorMsg}`, refusal: true };
+              : { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: "⚠️ Failed to generate response", refusal: true };
           }
           return m;
         });
@@ -1317,6 +1658,10 @@ export class ChatService {
       }
       if (this.sessionId === sessionId) {
         this.state.sending = false;
+        if (streamId !== undefined && streamId === this.state.currentStreamId) {
+          this.state.streaming = false;
+          this.state.currentStreamId = null;
+        }
         this.notify();
       }
     }

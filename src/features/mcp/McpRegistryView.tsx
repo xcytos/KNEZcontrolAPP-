@@ -4,6 +4,7 @@ import { knezClient } from '../../services/KnezClient';
 import { useToast } from '../../components/ui/Toast';
 import { logger } from '../../services/LogService';
 import { McpInspectorPanel } from './inspector/McpInspectorPanel';
+import { McpToolExecutorPanel } from './McpToolExecutorPanel';
 import { mcpInspectorService } from '../../mcp/inspector/McpInspectorService';
 import { mcpOrchestrator } from '../../mcp/McpOrchestrator';
 import { extractImportedMcpConfig } from '../../mcp/config/importMcpServers';
@@ -90,7 +91,7 @@ export const McpRegistryView: React.FC<{
   onRefresh: () => void; 
 }> = ({ snapshot, onRefresh }) => {
   const { showToast } = useToast();
-  const [tab, setTab] = useState<"registry" | "inspector">("registry");
+  const [tab, setTab] = useState<"registry" | "inspector" | "executor">("registry");
   const [toggling, setToggling] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [restarting, setRestarting] = useState<string | null>(null);
@@ -143,8 +144,8 @@ export const McpRegistryView: React.FC<{
     return out;
   }, [snapshot, runtimeById]);
 
-  if (!snapshot) return <div className="p-8 text-center text-zinc-500">Loading MCP Registry...</div>;
-  if (!snapshot.supported) {
+  if (!snapshot && Object.keys(runtimeById).length === 0) return <div className="p-8 text-center text-zinc-500">Loading MCP Registry...</div>;
+  if (snapshot && !snapshot.supported && Object.keys(runtimeById).length === 0) {
     return (
       <div className="p-8 text-center">
         <div className="text-red-400 mb-2">MCP Not Available</div>
@@ -299,6 +300,28 @@ export const McpRegistryView: React.FC<{
     }
   };
 
+  const handleForceStartAll = async () => {
+    const snapshotItems: any[] = (snapshot as any)?.items ?? [];
+    const localItems = Array.from(localServerIds).map((id) => ({ id, enabled: runtimeById[id]?.enabled ?? true }));
+    const allItems = snapshotItems.length > 0 ? snapshotItems : localItems;
+    const enabledServers = allItems.filter((item: any) =>
+      localServerIds.has(item.id) && (item.enabled !== false)
+    );
+    if (enabledServers.length === 0) {
+      showToast("No enabled servers to start", "info");
+      return;
+    }
+    try {
+      for (const server of enabledServers) {
+        await mcpOrchestrator.ensureStarted(server.id);
+      }
+      showToast(`Started ${enabledServers.length} servers`, "success");
+      onRefresh();
+    } catch (e: any) {
+      showToast(`Force start failed: ${String(e?.message ?? e)}`, "error");
+    }
+  };
+
   const handleAddServer = async (jsonStr: string) => {
     try {
       const parsed = JSON.parse(jsonStr);
@@ -383,8 +406,20 @@ export const McpRegistryView: React.FC<{
           >
             Inspector
           </button>
+          <button
+            onClick={() => setTab("executor")}
+            className={`text-xs px-2 py-1 rounded ${tab === "executor" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"}`}
+          >
+            Executor
+          </button>
         </div>
         <div className="flex items-center gap-3">
+          <button 
+            onClick={handleForceStartAll}
+            className="text-xs bg-green-600 text-white px-3 py-1.5 rounded hover:bg-green-500 transition-colors"
+          >
+            Force Start All
+          </button>
           <button 
             onClick={() => setShowAddModal(true)}
             className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-500 transition-colors"
@@ -606,19 +641,36 @@ export const McpRegistryView: React.FC<{
                             <div className="text-[10px] text-zinc-500 mb-2 uppercase tracking-wider">Tools</div>
                             <div className="space-y-1">
                               {runtimeById[item.id]?.tools?.slice(0, 30).map((t: any) => (
-                                <button
+                                <div
                                   key={String(t?.name ?? "")}
-                                  type="button"
-                                  onClick={() => setToolDetails({ serverId: String(item.id), tool: t })}
-                                  className={`w-full text-left rounded border px-2 py-1 ${
+                                  className={`flex items-center gap-1 rounded border ${
                                     runtimeById[item.id]?.state === "READY"
-                                      ? "border-zinc-800 bg-zinc-950/30 hover:bg-zinc-900/60"
+                                      ? "border-zinc-800 bg-zinc-950/30"
                                       : "border-zinc-900 bg-zinc-950/20 opacity-60"
                                   }`}
                                 >
-                                  <div className="font-mono text-[11px] text-zinc-200 break-all">{String(t?.name ?? "")}</div>
-                                  {t?.description ? <div className="text-[11px] text-zinc-500 break-words">{String(t.description)}</div> : null}
-                                </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setToolDetails({ serverId: String(item.id), tool: t })}
+                                    className="flex-1 text-left px-2 py-1 hover:bg-zinc-900/60 rounded-l transition-colors"
+                                  >
+                                    <div className="font-mono text-[11px] text-zinc-200 break-all">{String(t?.name ?? "")}</div>
+                                    {t?.description ? <div className="text-[11px] text-zinc-500 break-words">{String(t.description)}</div> : null}
+                                  </button>
+                                  {runtimeById[item.id]?.state === "READY" && (
+                                    <button
+                                      type="button"
+                                      title="Open in Executor"
+                                      onClick={() => {
+                                        window.dispatchEvent(new CustomEvent("mcp-executor-open-tool", { detail: { serverId: String(item.id), toolName: String(t?.name ?? "") } }));
+                                        setTab("executor");
+                                      }}
+                                      className="flex-none px-2 py-1 text-[10px] text-blue-400 hover:text-blue-300 hover:bg-blue-900/20 rounded-r transition-colors border-l border-zinc-800"
+                                    >
+                                      ▶
+                                    </button>
+                                  )}
+                                </div>
                               ))}
                             </div>
                           </div>
@@ -654,8 +706,12 @@ export const McpRegistryView: React.FC<{
             </div>
           ))}
         </div>
-      ) : (
+      ) : tab === "inspector" ? (
         <McpInspectorPanel />
+      ) : (
+        <div className="relative" style={{ height: "calc(100vh - 180px)" }}>
+          <McpToolExecutorPanel />
+        </div>
       )}
       
       <AddServerModal 
