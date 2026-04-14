@@ -107,6 +107,44 @@ fn close_main_window(app: tauri::AppHandle) -> Result<bool, String> {
 }
 
 #[tauri::command]
+fn ui_action(
+    window: tauri::WebviewWindow,
+    action: String,
+    selector: Option<String>,
+    value: Option<String>,
+    script: Option<String>,
+) -> Result<String, String> {
+    let sel = selector.as_deref().unwrap_or("").replace('\'', "\\'");
+    let val = value.as_deref().unwrap_or("").replace('\'', "\\'").replace('\n', "\\n");
+    let js = match action.as_str() {
+        "click" => format!(
+            "(function(){{var el=document.querySelector('{}');if(!el)return 'not_found';el.click();return 'ok';}})()",
+            sel
+        ),
+        "fill" => format!(
+            "(function(){{var el=document.querySelector('{}');if(!el)return 'not_found';el.value='{}';el.dispatchEvent(new Event('input',{{bubbles:true}}));el.dispatchEvent(new Event('change',{{bubbles:true}}));return 'ok';}})()",
+            sel, val
+        ),
+        "hover" => format!(
+            "(function(){{var el=document.querySelector('{}');if(!el)return 'not_found';el.dispatchEvent(new MouseEvent('mouseover',{{bubbles:true}}));el.dispatchEvent(new MouseEvent('mouseenter',{{bubbles:true}}));return 'ok';}})()",
+            sel
+        ),
+        "select" => format!(
+            "(function(){{var el=document.querySelector('{}');if(!el)return 'not_found';el.value='{}';el.dispatchEvent(new Event('change',{{bubbles:true}}));return 'ok';}})()",
+            sel, val
+        ),
+        "focus" => format!(
+            "(function(){{var el=document.querySelector('{}');if(!el)return 'not_found';el.focus();return 'ok';}})()",
+            sel
+        ),
+        "evaluate" => script.unwrap_or_default(),
+        _ => return Err(format!("unknown_action:{}", action)),
+    };
+    window.eval(&js).map_err(|e| e.to_string())?;
+    Ok("ok".to_string())
+}
+
+#[tauri::command]
 fn mcp_status(state: tauri::State<mcp_host::McpHostRuntime>) -> mcp_host::McpRuntimeStatus {
     state.status()
 }
@@ -188,6 +226,7 @@ pub fn run() {
             close_window,
             close_all_test_windows,
             close_main_window,
+            ui_action,
             mcp_status,
             mcp_start,
             mcp_stop,

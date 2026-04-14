@@ -19,6 +19,11 @@
         "@modelcontextprotocol/server-puppeteer"
       ],
       "disabled": false
+    },
+    "tauri-ui": {
+      "command": "__builtin__",
+      "args": [],
+      "disabled": false
     }
   }
 }
