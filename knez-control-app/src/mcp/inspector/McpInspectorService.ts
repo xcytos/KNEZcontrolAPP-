@@ -1,6 +1,7 @@
 import { McpStdioClient } from "../client/McpStdioClient";
 import { McpHttpClient } from "../client/McpHttpClient";
 import { McpRustClient } from "../client/McpRustClient";
+import { McpBuiltinClient } from "../client/McpBuiltinClient";
 import { mcpHostConfigService } from "../config/McpHostConfigService";
 import type { McpConfigIssue, McpServerConfig, NormalizedMcpConfig, NormalizedMcpServerConfig } from "../config/McpHostConfig";
 import { normalizeMcpConfig } from "../config/McpHostConfig";
@@ -56,7 +57,7 @@ export type KnezHealthSnapshot = {
 
 type ServerSession = {
   server: NormalizedMcpServerConfig;
-  client: McpStdioClient | McpHttpClient | McpRustClient;
+  client: McpStdioClient | McpHttpClient | McpRustClient | McpBuiltinClient;
   state: McpInspectorLifecycle;
   lastOkAt: number | null;
   initializedAt: number | null;
@@ -272,7 +273,7 @@ export class McpInspectorService {
     this.emit();
   }
 
-  getClientInstance(serverId: string): McpStdioClient | McpHttpClient | McpRustClient | null {
+  getClientInstance(serverId: string): McpStdioClient | McpHttpClient | McpRustClient | McpBuiltinClient | null {
     return this.sessions.get(serverId)?.client ?? null;
   }
 
@@ -833,11 +834,13 @@ export class McpInspectorService {
           next.set(srv.id, {
             server: srv,
             client:
-              srv.type === "http"
-                ? new McpHttpClient()
-                : authority === "rust"
-                  ? new McpRustClient()
-                  : new McpStdioClient(),
+              srv.id === "tauri-ui"
+                ? new McpBuiltinClient()
+                : srv.type === "http"
+                  ? new McpHttpClient()
+                  : authority === "rust"
+                    ? new McpRustClient()
+                    : new McpStdioClient(),
             state: "IDLE",
             lastOkAt: null,
             initializedAt: null,

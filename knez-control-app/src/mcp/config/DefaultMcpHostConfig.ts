@@ -51,6 +51,13 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
         env: {},
         enabled: true,
         tags: ["puppeteer", "browser", "mcp", "npx"]
+      },
+      "tauri-ui": {
+        command: "__builtin__",
+        args: [],
+        env: {},
+        enabled: true,
+        tags: ["tauri", "ui", "automation", "builtin"]
       }
     }
   };
@@ -106,6 +113,19 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
         env: {},
         enabled: true,
         tags: ["puppeteer", "browser", "mcp", "npx"]
+      },
+      "tauri-ui": {
+        id: "tauri-ui",
+        type: "stdio",
+        command: "__builtin__",
+        args: [],
+        cwd: undefined,
+        env: {},
+        enabled: true,
+        start_on_boot: true,
+        allowed_tools: [],
+        blocked_tools: [],
+        tags: ["tauri", "ui", "automation", "builtin"]
       }
     }
   };
