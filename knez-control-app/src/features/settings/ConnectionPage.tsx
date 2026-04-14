@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { ChatService } from "../../services/ChatService";
 import { knezClient } from "../../services/KnezClient";
 import {
   KnezConnectionProfile,
@@ -10,13 +11,52 @@ import { SystemPanel } from "../system/SystemPanel";
 import { HealthProbeStatus, SystemStatus } from "../system/useSystemOrchestrator";
 import { isOverallHealthyStatus } from "../../utils/health";
 
+const McpToggle: React.FC = () => {
+  const [enabled, setEnabled] = useState<boolean>(() => {
+    try { return localStorage.getItem("knez_mcp_enabled") === "1"; } catch { return false; }
+  });
+  const toggle = () => {
+    const next = !enabled;
+    ChatService.setMcpEnabled(next);
+    setEnabled(next);
+  };
+  return (
+    <div className="text-xs border border-zinc-800 rounded p-3 bg-zinc-950/40">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="font-mono text-zinc-500 mb-0.5">MCP Tool Execution</div>
+          <div className="text-zinc-600">
+            {enabled ? "Tools active — model may trigger MCP calls with your approval." : "Tools disabled — model responds in plain text only."}
+          </div>
+        </div>
+        <button
+          onClick={toggle}
+          data-testid="mcp-toggle"
+          className={`ml-4 relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 transition-colors ${
+            enabled ? "bg-blue-600 border-blue-600" : "bg-zinc-700 border-zinc-700"
+          }`}
+        >
+          <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${
+            enabled ? "translate-x-4" : "translate-x-0"
+          }`} />
+        </button>
+      </div>
+      {enabled && (
+        <div className="mt-2 text-amber-500/80 text-[10px]">
+          ⚠ Tool calls require manual approval. Raw tool output never reaches the UI.
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const ConnectionPage: React.FC<{
   systemStatus: SystemStatus;
   systemOutput: string;
   systemHealthProbe: HealthProbeStatus;
   onForceStart?: (force?: boolean) => void;
 }> = ({ systemStatus, systemOutput, systemHealthProbe, onForceStart }) => {
-  const [endpoint, setEndpoint] = useState("http://localhost:8000");
+  const [endpoint, setEndpoint] = useState("http://127.0.0.1:8000");
   const [status, setStatus] = useState<"idle" | "checking" | "healthy" | "failed">("idle");
   const [health, setHealth] = useState<KnezHealthResponse | null>(null);
   const [events, setEvents] = useState<KnezEvent[] | null>(null);
@@ -194,6 +234,8 @@ export const ConnectionPage: React.FC<{
           <div className="text-zinc-500">No local backend activity observed in recent events.</div>
         )}
       </div>
+
+      <McpToggle />
 
       <div className="text-xs text-zinc-400 border border-zinc-800 rounded p-3 bg-zinc-950/40">
         <div className="font-mono text-zinc-500 mb-2">MCP Registry (inspection only)</div>

@@ -22,6 +22,8 @@ import { ChatTerminalPane } from "./ChatTerminalPane";
 import { Command, Child } from "@tauri-apps/plugin-shell";
 import { toolExposureService } from "../../services/ToolExposureService";
 import { mcpOrchestrator } from "../../mcp/McpOrchestrator";
+import { ToolApprovalModal } from "./ToolApprovalModal";
+import { ChatState } from "../../services/ChatService";
 
 // CP17: History Modal
 const HistoryModal: React.FC<{
@@ -435,6 +437,8 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [activeTools, setActiveTools] = useState<{ search: boolean }>({ search: false });
   const [searchProvider, setSearchProvider] = useState<"off" | "taqwin" | "proxy">("off");
   
+  const [streaming, setStreaming] = useState(false);
+  const [pendingToolApproval, setPendingToolApproval] = useState<ChatState["pendingToolApproval"]>(null);
   const [inputValue, setInputValue] = useState("");
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [validating, setValidating] = useState(false);
@@ -482,6 +486,8 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const exposedAllowedCount = useMemo(() => toolExposureService.getToolsForModel().length, [toolExposureTick]);
   const runtimeById = useMemo(() => mcpOrchestrator.getSnapshot().servers, [mcpTick]);
   const [toolPanelError, setToolPanelError] = useState<string | null>(null);
+  const isTauriEnv = useMemo(() => { const w = window as any; return !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__; }, []);
+  const mcpStatusLabel = useMemo(() => !isTauriEnv ? "n/a" : taqwinMcpStatus.state === "ERROR" ? "err" : taqwinMcpStatus.state.toLowerCase(), [isTauriEnv, taqwinMcpStatus.state]);
   
   // Reset visible count when session changes
   useEffect(() => {
@@ -540,8 +546,10 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     const unsub = chatService.subscribe((state) => {
        setMessages(state.messages);
        setSending(state.sending);
+       setStreaming(state.streaming);
        setActiveTools(state.activeTools);
        setSearchProvider(state.searchProvider);
+       setPendingToolApproval(state.pendingToolApproval);
     });
     return unsub;
   }, [sessionId]);
@@ -888,7 +896,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
               <span>•</span>
               <span>{backendLabel}</span>
               <span>•</span>
-              <span>mcp:{taqwinMcpStatus.state}</span>
+              <span>mcp:{mcpStatusLabel}</span>
               <span>•</span>
               <span>tools:{(taqwinMcpStatus as any).toolsCached ?? 0}</span>
               <span>•</span>
@@ -1032,9 +1040,9 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
             )}
             
             {visibleMessages.map((msg, idx) => (
-              <MessageItem 
-                key={msg.id || idx} 
-                msg={msg} 
+              <MessageItem
+                key={msg.id || idx}
+                msg={msg}
                 onEdit={handleEdit}
                 onStop={handleStop}
                 onRetry={handleRetry}
@@ -1244,10 +1252,10 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                 <button
                   data-testid="chat-send"
                   type="submit"
-                  disabled={!inputValue.trim()}
+                  disabled={!inputValue.trim() || sending || streaming}
                   className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg shadow-blue-900/20"
                 >
-                  {sending ? "Sending..." : "Send"}
+                  {streaming ? "Streaming..." : sending ? "Sending..." : "Send"}
                 </button>
               )}
             </form>
@@ -1324,6 +1332,14 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         onClose={() => setInspectSessionId(null)}
         sessionId={inspectSessionId}
       />
+      {pendingToolApproval && (
+        <ToolApprovalModal
+          approvalId={pendingToolApproval.id}
+          toolName={pendingToolApproval.toolName}
+          args={pendingToolApproval.args}
+          onDecision={(approvalId, approved) => chatService.approveToolExecution(approvalId, approved)}
+        />
+      )}
     </div>
   );
 };

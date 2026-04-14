@@ -124,9 +124,9 @@ export class McpInspectorService {
 
   private emitMcpEvent(eventName: string, payload: Record<string, any>, severity: string = "INFO") {
     void knezClient.emitEvent({
-      event_type: "mcp",
+      event_type: "ACTION",
       event_name: eventName,
-      source: "control-app",
+      source: "tool",
       severity,
       payload,
       tags: ["mcp"]
@@ -222,11 +222,28 @@ export class McpInspectorService {
     const ttlMs = 2500;
     if (snap.checkedAt && Date.now() - snap.checkedAt < ttlMs) {
       if (snap.ok) return;
-      throw new Error(`knez_unreachable: ${snap.error ?? "health_failed"}`);
+      // Log warning but don't throw - allow MCP to work without KNEZ
+      logger.warn("mcp_audit", "knez_health_check_failed", { 
+        error: snap.error ?? "health_failed",
+        note: "Proceeding without KNEZ health check"
+      });
+      return;
     }
-    const next = await this.refreshKnezHealth(1200);
-    if (next.ok) return;
-    throw new Error(`knez_unreachable: ${next.error ?? "health_failed"}`);
+    try {
+      const next = await this.refreshKnezHealth(5000);
+      if (next.ok) return;
+      // Log warning but don't throw - allow MCP to work without KNEZ
+      logger.warn("mcp_audit", "knez_health_check_failed", { 
+        error: next.error ?? "health_failed",
+        note: "Proceeding without KNEZ health check"
+      });
+    } catch (e: any) {
+      // Log warning but don't throw - allow MCP to work without KNEZ
+      logger.warn("mcp_audit", "knez_health_check_exception", { 
+        error: String(e?.message ?? e),
+        note: "Proceeding without KNEZ health check"
+      });
+    }
   }
 
   getSelectedId(): string | null {
@@ -440,6 +457,8 @@ export class McpInspectorService {
         this.emit();
         const cfg = await this.resolveInputsForServer(this.toServerConfig(s.server));
         await s.client.startWithConfig(cfg);
+        // Add delay to allow server to be ready for handshake
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
 
       const initStartedAt = performance.now();

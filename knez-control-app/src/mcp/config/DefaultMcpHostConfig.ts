@@ -44,6 +44,13 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
         env: { GITHUB_PERSONAL_ACCESS_TOKEN: "${input:github_mcp_pat}", GITHUB_READ_ONLY: "1" },
         enabled: false,
         tags: ["github", "mcp", "local", "docker"]
+      },
+      "io.windsurf/puppeteer": {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-puppeteer"],
+        env: {},
+        enabled: true,
+        tags: ["puppeteer", "browser", "mcp", "npx"]
       }
     }
   };
@@ -89,6 +96,16 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
         env: { ...(rawObj.servers as any).github_local.env },
         enabled: false,
         tags: (rawObj.servers as any).github_local.tags.slice()
+      },
+      "io.windsurf/puppeteer": {
+        id: "io.windsurf/puppeteer",
+        type: "stdio",
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-puppeteer"],
+        cwd: undefined,
+        env: {},
+        enabled: true,
+        tags: ["puppeteer", "browser", "mcp", "npx"]
       }
     }
   };

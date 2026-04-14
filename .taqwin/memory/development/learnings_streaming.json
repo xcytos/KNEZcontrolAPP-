@@ -1,0 +1,73 @@
+{
+  "id": "learnings_streaming",
+  "version": "1.0.0",
+  "recorded_at": "2026-04-14",
+  "phase": "P2.x",
+  "title": "TAQWIN Learnings — Streaming + Execution System",
+  "learnings": [
+    {
+      "id": "L01",
+      "title": "SINGLE SOURCE OF TRUTH",
+      "body": "Multiple state mutation paths cause corruption. Solution: ONE write function only. In streaming, only appendToMessage() may write message text. All map(... text updates) are banned inside the streaming loop."
+    },
+    {
+      "id": "L02",
+      "title": "STREAM ID IS MANDATORY",
+      "body": "Without a streamId, stale streams corrupt UI state. Each delivery generates a unique streamId = newMessageId(). currentStreamId is set to this value. Every chunk checks: if (streamId !== currentStreamId) return. No old stream may write to new state."
+    },
+    {
+      "id": "L03",
+      "title": "BREAK IS NOT SAFE — USE RETURN",
+      "body": "break exits only the for loop and continues method execution. return exits the function entirely, jumping to finally. For stale stream detection and abort guards inside a try/finally structure, use return. break allows finalization code to run — which is wrong for stale streams."
+    },
+    {
+      "id": "L04",
+      "title": "ABORT SIGNAL MUST BE CHECKED INSIDE THE LOOP",
+      "body": "controller.signal.aborted must be checked as the FIRST thing in each loop iteration, before any state write. If aborted: break (generator will throw AbortError from the fetch side), or return if abort was detected between iterations. Post-loop: if (controller.signal.aborted) return — do not finalize."
+    },
+    {
+      "id": "L05",
+      "title": "UI MUST NOT INFER STATE FROM TEXT",
+      "body": "Checking !msg.text?.trim() to detect pre-first-token state is unreliable — whitespace tokens would break it. Use an explicit flag: hasReceivedFirstToken: boolean on the ChatMessage. appendToMessage sets this to true on first write. UI checks !msg.hasReceivedFirstToken for Typing... indicator."
+    },
+    {
+      "id": "L06",
+      "title": "BACKEND FAILURE IS NOT MODEL FAILURE",
+      "body": "The model generated correct output. The control flow (state management, streaming loop, stream ID enforcement) broke the system. Always separate model errors from delivery errors in diagnosis."
+    },
+    {
+      "id": "L07",
+      "title": "STREAMING IS A CONCURRENCY PROBLEM",
+      "body": "Streaming is not a UI problem and not a generation problem. It is a concurrency control problem. Stream ownership (streamId), write isolation (appendToMessage), abort propagation (AbortController), and finalization guards must all be correct simultaneously."
+    },
+    {
+      "id": "L08",
+      "title": "TESTING MUST BE REAL RUNTIME",
+      "body": "Browser-only or mock tests give false confidence. Real validation requires: Tauri app running, backend on port 8000, real model (ollama), Playwright connecting to the actual window. Use tests/tauri-playwright/streaming-correctness.spec.ts."
+    },
+    {
+      "id": "L09",
+      "title": "STATE FINALIZATION IS CRITICAL",
+      "body": "An old stream must NEVER finalize new state. Finalization (streaming = false, currentStreamId = null) must be gated: success path: if (streamId === currentStreamId). finally path: if (streamId !== undefined && streamId === currentStreamId). This prevents a completed/aborted stream from resetting an active one."
+    },
+    {
+      "id": "L10",
+      "title": "MOST FAILURES ARE CONTROL FLOW, NOT AI",
+      "body": "The language model worked correctly throughout. Every failure was in: state mutation order, missing ownership checks, break vs return semantics, accumulated variable as parallel state. Correct streaming = correct concurrency discipline."
+    }
+  ],
+  "architecture_decisions": [
+    {
+      "decision": "appendToMessage(messageId, text) as the single write path",
+      "rationale": "Targeting by ID eliminates last-message ambiguity. Single function means one place to guard, one place to set hasReceivedFirstToken."
+    },
+    {
+      "decision": "streamId hoisted outside try block",
+      "rationale": "finally block needs streamId to enforce the finalization guard. Variables declared inside try are not accessible in finally."
+    },
+    {
+      "decision": "currentStreamId holds streamId (not assistantId)",
+      "rationale": "Decoupled from message ID so stream ownership is independent of message identity. One stream per delivery, not one per message."
+    }
+  ]
+}

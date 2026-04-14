@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_updated": "2026-04-12T18:07:00Z",
+  "last_updated": "2026-04-12T19:30:00Z",
   "memory_files": [
     {
       "id": "mem-001",
@@ -113,6 +113,17 @@
       "status": "active"
     },
     {
+      "id": "mem-018",
+      "path": ".taqwin/memory/development/mcp_inspector_doctor.md",
+      "domain": "development",
+      "type": "documentation",
+      "tags": ["mcp", "inspector", "doctor", "diagnostics", "testing"],
+      "size_bytes": null,
+      "created_at": "2026-04-12",
+      "last_modified": "2026-04-12",
+      "status": "active"
+    },
+    {
       "id": "mem-011",
       "path": ".taqwin/memory/mcp/README.md",
       "domain": "mcp",
@@ -166,6 +177,50 @@
       "created_at": "2026-04-12",
       "last_modified": "2026-04-12",
       "status": "active"
+    },
+    {
+      "id": "mem-016",
+      "path": ".taqwin/history/R003.md",
+      "domain": "system",
+      "type": "history",
+      "tags": ["history", "mcp", "inspector", "testing"],
+      "size_bytes": null,
+      "created_at": "2026-04-12",
+      "last_modified": "2026-04-12",
+      "status": "active"
+    },
+    {
+      "id": "mem-017",
+      "path": ".taqwin/history/R004.md",
+      "domain": "system",
+      "type": "history",
+      "tags": ["history", "mcp", "inspector", "bugfix"],
+      "size_bytes": null,
+      "created_at": "2026-04-12",
+      "last_modified": "2026-04-12",
+      "status": "active"
+    },
+    {
+      "id": "mem-019",
+      "path": ".taqwin/history/R005.md",
+      "domain": "system",
+      "type": "history",
+      "tags": ["history", "mcp", "config", "testing", "doctor"],
+      "size_bytes": null,
+      "created_at": "2026-04-12",
+      "last_modified": "2026-04-12",
+      "status": "active"
+    },
+    {
+      "id": "mem-020",
+      "path": ".taqwin/history/R006.md",
+      "domain": "system",
+      "type": "history",
+      "tags": ["history", "mcp", "bugfix", "health-check", "model-label"],
+      "size_bytes": null,
+      "created_at": "2026-04-12",
+      "last_modified": "2026-04-12",
+      "status": "active"
     }
   ],
   "domains": {
@@ -186,7 +241,7 @@
     },
     "development": {
       "description": "Development memory",
-      "file_count": 1,
+      "file_count": 2,
       "status": "active"
     },
     "legacy": {
@@ -211,16 +266,16 @@
     },
     "system": {
       "description": "System memory files",
-      "file_count": 3,
+      "file_count": 8,
       "status": "active"
     }
   },
   "statistics": {
-    "total_files": 15,
+    "total_files": 21,
     "total_domains": 9,
     "legacy_files": 5,
-    "domain_files": 7,
-    "system_files": 3,
-    "last_index_update": "2026-04-12T18:07:00Z"
+    "domain_files": 8,
+    "system_files": 8,
+    "last_index_update": "2026-04-12T19:30:00Z"
   }
 }

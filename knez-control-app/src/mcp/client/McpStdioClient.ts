@@ -152,6 +152,10 @@ export class McpStdioClient {
   async startWithConfig(server: McpServerConfig): Promise<void> {
     if (this.child) return;
     if (getMcpAuthority() === "rust") throw new Error("mcp_authority_rust_enabled");
+    const _w = window as any;
+    if (!_w.__TAURI_INTERNALS__ && !_w.__TAURI__ && !_w.__TAURI_IPC__) {
+      throw new Error("mcp_unavailable_non_tauri");
+    }
     const ua = navigator.userAgent.toLowerCase();
     const isWin = ua.includes("windows");
     

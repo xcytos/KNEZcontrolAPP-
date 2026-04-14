@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { knezClient } from "../../services/KnezClient";
+import { logger } from "../../services/LogService";
 
 export const ApprovalPanel: React.FC = () => {
   const [approvals, setApprovals] = useState<any[]>([]);
@@ -15,7 +16,7 @@ export const ApprovalPanel: React.FC = () => {
       const data = await knezClient.getPendingApprovals();
       setApprovals(data);
     } catch (err) {
-      console.error("Failed to fetch approvals:", err);
+      logger.warn("approval_panel", "fetch_approvals_failed", { error: String(err) });
     }
   };
 
@@ -27,9 +28,9 @@ export const ApprovalPanel: React.FC = () => {
     
     try {
       await knezClient.submitApprovalDecision(approvalId, decision, "operator");
-      console.log(`[Approval] ${decision} request ${approvalId}`);
+      logger.info("approval_panel", "decision_submitted", { approvalId, decision });
     } catch (err) {
-      console.error("Failed to submit decision:", err);
+      logger.warn("approval_panel", "decision_failed", { approvalId, decision, error: String(err) });
       // Revert on failure (could improve this with robust state management)
       fetchApprovals(); 
     }

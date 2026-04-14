@@ -66,6 +66,7 @@ export type ChatCompletionsFinal = {
   id: string;
   object: string;
   model?: string;
+  usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number };
   choices: Array<{
     message?: { role: string; content: string; tool_calls?: ChatCompletionToolCall[] };
     finish_reason?: string;
@@ -210,6 +211,23 @@ const testFailOnce = new Set<string>();
 
 import { logger } from "./LogService";
 
+async function safeRequest<T>(fn: () => Promise<T>, context: string): Promise<T> {
+  const MAX_RETRIES = 3;
+
+  for (let i = 0; i < MAX_RETRIES; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      logger.warn("knez_client", `request_failed_attempt_${i + 1}`, { context, error: String((e as any)?.message ?? e) });
+
+      if (i === MAX_RETRIES - 1) throw e;
+
+      await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+    }
+  }
+  throw new Error("safeRequest: unexpected exit");
+}
+
 export class KnezClient {
   private profile: KnezConnectionProfile;
   private sessionId: string | null;
@@ -313,7 +331,7 @@ export class KnezClient {
 
   async health(options?: { timeoutMs?: number }): Promise<KnezHealthResponse> {
     const controller = new AbortController();
-    const timeoutMs = options?.timeoutMs ?? 6000;
+    const timeoutMs = options?.timeoutMs ?? 15000;
     const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
     const url = `${this.baseUrl()}/health`;
     try {
@@ -422,7 +440,9 @@ export class KnezClient {
         try {
           await postJsonViaShell(url, payload, 5000);
           return;
-        } catch {}
+        } catch (shellErr) {
+          logger.warn("knez_client", "shell_fallback_taqwin_event_failed", { error: String(shellErr) });
+        }
       }
       throw e;
     }
@@ -444,8 +464,10 @@ export class KnezClient {
 
   async tryGetMcpRegistry(): Promise<McpRegistrySnapshot> {
     const url = `${this.baseUrl()}/mcp/registry`;
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 10000);
     try {
-      const resp = await fetch(url);
+      const resp = await fetch(url, { signal: controller.signal });
       if (resp.status === 404) {
         return { supported: false, reason: "KNEZ does not expose MCP registry via HTTP." };
       }
@@ -464,8 +486,13 @@ export class KnezClient {
         capabilities: Array.isArray(it.capabilities) ? it.capabilities.map(String) : undefined,
       }));
       return { supported: true, items: normalized };
-    } catch {
-      return { supported: false, reason: "MCP registry unreachable." };
+    } catch (e: any) {
+      if (e?.name === "AbortError") {
+        return { supported: false, reason: "MCP registry request timed out." };
+      }
+      return { supported: false, reason: `MCP registry unreachable: ${String(e?.message ?? e)}` };
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
@@ -686,7 +713,9 @@ export class KnezClient {
         try {
           await postJsonViaShell(url, args, 5000);
           return;
-        } catch {}
+        } catch (shellErr) {
+          logger.warn("knez_client", "shell_fallback_event_emit_failed", { error: String(shellErr) });
+        }
       }
       throw e;
     }
@@ -763,7 +792,7 @@ export class KnezClient {
         body: JSON.stringify(payload),
       });
     } catch (err) {
-      console.error("[KnezClient] Failed to submit vote:", err);
+      logger.warn("knez_client", "vote_submit_failed", { error: String((err as any)?.message ?? err) });
       // We don't throw here to avoid disrupting the chat flow
     }
   }
@@ -807,7 +836,7 @@ export class KnezClient {
   async chatCompletionsNonStream(
     messages: CompletionMessage[],
     sessionId: string,
-    options?: { onMeta?: (meta: { model?: string }) => void }
+    options?: { onMeta?: (meta: { model?: string; totalTokens?: number }) => void }
   ): Promise<string> {
     const data = await this.chatCompletionsNonStreamRaw(messages, sessionId, { onMeta: options?.onMeta });
     return data.choices?.[0]?.message?.content ?? "";
@@ -822,48 +851,53 @@ export class KnezClient {
       temperature?: number;
       maxTokens?: number;
       topP?: number;
-      onMeta?: (meta: { model?: string }) => void;
+      onMeta?: (meta: { model?: string; totalTokens?: number }) => void;
     }
   ): Promise<ChatCompletionsFinal> {
-    const url = `${this.baseUrl()}/v1/chat/completions`;
-    const payload: ChatCompletionsRequest = {
-      messages,
-      stream: false,
-      session_id: sessionId,
-      temperature: options?.temperature,
-      max_tokens: options?.maxTokens,
-      top_p: options?.topP,
-      tools: toOpenAiTools(options?.tools),
-      tool_choice: options?.toolChoice,
-    };
-    let raw: any;
-    try {
-      const resp = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!resp.ok) {
-        const detail = await resp.text().catch(() => "");
-        throw new AppError("KNEZ_COMPLETION_FAILED", `Completions request failed (${resp.status})`, { status: resp.status, url, detail });
+    return safeRequest(async () => {
+      const url = `${this.baseUrl()}/v1/chat/completions`;
+      const payload: ChatCompletionsRequest = {
+        messages,
+        stream: false,
+        session_id: sessionId,
+        temperature: options?.temperature,
+        max_tokens: options?.maxTokens,
+        top_p: options?.topP,
+        tools: toOpenAiTools(options?.tools),
+        tool_choice: options?.toolChoice,
+      };
+      let raw: any;
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!resp.ok) {
+          const detail = await resp.text().catch(() => "");
+          throw new AppError("KNEZ_COMPLETION_FAILED", `Completions request failed (${resp.status})`, { status: resp.status, url, detail });
+        }
+        raw = (await resp.json()) as any;
+      } catch (e: any) {
+        if (isTauriRuntime()) {
+          raw = await postJsonViaShell<any>(url, payload, 30000);
+        } else {
+          throw e;
+        }
       }
-      raw = (await resp.json()) as any;
-    } catch (e: any) {
-      if (isTauriRuntime()) {
-        raw = await postJsonViaShell<any>(url, payload, 30000);
-      } else {
-        throw e;
+      if (raw && typeof raw.error === "string") {
+        const err = raw as KnezErrorResponse;
+        throw new AppError("KNEZ_COMPLETION_FAILED", `${err.error}${err.reason ? `:${err.reason}` : ""}`);
       }
-    }
-    if (raw && typeof raw.error === "string") {
-      const err = raw as KnezErrorResponse;
-      throw new AppError("KNEZ_COMPLETION_FAILED", `${err.error}${err.reason ? `:${err.reason}` : ""}`);
-    }
-    const data = raw as ChatCompletionsFinal;
-    if (data?.model && options?.onMeta) {
-      try { options.onMeta({ model: data.model }); } catch {}
-    }
-    return data;
+      const data = raw as ChatCompletionsFinal;
+      if (data?.model && options?.onMeta) {
+        try { options.onMeta({ model: data.model }); } catch {}
+      }
+      if (data?.usage?.total_tokens && options?.onMeta) {
+        try { options.onMeta({ totalTokens: data.usage.total_tokens }); } catch {}
+      }
+      return data;
+    }, "chatCompletionsNonStreamRaw");
   }
 
   async getToolCallingSupport(): Promise<"supported" | "unsupported"> {
@@ -930,7 +964,7 @@ export class KnezClient {
   async *chatCompletionsStream(
     messages: CompletionMessage[],
     sessionId: string,
-    options?: { signal?: AbortSignal; onMeta?: (meta: { model?: string }) => void }
+    options?: { signal?: AbortSignal; onMeta?: (meta: { model?: string; totalTokens?: number }) => void }
   ): AsyncGenerator<string, void, void> {
     if (sessionId.startsWith("test-session-")) {
       const lastUser = [...messages].reverse().find(m => m.role === "user")?.content ?? "";
@@ -1028,6 +1062,7 @@ export class KnezClient {
               if (data === "[DONE]") {
                 clearTimeout(inactivityTimeoutId);
                 if (!yieldedAny) {
+                  logger.warn("knez_client", "STREAM FALLBACK: [DONE] received but no delta content — falling back to non-stream");
                   const final = await this.chatCompletionsNonStream(messages, sessionId, { onMeta: options?.onMeta });
                   if (!final.trim()) throw new AppError("KNEZ_STREAM_EMPTY", "Stream ended with no content");
                   yield final;
@@ -1044,6 +1079,13 @@ export class KnezClient {
               if (parsed?.model && options?.onMeta) {
                 try { options.onMeta({ model: parsed.model }); } catch {}
               }
+              const finishReason = parsed?.choices?.[0]?.finish_reason;
+              if (finishReason === "stop") {
+                const total = (parsed as any)?.usage?.total_tokens;
+                if (total && options?.onMeta) {
+                  try { options.onMeta({ totalTokens: total }); } catch {}
+                }
+              }
               const delta = parsed?.choices?.[0]?.delta?.content;
               if (delta) {
                 yieldedAny = true;
@@ -1054,6 +1096,7 @@ export class KnezClient {
         }
         clearTimeout(inactivityTimeoutId);
         if (!yieldedAny) {
+              logger.warn("knez_client", "STREAM FALLBACK: stream ended with no delta content — falling back to non-stream");
           const final = await this.chatCompletionsNonStream(messages, sessionId, { onMeta: options?.onMeta });
           if (!final.trim()) throw new AppError("KNEZ_STREAM_EMPTY", "Stream ended with no content");
           yield final;
@@ -1076,6 +1119,7 @@ export class KnezClient {
     
     // If we exhausted retries
     try {
+      logger.warn("knez_client", "STREAM FALLBACK: retries exhausted — falling back to non-stream");
       const final = await this.chatCompletionsNonStream(messages, sessionId, { onMeta: options?.onMeta });
       if (!final.trim()) throw new AppError("KNEZ_STREAM_EMPTY", "Stream failed and fallback returned empty");
       yield final;

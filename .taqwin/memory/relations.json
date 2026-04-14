@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_updated": "2026-04-12T18:07:00Z",
+  "last_updated": "2026-04-12T19:30:00Z",
   "relations": [
     {
       "id": "rel-001",
@@ -249,6 +249,126 @@
       "type": "ticket_to_memory",
       "description": "TICKET-002 creates development/mistakes.md",
       "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-032",
+      "source": "TICKET-003",
+      "target": "mem-011",
+      "type": "ticket_to_memory",
+      "description": "TICKET-003 enhances MCP Inspector in mcp/ domain",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-033",
+      "source": "TICKET-003",
+      "target": "mem-016",
+      "type": "ticket_to_history",
+      "description": "TICKET-003 creates history entry R003.md",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-034",
+      "source": "mem-016",
+      "target": "mem-011",
+      "type": "history_to_memory",
+      "description": "R003.md history links to mcp/ domain",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-035",
+      "source": "mem-017",
+      "target": "mem-016",
+      "type": "history_link",
+      "description": "R004.md bug fix links to R003.md (MCP Inspector)",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-036",
+      "source": "mem-017",
+      "target": "mem-011",
+      "type": "history_to_memory",
+      "description": "R004.md bug fix links to mcp/ domain",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-037",
+      "source": "TICKET-003",
+      "target": "mem-017",
+      "type": "ticket_to_history",
+      "description": "TICKET-003 bug fix creates R004.md",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-038",
+      "source": "mem-018",
+      "target": "mem-011",
+      "type": "memory_to_memory",
+      "description": "mcp_inspector_doctor.md links to mcp/ domain",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-039",
+      "source": "mem-018",
+      "target": "mem-016",
+      "type": "memory_to_history",
+      "description": "mcp_inspector_doctor.md links to R003.md (MCP Inspector)",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-040",
+      "source": "TICKET-004",
+      "target": "mem-018",
+      "type": "ticket_to_memory",
+      "description": "TICKET-004 creates mcp_inspector_doctor.md",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-041",
+      "source": "TICKET-004",
+      "target": "mem-019",
+      "type": "ticket_to_history",
+      "description": "TICKET-004 creates R005.md",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-042",
+      "source": "mem-019",
+      "target": "mem-018",
+      "type": "history_to_memory",
+      "description": "R005.md links to mcp_inspector_doctor.md",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-043",
+      "source": "mem-019",
+      "target": "mem-011",
+      "type": "history_to_memory",
+      "description": "R005.md links to mcp/ domain",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-044",
+      "source": "TICKET-005",
+      "target": "mem-020",
+      "type": "ticket_to_history",
+      "description": "TICKET-005 creates R006.md",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-045",
+      "source": "mem-020",
+      "target": "mem-019",
+      "type": "history_link",
+      "description": "R006.md bug fix links to R005.md",
+      "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-046",
+      "source": "mem-020",
+      "target": "mem-011",
+      "type": "history_to_memory",
+      "description": "R006.md links to mcp/ domain",
+      "created_at": "2026-04-12"
     }
   ],
   "relation_types": {
@@ -256,15 +376,25 @@
     "domain_definition": "System map defines domain",
     "domain_relationship": "Domain-to-domain relationship",
     "system_link": "System file to system file link",
-    "ticket_to_memory": "Ticket links to memory file"
+    "ticket_to_memory": "Ticket links to memory file",
+    "ticket_to_history": "Ticket links to history file",
+    "history_to_memory": "History links to memory file",
+    "history_link": "History file to history file link",
+    "memory_to_memory": "Memory file to memory file link",
+    "memory_to_history": "Memory file to history file link"
   },
   "statistics": {
-    "total_relations": 31,
+    "total_relations": 48,
     "domain_migration_relations": 5,
     "domain_definition_relations": 7,
     "domain_relationship_relations": 12,
     "system_link_relations": 1,
-    "ticket_to_memory_relations": 4,
-    "last_update": "2026-04-12T18:07:00Z"
+    "ticket_to_memory_relations": 6,
+    "ticket_to_history_relations": 4,
+    "history_to_memory_relations": 4,
+    "history_link_relations": 2,
+    "memory_to_memory_relations": 1,
+    "memory_to_history_relations": 1,
+    "last_update": "2026-04-12T19:30:00Z"
   }
 }

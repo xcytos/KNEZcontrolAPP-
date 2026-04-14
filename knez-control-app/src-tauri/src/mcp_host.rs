@@ -83,14 +83,18 @@ struct RunningProcess {
     stdin: Arc<Mutex<ChildStdin>>,
     framing: Framing,
     pending: Arc<Mutex<HashMap<String, PendingSlot>>>,
+    #[allow(dead_code)]
     generation: u64,
 }
 
 struct PendingSlot {
     tx: mpsc::Sender<Result<Value, String>>,
     method: String,
+    #[allow(dead_code)]
     created_at: u64,
+    #[allow(dead_code)]
     generation: u64,
+    #[allow(dead_code)]
     pid: Option<u32>,
 }
 

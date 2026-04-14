@@ -115,8 +115,8 @@ function AppContent() {
   useEffect(() => {
     const endpoint = knezClient.getProfile().endpoint;
     const isLocal =
-      endpoint.includes("localhost:8000") ||
-      endpoint.includes("127.0.0.1:8000");
+      endpoint.includes("localhost:8001") ||
+      endpoint.includes("127.0.0.1:8001");
     const w = window as any;
     const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
     const keepAlive = getKeepAliveEnabled();

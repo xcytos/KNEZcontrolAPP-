@@ -15,6 +15,7 @@ export interface ChatMessage {
   hiddenLocally?: boolean;
   refusal?: boolean;
   isPartial?: boolean;
+  hasReceivedFirstToken?: boolean;
   deliveryStatus?: "queued" | "pending" | "delivered" | "failed";
   deliveryError?: string;
   replyToMessageId?: string;
@@ -28,6 +29,7 @@ export interface ChatMessage {
     finishReason?: string;
     modelId?: string;
     backendStatus?: string;
+    responseTimeMs?: number;
   };
   influence?: {
     vote?: InfluenceVote;
