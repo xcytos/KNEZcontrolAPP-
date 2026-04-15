@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { Command, Child } from "@tauri-apps/plugin-shell";
 import { knezClient } from "../../services/KnezClient";
 import { isOverallHealthyStatus } from "../../utils/health";
@@ -49,7 +49,7 @@ export function useSystemOrchestrator(onReady?: () => void) {
     // CP5-9: Fast-path Verification
     // Check if already running first
     try {
-      const existingHealth = await knezClient.health({ timeoutMs: 900 });
+      const existingHealth = await knezClient.health({ timeoutMs: 4500 });
       if (isOverallHealthyStatus(existingHealth.status)) {
         setOutput((prev) => prev + "\n[Fast-Path] KNEZ is already running. Connected.");
         setStatus("running");
@@ -112,9 +112,9 @@ export function useSystemOrchestrator(onReady?: () => void) {
       }, 5000);
 
       childRef.current = await command.spawn();
-      
-      // Start verifying immediately after spawn
-      verifyHealthLoop();
+
+      // Wait 5s before starting health checks to give KNEZ time to fully start
+      setTimeout(() => verifyHealthLoop(), 5000);
 
     } catch (e) {
       logger.error("system_orchestrator", "spawn_failed", { error: String(e) });
@@ -133,7 +133,9 @@ export function useSystemOrchestrator(onReady?: () => void) {
     
     const check = async () => {
       try {
-        const h = await knezClient.health({ timeoutMs: 900 });
+        // T8: Use longer timeout for cold start (first 10 attempts), then normal timeout
+        const timeoutMs = attempts < 10 ? 8000 : 4500;
+        const h = await knezClient.health({ timeoutMs });
         if (noOutputTimeoutRef.current !== null) {
           clearTimeout(noOutputTimeoutRef.current);
           noOutputTimeoutRef.current = null;
@@ -198,13 +200,24 @@ export function useSystemOrchestrator(onReady?: () => void) {
        command.stdout.on("data", (line) => setOutput((prev) => prev + String(line)));
        command.stderr.on("data", (line) => setOutput((prev) => prev + `[STDERR] ${String(line)}`));
        await command.spawn();
-       
+
        setStatus("failed"); // Manually set to failed to reflect "Down" state immediately?
        // Actually, the status provider should detect it. But we update local status too.
        setOutput((prev) => prev + "\n[Inject Failure] KNEZ process killed.");
      } catch (e) {
        setOutput((prev) => prev + `\n[Stop Failed] ${e}`);
      }
+  }, []);
+
+  // T3.4: Cleanup refs on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      verifyActiveRef.current = false;
+      if (noOutputTimeoutRef.current !== null) {
+        clearTimeout(noOutputTimeoutRef.current);
+        noOutputTimeoutRef.current = null;
+      }
+    };
   }, []);
 
   return {

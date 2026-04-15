@@ -133,7 +133,11 @@ const MessageItemInner: React.FC<{
       >
         {/* Header Label */}
         <div className="text-xs font-bold text-zinc-500 mb-1">
-           {msg.from === 'user' ? 'You' : 'Assistant'}
+           {(msg.from as string) === 'user' ? 'You' : 
+            (msg.from as string) === 'assistant' || (msg.from as string) === 'knez' ? 'Assistant' :
+            (msg.from as string) === 'tool_execution' ? 'Tool Execution' :
+            (msg.from as string) === 'tool_result' ? 'Tool Result' :
+            (msg.from as string) === 'system' ? 'System' : 'Assistant'}
         </div>
 
         {/* Content Rendering */}
@@ -152,17 +156,39 @@ const MessageItemInner: React.FC<{
                 </span>
               </div>
               <div className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
-                msg.toolCall.status === "succeeded"
-                  ? "bg-green-900/20 text-green-300 border-green-900/40"
-                  : msg.toolCall.status === "failed"
-                    ? "bg-red-900/20 text-red-300 border-red-900/40"
-                    : "bg-blue-900/20 text-blue-200 border-blue-900/40"
+                msg.toolCall.status === "pending"
+                  ? "bg-yellow-900/20 text-yellow-300 border-yellow-900/40"
+                  : msg.toolCall.status === "running"
+                    ? "bg-blue-900/20 text-blue-200 border-blue-900/40 animate-pulse"
+                    : msg.toolCall.status === "calling"
+                      ? "bg-blue-900/20 text-blue-200 border-blue-900/40"
+                      : msg.toolCall.status === "succeeded" || msg.toolCall.status === "completed"
+                        ? "bg-green-900/20 text-green-300 border-green-900/40"
+                        : msg.toolCall.status === "failed"
+                          ? "bg-red-900/20 text-red-300 border-red-900/40"
+                          : "bg-zinc-900/20 text-zinc-300 border-zinc-900/40"
               }`}>
-                {msg.toolCall.status === "calling" ? "executing" : msg.toolCall.status}
+                {msg.toolCall.status === "pending" ? "pending" :
+                 msg.toolCall.status === "running" ? "running" :
+                 msg.toolCall.status === "calling" ? "executing" :
+                 msg.toolCall.status === "completed" ? "completed" :
+                 msg.toolCall.status}
               </div>
             </button>
             {toolDetailsOpen && (
               <div className="mt-3 space-y-3">
+                {msg.toolCall.executionTimeMs && (
+                  <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500">
+                    <span>Execution Time</span>
+                    <span className="text-zinc-300">{msg.toolCall.executionTimeMs}ms</span>
+                  </div>
+                )}
+                {msg.toolCall.mcpLatencyMs && (
+                  <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500">
+                    <span>MCP Latency</span>
+                    <span className="text-zinc-300">{msg.toolCall.mcpLatencyMs}ms</span>
+                  </div>
+                )}
                 <div>
                   <div className="text-[10px] font-mono text-zinc-500 mb-1">REQUEST</div>
                   <pre className="text-[10px] text-zinc-300 bg-zinc-900/50 p-2 rounded border border-zinc-800 overflow-x-auto">

@@ -49,7 +49,7 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
         command: "npx",
         args: ["-y", "@modelcontextprotocol/server-puppeteer"],
         env: {},
-        enabled: true,
+        enabled: false,
         tags: ["puppeteer", "browser", "mcp", "npx"]
       },
       "tauri-ui": {

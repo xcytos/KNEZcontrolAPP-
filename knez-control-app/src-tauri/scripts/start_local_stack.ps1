@@ -9,7 +9,11 @@ function Log {
     $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $LogLine = "[$Timestamp] $Message"
     Write-Host $Message -ForegroundColor Cyan
-    Add-Content -Path $LogFile -Value $LogLine -Force
+    try {
+        Add-Content -Path $LogFile -Value $LogLine -Force -ErrorAction Stop
+    } catch {
+        # Ignore log file errors, continue with console output
+    }
 }
 
 Log "=== KNEZ LOCAL STACK ORCHESTRATION ==="

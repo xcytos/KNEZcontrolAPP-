@@ -56,7 +56,11 @@ export class ChatService {
   private maxOutgoingPerSession = 1;
   private lastMcpSignatureBySessionId = new Map<string, string>();
   private static get MCP_ENABLED(): boolean {
-    try { return localStorage.getItem("knez_mcp_enabled") === "1"; } catch { return false; }
+    try { 
+      const stored = localStorage.getItem("knez_mcp_enabled");
+      // Enable by default, but respect user override if set to "0"
+      return stored === "0" ? false : true;
+    } catch { return true; }
   }
   static setMcpEnabled(enabled: boolean): void {
     try { localStorage.setItem("knez_mcp_enabled", enabled ? "1" : "0"); } catch {}
@@ -633,7 +637,8 @@ export class ChatService {
           duration_ms: durationMs,
           durationMs,
           status: "succeeded",
-          correlation_id: input.assistantId
+          correlation_id: input.assistantId,
+          execution_time_ms: durationMs
         },
         input.sessionId
       );
@@ -756,7 +761,7 @@ export class ChatService {
     await this.persistToolTrace(input.sessionId, {
       id: traceMessageId,
       sessionId: input.sessionId,
-      from: "knez",
+      from: "tool_execution" as any,
       text: "",
       createdAt: startedAt,
       traceId,
@@ -954,16 +959,16 @@ export class ChatService {
         const startedAt = new Date().toISOString();
         const traceId = newMessageId();
         const traceMessageId = `${assistantId}-tool-${step}-${i}`;
-        const toolCall: ToolCallMessage = { tool: toolName, args, status: "calling", startedAt };
+        const toolCall: ToolCallMessage = { tool: toolName, args, status: "pending", startedAt };
         await this.persistToolTrace(sessionId, {
           id: traceMessageId,
           sessionId,
-          from: "knez",
+          from: "tool_execution" as any,
           text: "",
           createdAt: startedAt,
           traceId,
           toolCallId,
-          toolCall,
+          toolCall: { ...toolCall, status: "running" },
           deliveryStatus: "delivered",
           replyToMessageId: assistantId,
           correlationId: assistantId
@@ -992,10 +997,11 @@ export class ChatService {
         }
 
         const finishedAt = new Date().toISOString();
+        const executionTimeMs = Date.now() - new Date(startedAt).getTime();
         const toolContent = this.stringifyToolPayload(result, 20000);
         await this.updateToolTrace(sessionId, traceMessageId, {
           text: toolContent,
-          toolCall: { ...toolCall, status: ok ? "succeeded" : "failed", result: ok ? result : undefined, error: ok ? undefined : errorMsg, finishedAt }
+          toolCall: { ...toolCall, status: ok ? "completed" : "failed", result: ok ? result : undefined, error: ok ? undefined : errorMsg, finishedAt, executionTimeMs }
         });
 
         conversation.push({ role: "tool", tool_call_id: toolCallId, content: toolContent });
@@ -1155,11 +1161,11 @@ export class ChatService {
       const startedAt = new Date().toISOString();
       const traceId = newMessageId();
       const traceMessageId = `${assistantId}-tool-${step}-0`;
-      const toolCall: ToolCallMessage = { tool: toolName, args, status: "calling", startedAt };
+      const toolCall: ToolCallMessage = { tool: toolName, args, status: "pending", startedAt };
       await this.persistToolTrace(sessionId, {
         id: traceMessageId,
         sessionId,
-        from: "knez",
+        from: "tool_execution" as any,
         text: "",
         createdAt: startedAt,
         traceId,
@@ -1169,6 +1175,7 @@ export class ChatService {
         replyToMessageId: assistantId,
         correlationId: assistantId
       });
+      await this.updateToolTrace(sessionId, traceMessageId, { toolCall: { ...toolCall, status: "running" } });
 
       let result: any;
       const exec = await this.executeToolDeterministic({
@@ -1187,7 +1194,7 @@ export class ChatService {
       const toolContent = this.stringifyToolPayload(result, 20000);
       await this.updateToolTrace(sessionId, traceMessageId, {
         text: toolContent,
-        toolCall: { ...toolCall, status: ok ? "succeeded" : "failed", result: ok ? result : undefined, error: ok ? undefined : errorMsg, finishedAt }
+        toolCall: { ...toolCall, status: ok ? "succeeded" : "failed", result: ok ? result : undefined, error: ok ? undefined : errorMsg, finishedAt, executionTimeMs: exec.durationMs }
       });
 
       conversation.push({ role: "tool", tool_call_id: traceMessageId, content: toolContent });
@@ -1463,6 +1470,7 @@ export class ChatService {
       }
 
       let processedText = "";
+      let toolExecutionTime: number | undefined;
 
       if (outputClass === "plain_text") {
         processedText = this.sanitizeOutput(this.state.messages.find((m) => m.id === assistantId)?.text ?? "");
@@ -1474,17 +1482,15 @@ export class ChatService {
         if (interp.toolCall) {
           const { intent, confidence } = this.classifyIntent(item.text);
           if (intent === "tool_required" && confidence >= 0.8) {
-            const approved = await this.requestToolApproval(sessionId, interp.toolCall.name, interp.toolCall.arguments);
-            if (approved) {
-              try {
-                processedText = await this.runPromptToolLoop(sessionId, injectedMessages as any, assistantId, toolsForModel, onMeta);
+            // Auto-approve all tool calls - no manual approval required
+            try {
+              const toolLoopStart = Date.now();
+              processedText = await this.runPromptToolLoop(sessionId, injectedMessages as any, assistantId, toolsForModel, onMeta);
+              toolExecutionTime = Date.now() - toolLoopStart;
               } catch (mcpErr) {
                 logger.warn("mcp_execution", "tool_execution_failed", { toolName: interp.toolCall.name, error: String(mcpErr) });
                 processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
               }
-            } else {
-              processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
-            }
           } else {
             processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
           }
@@ -1502,7 +1508,8 @@ export class ChatService {
       }
 
       if (!processedText.trim()) {
-        throw new Error("CRITICAL: Empty model response after interpretation");
+        logger.error("response_guarantee", "empty_response_after_recovery", { sessionId, assistantId });
+        processedText = "⚠️ Failed to generate response. The AI did not produce a valid output.";
       }
 
       const responseTimeMs = Date.now() - responseStart;
@@ -1512,7 +1519,7 @@ export class ChatService {
         text: processedText,
         deliveryStatus: "delivered",
         refusal: false,
-        metrics: { finishReason: "completed", totalTokens: streamedTokenCount, modelId: toolModelId ?? modelId, backendStatus, responseTimeMs }
+        metrics: { finishReason: "completed", totalTokens: streamedTokenCount, modelId: toolModelId ?? modelId, backendStatus, responseTimeMs, ...(toolExecutionTime !== undefined ? { toolExecutionTime } : {}) } as any
       };
 
       await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered" });

@@ -24,6 +24,13 @@
       "command": "__builtin__",
       "args": [],
       "disabled": false
+    },
+    "taqwin-cdp": {
+      "command": "node",
+      "args": [
+        "C:\\Users\\syedm\\Downloads\\ASSETS\\controlAPP\\TAQWIN_V1\\taqwin-mcp-cdp\\server.js"
+      ],
+      "disabled": false
     }
   }
 }

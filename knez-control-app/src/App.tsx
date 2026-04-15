@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { MainLayout } from './components/layout/MainLayout';
 import { View } from './components/layout/Sidebar';
 import { ChatPane } from './features/chat/ChatPane';
@@ -112,20 +112,32 @@ function AppContent() {
     forceCheck();
   });
 
+  // T9: Auto-launch with attempt tracking and error handling
+  const autoLaunchAttemptRef = useRef(0);
+  const autoLaunchMaxAttempts = 3;
+
   useEffect(() => {
     const endpoint = knezClient.getProfile().endpoint;
     const isLocal =
+      endpoint.includes("localhost:8000") ||
+      endpoint.includes("127.0.0.1:8000") ||
       endpoint.includes("localhost:8001") ||
       endpoint.includes("127.0.0.1:8001");
     const w = window as any;
     const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
     const keepAlive = getKeepAliveEnabled();
-    if (online) return;
+    if (online) {
+      // Reset attempt counter on successful connection
+      autoLaunchAttemptRef.current = 0;
+      return;
+    }
     if (!isLocal) return;
     if (!isTauri) return;
     if (!keepAlive) return;
     if (systemStatus === "starting" || systemStatus === "running") return;
-    // Removed 15s delay for immediate connection
+    if (autoLaunchAttemptRef.current >= autoLaunchMaxAttempts) return;
+
+    autoLaunchAttemptRef.current++;
     launchAndConnect();
   }, [online, systemStatus, launchAndConnect]);
 

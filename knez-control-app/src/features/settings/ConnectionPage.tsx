@@ -41,11 +41,7 @@ const McpToggle: React.FC = () => {
           }`} />
         </button>
       </div>
-      {enabled && (
-        <div className="mt-2 text-amber-500/80 text-[10px]">
-          ⚠ Tool calls require manual approval. Raw tool output never reaches the UI.
-        </div>
-      )}
+      {/* Manual approval removed - tools auto-approve */}
     </div>
   );
 };
