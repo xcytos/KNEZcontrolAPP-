@@ -23,7 +23,6 @@ import { toolExposureService } from "../../services/ToolExposureService";
 import { mcpOrchestrator } from "../../mcp/McpOrchestrator";
 // Manual approval removed - tools auto-approve
 // import { ToolApprovalModal } from "./ToolApprovalModal";
-import { ChatState } from "../../services/ChatService";
 
 // CP17: History Modal
 const HistoryModal: React.FC<{
