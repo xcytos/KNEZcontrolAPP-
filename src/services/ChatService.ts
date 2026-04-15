@@ -1083,7 +1083,11 @@ export class ChatService {
 
     const maxSteps = 3;
     for (let step = 0; step < maxSteps; step++) {
-      const res = await knezClient.chatCompletionsNonStreamRaw(conversation, sessionId, { onMeta });
+      const res = await knezClient.chatCompletionsNonStreamRaw(conversation, sessionId, {
+        tools: toolsForModel,
+        toolChoice: toolsForModel.length ? "auto" : "none",
+        onMeta
+      });
       const msg = res?.choices?.[0]?.message as any;
       const assistantContent = String(msg?.content ?? "");
       conversation.push({ role: "assistant", content: assistantContent });
