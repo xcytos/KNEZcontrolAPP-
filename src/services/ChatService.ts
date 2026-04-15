@@ -1202,9 +1202,11 @@ export class ChatService {
   private classifyIntent(userText: string): { intent: "chat_only" | "tool_required"; confidence: number } {
     if (!ChatService.MCP_ENABLED) return { intent: "chat_only", confidence: 1.0 };
     const lower = userText.toLowerCase().trim();
-    const toolKeywords = ["run tool", "execute", "use tool", "call tool", "invoke"];
-    if (!toolKeywords.some((k) => lower.includes(k))) return { intent: "chat_only", confidence: 1.0 };
-    const confidence = 0.9;
+    const toolKeywords = ["run tool", "execute", "use tool", "call tool", "invoke", "puppeteer", "taqwin", "navigate", "screenshot"];
+    // Also detect if assistant output contains tool_call JSON
+    const hasToolCallJson = lower.includes('"tool_call"') || lower.includes('tool_call');
+    if (!toolKeywords.some((k) => lower.includes(k)) && !hasToolCallJson) return { intent: "chat_only", confidence: 1.0 };
+    const confidence = hasToolCallJson ? 0.95 : 0.9;
     if (confidence < 0.8) return { intent: "chat_only", confidence };
     return { intent: "tool_required", confidence };
   }
