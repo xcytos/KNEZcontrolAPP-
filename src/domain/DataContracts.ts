@@ -8,7 +8,7 @@ export type ToolCallId = string;
 export interface ChatMessage {
   id: string;
   sessionId: SessionId;
-  from: "user" | "knez";
+  from: "user" | "knez" | "assistant" | "tool_execution" | "tool_result" | "system";
   text: string;
   createdAt: string;
   relativeTimeLabel?: string;
@@ -30,6 +30,8 @@ export interface ChatMessage {
     modelId?: string;
     backendStatus?: string;
     responseTimeMs?: number;
+    toolExecutionTime?: number;
+    fallbackTriggered?: boolean;
   };
   influence?: {
     vote?: InfluenceVote;
@@ -40,11 +42,13 @@ export interface ChatMessage {
 export interface ToolCallMessage {
   tool: string;
   args: any;
-  status: "calling" | "succeeded" | "failed";
+  status: "pending" | "running" | "calling" | "succeeded" | "failed" | "completed";
   result?: any;
   error?: string;
   startedAt: string;
   finishedAt?: string;
+  executionTimeMs?: number;
+  mcpLatencyMs?: number;
 }
 
 export type InfluenceVote = "upvote" | "downvote";
@@ -362,10 +366,12 @@ export interface CognitiveState {
 }
 
 export interface AuditResult {
-  check_name: string;
-  status: "pass" | "fail" | "warn";
-  message: string;
-  timestamp: string;
+  check: string;
+  check_name?: string;
+  status: "pass" | "fail" | "warn" | string;
+  details?: any;
+  message?: string;
+  timestamp?: string;
 }
 
 // CP6: Perception

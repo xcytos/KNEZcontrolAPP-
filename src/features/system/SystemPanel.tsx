@@ -8,14 +8,6 @@ export const SystemPanel: React.FC<{
   onStop?: () => void;
 }> = ({ status, output, healthProbe, onStop }) => {
   const outputRef = useRef<HTMLDivElement>(null);
-  const fallback =
-    status === "idle"
-      ? "Idle. Use Start or Force Start to launch KNEZ."
-      : status === "starting"
-        ? "Starting KNEZ..."
-        : status === "failed"
-          ? "Startup failed. Check logs in Settings / Observatory."
-          : "No output yet.";
 
   useEffect(() => {
     if (outputRef.current) {
@@ -23,52 +15,58 @@ export const SystemPanel: React.FC<{
     }
   }, [output]);
 
+  const formatOutput = (text: string) => {
+    const lines = text.split('\n');
+    return lines.map((line, i) => {
+      if (line.includes('ERROR') || line.includes('FAILED') || line.includes('timed out')) {
+        return <div key={i} className="text-red-400">{line}</div>;
+      }
+      if (line.includes('READY') || line.includes('SUCCESS') || line.includes('running')) {
+        return <div key={i} className="text-green-400">{line}</div>;
+      }
+      if (line.includes('WARNING') || line.includes('waiting')) {
+        return <div key={i} className="text-yellow-400">{line}</div>;
+      }
+      return <div key={i} className="text-zinc-400">{line}</div>;
+    });
+  };
+
   return (
-    <div className="text-xs text-zinc-400 border border-zinc-800 rounded p-3 bg-zinc-950/40 mt-4">
-      <div className="flex items-center justify-between mb-2">
-        <div className="font-mono text-zinc-500">System Orchestration</div>
-        <div className="flex gap-2 items-center">
-           {status === "running" && onStop && (
-             <button 
-               onClick={onStop}
-               className="px-2 py-0.5 rounded text-[10px] bg-red-900/30 text-red-400 hover:bg-red-900/50 transition-colors border border-red-900/50"
-             >
-               INJECT FAILURE (STOP)
-             </button>
-           )}
-           <div className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
-             status === "running" ? "bg-green-900/30 text-green-400" :
-             status === "failed" || status === "degraded" ? "bg-red-900/30 text-red-400" :
-             status === "starting" ? "bg-blue-900/30 text-blue-400" :
-             "bg-zinc-800 text-zinc-500"
-           }`}>
-             {status}
-           </div>
-        </div>
+    <div className="font-mono text-xs">
+      <div className="flex items-center gap-4 mb-2">
+        <span className="text-zinc-500">STATUS:</span>
+        <span className={
+          status === "running" ? "text-green-400" :
+          status === "failed" ? "text-red-400" :
+          status === "starting" ? "text-yellow-400" :
+          "text-zinc-500"
+        }>{status.toUpperCase()}</span>
+        
+        {healthProbe && (status === "starting" || healthProbe.active) && (
+          <span className="text-zinc-500">
+            HEALTH_CHECK: {healthProbe.attempts}/{healthProbe.maxAttempts}
+          </span>
+        )}
+        
+        {healthProbe?.lastError && (
+          <span className="text-red-400 truncate">{healthProbe.lastError}</span>
+        )}
       </div>
 
-      {healthProbe && (status === "starting" || healthProbe.active || healthProbe.lastCheckedAt) && (
-        <div className="mb-2 flex items-center justify-between gap-2 text-[10px] text-zinc-500 font-mono">
-          <span>
-            health_probe {healthProbe.attempts}/{healthProbe.maxAttempts || "-"}
-          </span>
-          <span className="truncate">
-            {healthProbe.active
-              ? healthProbe.lastError
-                ? `last_error=${healthProbe.lastError}`
-                : "checking..."
-              : healthProbe.lastError
-                ? `stopped last_error=${healthProbe.lastError}`
-                : "idle"}
-          </span>
-        </div>
+      {status === "running" && onStop && (
+        <button 
+          onClick={onStop}
+          className="mb-2 text-red-400 hover:text-red-300"
+        >
+          [STOP]
+        </button>
       )}
 
       <div 
         ref={outputRef}
-        className="bg-black/50 border border-zinc-800 rounded p-2 h-32 overflow-y-auto font-mono text-[10px] text-zinc-400 whitespace-pre-wrap"
+        className="bg-black/50 border-l-2 border-zinc-700 pl-2 h-40 overflow-y-auto text-[10px] whitespace-pre-wrap"
       >
-        {output || fallback}
+        {output ? formatOutput(output) : "No output"}
       </div>
     </div>
   );

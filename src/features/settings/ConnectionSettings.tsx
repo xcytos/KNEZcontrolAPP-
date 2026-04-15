@@ -38,11 +38,7 @@ const McpToggle: React.FC = () => {
           }`} />
         </button>
       </div>
-      {enabled && (
-        <div className="mt-2 text-amber-500/80 text-[10px]">
-          ⚠ Tool calls require manual approval. Raw tool output never reaches the UI.
-        </div>
-      )}
+      {/* Manual approval removed - tools auto-approve */}
     </div>
   );
 };
@@ -56,21 +52,14 @@ export const ConnectionSettings: React.FC<{
   const [endpoint, setEndpoint] = useState("http://127.0.0.1:8000");
   const [status, setStatus] = useState<"idle" | "checking" | "healthy" | "failed">("idle");
   const [health, setHealth] = useState<KnezHealthResponse | null>(null);
-  const [events, setEvents] = useState<KnezEvent[] | null>(null);
   const [mcp, setMcp] = useState<McpRegistrySnapshot | null>(null);
   const [message, setMessage] = useState("");
-  const [profiles, setProfiles] = useState<KnezConnectionProfile[]>(() => listProfiles());
-  const [selectedProfileId, setSelectedProfileId] = useState<string>(() => knezClient.getProfile().id);
-  const [saveId, setSaveId] = useState<string>(() => `profile-${Date.now().toString(16)}`);
   const w = window as any;
   const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
 
   useEffect(() => {
     const profile = knezClient.getProfile();
     setEndpoint(profile.endpoint);
-    setSelectedProfileId(profile.id);
-    setProfiles(listProfiles());
-    if (profile.trustLevel === "verified") setMessage("Trusted KNEZ instance configured.");
   }, []);
 
   useEffect(() => {
@@ -81,6 +70,21 @@ export const ConnectionSettings: React.FC<{
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
+  useEffect(() => {
+    if (systemStatus === "running" && endpoint.includes("8001")) {
+      const fixed = endpoint.replace("8001", "8000");
+      setEndpoint(fixed);
+      knezClient.setProfile({
+        id: "custom",
+        type: "local",
+        transport: "http",
+        endpoint: fixed,
+        trustLevel: "untrusted",
+      });
+      setMessage("Auto-corrected endpoint from 8001 to 8000");
+      setTimeout(() => handleCheck(), 500);
+    }
+  }, [systemStatus, endpoint]);
 
   const profile = useMemo(() => {
     return knezClient.getProfile();
@@ -90,7 +94,6 @@ export const ConnectionSettings: React.FC<{
     setStatus("checking");
     setMessage("Checking /health…");
     setHealth(null);
-    setEvents(null);
     setMcp(null);
 
     const profile: KnezConnectionProfile = {
@@ -104,22 +107,13 @@ export const ConnectionSettings: React.FC<{
     knezClient.setTrusted(false);
 
     try {
-      // Small delay to allow stack to fully bind ports if this was triggered immediately after "STACK READY"
       await new Promise(resolve => setTimeout(resolve, 100));
-      
-      const h = await knezClient.health({ timeoutMs: 2000 });
+      const h = await knezClient.health({ timeoutMs: 5000 });
       setHealth(h);
       const ok = isOverallHealthyStatus(h.status);
       setStatus(ok ? "healthy" : "failed");
       knezClient.setTrusted(ok);
       setMessage(ok ? "KNEZ is healthy and trusted." : `KNEZ responded but is not healthy (status=${String(h.status)}).`);
-      
-      try {
-        const recent = await knezClient.listEvents("", 50);
-        setEvents(recent);
-      } catch {
-        setEvents([]);
-      }
       const reg = await knezClient.tryGetMcpRegistry();
       setMcp(reg);
       return true;
@@ -130,274 +124,129 @@ export const ConnectionSettings: React.FC<{
     }
   };
 
-  /*
-  const handleAutoConnect = async () => {
-    // Just re-run check, trust is automatic now
-    await handleCheck();
+  const handleReset = () => {
+    knezClient.resetToDefault();
+    const profile = knezClient.getProfile();
+    setEndpoint(profile.endpoint);
+    setMessage("Reset to default endpoint: " + profile.endpoint);
+    setStatus("idle");
   };
-  */
-
-  const localBackendDetected = useMemo(() => {
-    if (!events) return false;
-    return events.some((e: any) => {
-      const tags: string[] = Array.isArray(e?.tags) ? e.tags.map(String) : [];
-      return tags.includes("local");
-    });
-  }, [events]);
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-zinc-900 border border-zinc-700 rounded-lg w-[600px] shadow-xl max-h-[90vh] flex flex-col">
-        
-        {/* Header */}
-        <div className="p-6 pb-4 flex-none border-b border-zinc-800/50">
-          <h2 className="text-lg font-light text-zinc-200">KNEZ Connection (Observability)</h2>
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg w-[700px] shadow-xl max-h-[90vh] flex flex-col">
+        <div className="p-4 pb-2 flex-none border-b border-zinc-800/50">
+          <h2 className="text-sm font-mono text-zinc-200">KNEZ CONNECTION DEBUG</h2>
         </div>
         
-        {/* Scrollable Body */}
-        <div className="p-6 overflow-y-auto flex-1 space-y-4">
-
-          <div className="grid grid-cols-3 gap-2 items-end">
+        <div className="p-4 overflow-y-auto flex-1 space-y-4 font-mono text-xs">
+          <div className="grid grid-cols-3 gap-4">
             <div className="col-span-2">
-              <label className="block text-xs font-mono text-zinc-500 mb-1">PROFILE</label>
-              <select
-                value={selectedProfileId}
-                onChange={(e) => {
-                  const nextId = e.target.value;
-                  setSelectedProfileId(nextId);
-                  setActiveProfile(nextId);
-                  const p = knezClient.getProfile();
-                  setEndpoint(p.endpoint);
-                  setMessage(`Profile selected: ${p.id}`);
-                  setStatus("idle");
-                }}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded p-2 text-zinc-300 text-sm focus:border-blue-500 outline-none"
-              >
-                {profiles.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.id}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <button
-              onClick={() => {
-                deleteProfile(selectedProfileId);
-                const next = listProfiles();
-                setProfiles(next);
-                const current = knezClient.getProfile();
-                setSelectedProfileId(current.id);
-                setMessage("Profile deleted.");
-              }}
-              className="px-3 py-2 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded transition-colors"
-            >
-              Delete
-            </button>
-          </div>
-          
-          {/* Endpoint Input */}
-          <div>
-            <label className="block text-xs font-mono text-zinc-500 mb-1">ENDPOINT URL</label>
-            <input 
-              type="text" 
-              value={endpoint}
-              onChange={(e) => setEndpoint(e.target.value)}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded p-2 text-zinc-300 text-sm focus:border-blue-500 outline-none"
-              placeholder="http://127.0.0.1:8000"
-            />
-          </div>
-
-          <div className="grid grid-cols-3 gap-2 items-end">
-            <div className="col-span-2">
-              <label className="block text-xs font-mono text-zinc-500 mb-1">SAVE AS</label>
-              <input
-                type="text"
-                value={saveId}
-                onChange={(e) => setSaveId(e.target.value)}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded p-2 text-zinc-300 text-sm focus:border-blue-500 outline-none"
-                placeholder="profile name"
+              <label className="text-zinc-500">ENDPOINT</label>
+              <input 
+                type="text" 
+                value={endpoint}
+                onChange={(e) => setEndpoint(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded p-2 text-zinc-300 text-sm focus:border-blue-500 outline-none mt-1"
               />
             </div>
-            <button
-              onClick={() => {
-                const profile: KnezConnectionProfile = {
-                  id: saveId.trim() || `profile-${Date.now().toString(16)}`,
-                  type: endpoint.includes("localhost") || endpoint.includes("127.0.0.1") ? "local" : "remote",
-                  transport: "http",
-                  endpoint,
-                  trustLevel: "untrusted",
-                };
-                saveProfile(profile);
-                setProfiles(listProfiles());
-                setSelectedProfileId(profile.id);
-                knezClient.setProfile(profile);
-                setMessage(`Saved profile: ${profile.id}`);
-              }}
-              className="px-3 py-2 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
-            >
-              Save
-            </button>
-          </div>
-
-          {/* Status Message */}
-          {message && (
-             <div className={`text-xs p-2 rounded ${
-               status === "healthy" ? "bg-green-900/20 text-green-400" :
-               status === "failed" ? "bg-red-900/20 text-red-400" : "text-zinc-500"
-             }`}>
-               {message}
-             </div>
-          )}
-
-          {/* Runtime Info */}
-          <div className="text-xs text-zinc-400 border border-zinc-800 rounded p-3 bg-zinc-950/40">
-            <div className="font-mono text-zinc-500 mb-2">Runtime</div>
-            <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="text-zinc-500">connected</span>
-                <span className="font-mono">{status === "healthy" ? "true" : "false"}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-zinc-500">endpoint</span>
-                <span className="font-mono">{endpoint}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-zinc-500">trust</span>
-                <span className="font-mono">{profile.trustLevel}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-zinc-500">storage_path</span>
-                <span className="font-mono text-zinc-500">not exposed by /health</span>
-              </div>
+            <div className="flex items-end gap-2">
+              <button 
+                onClick={handleCheck}
+                disabled={status === "checking"}
+                className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded disabled:opacity-50"
+              >
+                {status === "checking" ? "CHECKING..." : "CHECK"}
+              </button>
+              <button 
+                onClick={handleReset}
+                className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-zinc-200 text-sm rounded"
+              >
+                RESET
+              </button>
             </div>
           </div>
 
-          {/* System Panel (Stack Orchestration) */}
-          <SystemPanel 
-            status={systemStatus}
-            output={systemOutput}
-          />
+          {message && (
+            <div className={
+              status === "healthy" ? "text-green-400" :
+              status === "failed" ? "text-red-400" : "text-zinc-500"
+            }>{message}</div>
+          )}
 
-          {/* Backend Discovery */}
-          {health && (
-            <div className="text-xs text-zinc-400 border border-zinc-800 rounded p-3 bg-zinc-950/40">
-              <div className="font-mono text-zinc-500 mb-2">Backend Discovery (read-only via /health)</div>
-              {health.backends.length === 0 ? (
-                <div className="text-zinc-500">No backends reported.</div>
-              ) : (
-                <div className="space-y-2">
-                  {health.backends.map((b) => {
-                    const degradation = b.status === "healthy" ? "none" : b.status;
-                    return (
-                      <div key={b.model_id} className="border border-zinc-800 rounded p-2 bg-zinc-950/30">
-                        <div className="flex items-center justify-between">
-                          <span className="font-mono">{b.model_id}</span>
-                          <span className="text-zinc-500">{b.status}</span>
-                        </div>
-                        <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-[10px]">
-                          <div className="flex items-center justify-between">
-                            <span className="text-zinc-600">backend_id</span>
-                            <span className="font-mono">{b.model_id}</span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-zinc-600">type</span>
-                            <span className="font-mono text-zinc-500">unknown</span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-zinc-600">degradation</span>
-                            <span className="font-mono">{degradation}</span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-zinc-600">latency_ms</span>
-                            <span className="font-mono">{typeof b.latency_ms === "number" ? b.latency_ms.toFixed(1) : "n/a"}</span>
-                          </div>
-                        </div>
+          <div className="grid grid-cols-3 gap-2 text-zinc-400">
+            <div>STATUS: <span className={
+              status === "healthy" ? "text-green-400" :
+              status === "failed" ? "text-red-400" :
+              "text-zinc-500"
+            }>{status.toUpperCase()}</span></div>
+            <div>CONNECTED: <span className="text-zinc-500">{status === "healthy" ? "true" : "false"}</span></div>
+            <div>TRUST: <span className="text-zinc-500">{profile.trustLevel}</span></div>
+          </div>
+
+          <div>
+            <div className="text-zinc-500 mb-2">SYSTEM ORCHESTRATION</div>
+            <SystemPanel status={systemStatus} output={systemOutput} />
+          </div>
+
+          {health && health.backends.length > 0 && (
+            <div>
+              <div className="text-zinc-500 mb-2">BACKENDS ({health.backends.length})</div>
+              <div className="space-y-1">
+                {health.backends.map((b) => (
+                  <div key={b.model_id} className="flex justify-between">
+                    <span className={b.status === "healthy" ? "text-green-400" : "text-red-400"}>{b.model_id}</span>
+                    <span className="text-zinc-500">{b.status}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <McpToggle />
+
+          {mcp && (
+            <div>
+              <div className="text-zinc-500 mb-2">MCP REGISTRY</div>
+              {mcp.supported ? (
+                mcp.items.length === 0 ? (
+                  <div className="text-zinc-500">No MCPs reported</div>
+                ) : (
+                  <div className="space-y-1">
+                    {mcp.items.map((it) => (
+                      <div key={it.id} className="flex justify-between">
+                        <span className="text-zinc-300">{it.id}</span>
+                        <span className="text-zinc-500">{it.status ?? "unknown"}</span>
                       </div>
-                    );
-                  })}
-                </div>
+                    ))}
+                  </div>
+                )
+              ) : (
+                <div className="text-red-400">{mcp.reason}</div>
               )}
             </div>
           )}
-
-          {/* Ollama Awareness */}
-          <div className="text-xs text-zinc-400 border border-zinc-800 rounded p-3 bg-zinc-950/40">
-            <div className="font-mono text-zinc-500 mb-2">Ollama Awareness (indirect)</div>
-            {status !== "healthy" ? (
-              <div className="text-zinc-500">Unavailable while disconnected.</div>
-            ) : events === null ? (
-              <div className="text-zinc-500">Not checked yet.</div>
-            ) : localBackendDetected ? (
-              <div className="text-zinc-300">
-                Local backend activity detected in KNEZ events (tag: local). Control App does not manage local runtime.
-              </div>
-            ) : (
-              <div className="text-zinc-500">No local backend activity observed in recent events.</div>
-            )}
-          </div>
-
-          {/* MCP Execution Toggle */}
-          <McpToggle />
-
-          {/* MCP Registry */}
-          <div className="text-xs text-zinc-400 border border-zinc-800 rounded p-3 bg-zinc-950/40">
-            <div className="font-mono text-zinc-500 mb-2">MCP Registry (inspection only)</div>
-            {status !== "healthy" ? (
-              <div className="text-zinc-500">Unavailable while disconnected.</div>
-            ) : mcp === null ? (
-              <div className="text-zinc-500">Not checked yet.</div>
-            ) : mcp.supported ? (
-              mcp.items.length === 0 ? (
-                <div className="text-zinc-500">No MCPs reported.</div>
-              ) : (
-                <div className="space-y-1">
-                  {mcp.items.slice(0, 12).map((it) => (
-                    <div key={it.id} className="flex items-center justify-between">
-                      <span className="font-mono">{it.id}</span>
-                      <span className="text-zinc-500">{it.status ?? "unknown"}</span>
-                    </div>
-                  ))}
-                </div>
-              )
-            ) : (
-              <div className="text-zinc-500">{mcp.reason}</div>
-            )}
-          </div>
         </div>
 
-        {/* Footer */}
-        <div className="p-6 pt-4 flex-none border-t border-zinc-800/50 bg-zinc-900 rounded-b-lg">
-          <div className="flex items-center justify-between gap-2">
-             <button
-               onClick={() => {
-                 if (!onForceStart) return;
-                 if (!isTauri) {
-                   setMessage("Web mode cannot start the local stack. Use the desktop app to launch KNEZ.");
-                   setStatus("failed");
-                   return;
-                 }
-                 onForceStart();
-               }}
-               className="px-4 py-2 text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded transition-colors"
-             >
-               Force Start
-             </button>
-             <button 
-               onClick={onClose}
-               className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors"
-             >
-               Close
-             </button>
-             <button 
-               onClick={handleCheck}
-               disabled={status === "checking"}
-               className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded disabled:opacity-50 transition-colors"
-             >
-               {status === "checking" ? "Checking..." : "Check Health"}
-             </button>
-          </div>
+        <div className="p-4 pt-2 flex-none border-t border-zinc-800/50 flex justify-between">
+          <button
+            onClick={() => {
+              if (!onForceStart) return;
+              if (!isTauri) {
+                setMessage("Web mode cannot start the local stack.");
+                setStatus("failed");
+                return;
+              }
+              onForceStart();
+            }}
+            className="px-4 py-2 text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded"
+          >
+            FORCE START
+          </button>
+          <button onClick={onClose} className="px-4 py-2 text-sm text-zinc-400 hover:text-white">
+            CLOSE
+          </button>
         </div>
-
       </div>
     </div>
   );

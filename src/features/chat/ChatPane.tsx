@@ -10,8 +10,9 @@ import { VoiceInput } from "../voice/VoiceInput";
 import { chatService } from "../../services/ChatService";
 import { sessionDatabase } from "../../services/SessionDatabase";
 import { sessionController } from "../../services/SessionController";
-import { FolderOpen, History, Loader2, MessageSquarePlus, MoreVertical, Play, Search, Square, TerminalSquare, Trash2, Puzzle, Sparkles, Zap } from "lucide-react";
+import { FolderOpen, History, Loader2, MessageSquarePlus, MoreVertical, Play, Search, Square, TerminalSquare, Trash2, Puzzle, Sparkles, Zap, Bug } from "lucide-react";
 import { SessionInspectorModal } from "./SessionInspectorModal";
+import { DebugPanel } from "./DebugPanel";
 import { useStatus } from "../../contexts/useStatus";
 import { backendHasLiveMetrics, isBackendHealthyStatus, selectPrimaryBackend } from "../../utils/health";
 import { features } from "../../config/features";
@@ -20,7 +21,8 @@ import { ChatTerminalPane } from "./ChatTerminalPane";
 import { Command, Child } from "@tauri-apps/plugin-shell";
 import { toolExposureService } from "../../services/ToolExposureService";
 import { mcpOrchestrator } from "../../mcp/McpOrchestrator";
-import { ToolApprovalModal } from "./ToolApprovalModal";
+// Manual approval removed - tools auto-approve
+// import { ToolApprovalModal } from "./ToolApprovalModal";
 import { ChatState } from "../../services/ChatService";
 
 // CP17: History Modal
@@ -436,7 +438,8 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [searchProvider, setSearchProvider] = useState<"off" | "taqwin" | "proxy">("off");
   
   const [streaming, setStreaming] = useState(false);
-  const [pendingToolApproval, setPendingToolApproval] = useState<ChatState["pendingToolApproval"]>(null);
+  // Manual approval removed - tools auto-approve
+  // const [pendingToolApproval, setPendingToolApproval] = useState<ChatState["pendingToolApproval"]>(null);
   const [inputValue, setInputValue] = useState("");
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [validating, setValidating] = useState(false);
@@ -452,6 +455,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [inspectSessionId, setInspectSessionId] = useState<string | null>(null);
   const [mode, setMode] = useState<"chat" | "terminal">("chat");
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const [debugPanelOpen, setDebugPanelOpen] = useState(false);
   const [composerMode, setComposerMode] = useState<"chat" | "terminal">("chat");
   const [terminalCwd, setTerminalCwd] = useState<string>("");
   const [terminalCmd, setTerminalCmd] = useState<string>("Get-Location");
@@ -525,7 +529,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [historyOpen, auditOpen, renameOpen, headerMenuOpen]);
+  }, [historyOpen, auditOpen, renameOpen, headerMenuOpen, debugPanelOpen]);
 
   // Sync with Service
   useEffect(() => {
@@ -535,7 +539,8 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
        setStreaming(state.streaming);
        setActiveTools(state.activeTools);
        setSearchProvider(state.searchProvider);
-       setPendingToolApproval(state.pendingToolApproval);
+       // Manual approval removed - tools auto-approve
+       // setPendingToolApproval(state.pendingToolApproval);
     });
     return unsub;
   }, [sessionId]);
@@ -892,6 +897,13 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                 title="New Session"
              >
                <MessageSquarePlus size={18} />
+            </button>
+            <button
+                onClick={() => setDebugPanelOpen(true)}
+                className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
+                title="Debug Panel - Tool Execution History"
+             >
+               <Bug size={18} />
             </button>
             <div className="relative">
               <button
@@ -1282,14 +1294,12 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         onClose={() => setInspectSessionId(null)}
         sessionId={inspectSessionId}
       />
-      {pendingToolApproval && (
-        <ToolApprovalModal
-          approvalId={pendingToolApproval.id}
-          toolName={pendingToolApproval.toolName}
-          args={pendingToolApproval.args}
-          onDecision={(approvalId, approved) => chatService.approveToolExecution(approvalId, approved)}
-        />
-      )}
+      <DebugPanel
+        messages={messages}
+        isOpen={debugPanelOpen}
+        onClose={() => setDebugPanelOpen(false)}
+      />
+      {/* Manual approval removed - tools auto-approve */}
     </div>
   );
 };

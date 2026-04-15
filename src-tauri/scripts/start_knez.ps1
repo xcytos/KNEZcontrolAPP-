@@ -11,7 +11,11 @@ function Log {
     $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $LogLine = "[$Timestamp] $Message"
     Write-Host $Message -ForegroundColor Cyan
-    Add-Content -Path $LogFile -Value $LogLine -Force
+    try {
+        Add-Content -Path $LogFile -Value $LogLine -Force -ErrorAction Stop
+    } catch {
+        # Ignore log file errors, continue with console output
+    }
 }
 
 Log "Starting KNEZ startup script..."
@@ -26,10 +30,12 @@ Log "Resolved KNEZ path: $($KnezPath.Path)"
 $env:PYTHONPATH = $KnezPath.Path
 Log "Set PYTHONPATH: $env:PYTHONPATH"
 
-# Check port
+# Check port and cleanup existing processes
 $portUsed = Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue
 if ($portUsed) {
-    Log "WARNING: Port 8000 is in use."
+    Log "WARNING: Port 8000 is in use. Cleaning up existing processes..."
+    Get-Process -Name python -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*KNEZ*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
 }
 
 # Venv activation
@@ -53,7 +59,7 @@ try {
     
     Log "Starting uvicorn process..."
     
-    $proc = Start-Process "uvicorn" -ArgumentList "knez.knez_core.app:app --app-dir . --host 127.0.0.1 --port 8000 --reload" -PassThru -NoNewWindow
+    $proc = Start-Process "uvicorn" -ArgumentList "knez.knez_core.app:app --app-dir . --host 127.0.0.1 --port 8000" -PassThru -NoNewWindow
     Log "Uvicorn process started with ID: $($proc.Id)"
 } finally {
     Pop-Location

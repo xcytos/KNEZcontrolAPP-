@@ -310,6 +310,12 @@ export class KnezClient {
     void this.syncTrustIdentity(trusted);
   }
 
+  resetToDefault(): void {
+    this.profile = { ...DEFAULT_PROFILE };
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(this.profile));
+    logger.info("knez_client", "Profile reset to default", { endpoint: this.profile.endpoint });
+  }
+
   getSessionId(): string | null {
     return this.sessionId;
   }
@@ -986,7 +992,7 @@ export class KnezClient {
 
     // CP3-C: Retry Logic
     let attempts = 0;
-    const maxAttempts = 2;
+    const maxAttempts = 1;
     const externalSignal = options?.signal;
 
     while (attempts < maxAttempts) {
@@ -1062,10 +1068,14 @@ export class KnezClient {
               if (data === "[DONE]") {
                 clearTimeout(inactivityTimeoutId);
                 if (!yieldedAny) {
-                  logger.warn("knez_client", "STREAM FALLBACK: [DONE] received but no delta content — falling back to non-stream");
+                  logger.warn("knez_client", "STREAM FALLBACK: Backend not yielding delta.content, using simulated streaming");
                   const final = await this.chatCompletionsNonStream(messages, sessionId, { onMeta: options?.onMeta });
                   if (!final.trim()) throw new AppError("KNEZ_STREAM_EMPTY", "Stream ended with no content");
-                  yield final;
+                  // Simulate streaming by chunking
+                  const chunkSize = 50;
+                  for (let i = 0; i < final.length; i += chunkSize) {
+                    yield final.slice(i, i + chunkSize);
+                  }
                 }
                 return;
               }
@@ -1096,10 +1106,14 @@ export class KnezClient {
         }
         clearTimeout(inactivityTimeoutId);
         if (!yieldedAny) {
-              logger.warn("knez_client", "STREAM FALLBACK: stream ended with no delta content — falling back to non-stream");
+          logger.warn("knez_client", "STREAM FALLBACK: Stream ended without delta.content, using simulated streaming");
           const final = await this.chatCompletionsNonStream(messages, sessionId, { onMeta: options?.onMeta });
           if (!final.trim()) throw new AppError("KNEZ_STREAM_EMPTY", "Stream ended with no content");
-          yield final;
+          // Simulate streaming by chunking
+          const chunkSize = 50;
+          for (let i = 0; i < final.length; i += chunkSize) {
+            yield final.slice(i, i + chunkSize);
+          }
         }
         return; // Success, exit generator
 
@@ -1112,21 +1126,13 @@ export class KnezClient {
         attempts++;
         if (attempts < maxAttempts) {
           logger.warn("knez_client", `Stream attempt ${attempts} failed, retrying...`, { error: err });
-          await new Promise(r => setTimeout(r, 1000 * attempts)); // Exponential backoff
+          await new Promise(r => setTimeout(r, 500 * attempts)); // Reduced backoff for faster recovery
         }
       }
     }
     
     // If we exhausted retries
-    try {
-      logger.warn("knez_client", "STREAM FALLBACK: retries exhausted — falling back to non-stream");
-      const final = await this.chatCompletionsNonStream(messages, sessionId, { onMeta: options?.onMeta });
-      if (!final.trim()) throw new AppError("KNEZ_STREAM_EMPTY", "Stream failed and fallback returned empty");
-      yield final;
-      return;
-    } catch (e) {
-      throw new AppError("KNEZ_STREAM_FAILED", e instanceof Error ? e.message : String(e));
-    }
+    throw new AppError("KNEZ_STREAM_FAILED", "Stream retries exhausted - backend must yield delta.content");
   }
 
   mapMemoryToUi(records: KnezMemoryRecord[]): MemoryEntry[] {
