@@ -11,13 +11,11 @@ import { chatService } from "../../services/ChatService";
 import { sessionDatabase } from "../../services/SessionDatabase";
 import { sessionController } from "../../services/SessionController";
 import { FolderOpen, History, Loader2, MessageSquarePlus, MoreVertical, Play, Search, Square, TerminalSquare, Trash2, Puzzle, Sparkles, Zap } from "lucide-react";
-import { TaqwinToolsModal } from "./TaqwinToolsModal";
 import { SessionInspectorModal } from "./SessionInspectorModal";
 import { useStatus } from "../../contexts/useStatus";
 import { backendHasLiveMetrics, isBackendHealthyStatus, selectPrimaryBackend } from "../../utils/health";
 import { features } from "../../config/features";
 import { useTaqwinActivationStatus } from "../../hooks/useTaqwinActivationStatus";
-import { useTaqwinMcpStatus } from "../../hooks/useTaqwinMcpStatus";
 import { ChatTerminalPane } from "./ChatTerminalPane";
 import { Command, Child } from "@tauri-apps/plugin-shell";
 import { toolExposureService } from "../../services/ToolExposureService";
@@ -450,7 +448,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [renameOpen, setRenameOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
-  const [toolsOpen, setToolsOpen] = useState(false);
   const [availableToolsOpen, setAvailableToolsOpen] = useState(false);
   const [inspectSessionId, setInspectSessionId] = useState<string | null>(null);
   const [mode, setMode] = useState<"chat" | "terminal">("chat");
@@ -468,7 +465,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const { showToast } = useToast();
   const { online, health } = useStatus();
   const taqwinActivation = useTaqwinActivationStatus();
-  const taqwinMcpStatus = useTaqwinMcpStatus();
   const backend = selectPrimaryBackend(health?.backends);
   const backendLabel = backend
     ? isBackendHealthyStatus(backend.status)
@@ -486,8 +482,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const exposedAllowedCount = useMemo(() => toolExposureService.getToolsForModel().length, [toolExposureTick]);
   const runtimeById = useMemo(() => mcpOrchestrator.getSnapshot().servers, [mcpTick]);
   const [toolPanelError, setToolPanelError] = useState<string | null>(null);
-  const isTauriEnv = useMemo(() => { const w = window as any; return !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__; }, []);
-  const mcpStatusLabel = useMemo(() => !isTauriEnv ? "n/a" : taqwinMcpStatus.state === "ERROR" ? "err" : taqwinMcpStatus.state.toLowerCase(), [isTauriEnv, taqwinMcpStatus.state]);
   
   // Reset visible count when session changes
   useEffect(() => {
@@ -496,13 +490,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
 
   const hiddenCount = Math.max(0, messages.length - visibleCount);
   const visibleMessages = messages.slice(-visibleCount);
-
-  useEffect(() => {
-    if (!features.taqwinTools) return;
-    const onOpen = () => setToolsOpen(true);
-    window.addEventListener("taqwin-tools-open", onOpen as any);
-    return () => window.removeEventListener("taqwin-tools-open", onOpen as any);
-  }, []);
 
   useEffect(() => {
     return toolExposureService.subscribe(() => setToolExposureTick((v) => (v + 1) % 1000000));
@@ -532,14 +519,13 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
       if (e.key === "Escape") {
         if (historyOpen) setHistoryOpen(false);
         else if (auditOpen) setAuditOpen(false);
-        else if (toolsOpen) setToolsOpen(false);
         else if (renameOpen) setRenameOpen(false);
         else if (headerMenuOpen) setHeaderMenuOpen(false);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [historyOpen, auditOpen, toolsOpen, renameOpen, headerMenuOpen]);
+  }, [historyOpen, auditOpen, renameOpen, headerMenuOpen]);
 
   // Sync with Service
   useEffect(() => {
@@ -896,10 +882,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
               <span>•</span>
               <span>{backendLabel}</span>
               <span>•</span>
-              <span>mcp:{mcpStatusLabel}</span>
-              <span>•</span>
-              <span>tools:{(taqwinMcpStatus as any).toolsCached ?? 0}</span>
-              <span>•</span>
               <span>mcp_tools:{exposedAllowedCount}</span>
             </div>
             <button
@@ -1078,34 +1060,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                >
                  <span>Audit</span>
                </button>
-               {features.taqwinTools && (
-                 <button
-                   type="button"
-                   onClick={() => setToolsOpen(true)}
-                   className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300 transition-all"
-                   title="TAQWIN Tools"
-                   aria-label="Tools"
-                 >
-                  <span className="flex items-center gap-2">
-                    Tools
-                    <span className="text-[10px] text-zinc-500" aria-hidden="true">
-                      {(taqwinMcpStatus as any).toolsCached ?? 0}
-                    </span>
-                    <span
-                      className={`inline-block w-2 h-2 rounded-full ${
-                        taqwinMcpStatus.state === "READY" || taqwinMcpStatus.state === "INITIALIZED"
-                          ? "bg-emerald-400"
-                          : taqwinMcpStatus.state === "STARTING" || taqwinMcpStatus.state === "DISCOVERING"
-                            ? "bg-amber-400"
-                            : taqwinMcpStatus.state === "ERROR"
-                              ? "bg-red-400"
-                              : "bg-zinc-500"
-                      }`}
-                      title={`TAQWIN MCP: ${taqwinMcpStatus.state}`}
-                    />
-                  </span>
-                 </button>
-               )}
             </div>
             {features.logViews && (
               <div className="px-1 mb-2 text-[10px] text-zinc-500 font-mono">
@@ -1290,10 +1244,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         onClose={() => setAuditOpen(false)}
         sessionId={sessionId}
         messages={messages}
-      />
-      <TaqwinToolsModal
-        isOpen={toolsOpen}
-        onClose={() => setToolsOpen(false)}
       />
       <AvailableToolsModal
         isOpen={availableToolsOpen}
