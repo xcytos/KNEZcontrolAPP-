@@ -1,8 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ChatService } from "../../services/ChatService";
 import { knezClient } from "../../services/KnezClient";
-import { KnezConnectionProfile, KnezEvent, KnezHealthResponse, McpRegistrySnapshot } from "../../domain/DataContracts";
-import { deleteProfile, listProfiles, saveProfile, setActiveProfile } from "../../services/KnezProfiles";
+import { KnezConnectionProfile, KnezHealthResponse, McpRegistrySnapshot } from "../../domain/DataContracts";
 
 import { SystemPanel } from "../system/SystemPanel";
 import { SystemStatus } from "../system/useSystemOrchestrator";
@@ -193,7 +192,7 @@ export const ConnectionSettings: React.FC<{
             <div>
               <div className="text-zinc-500 mb-2">BACKENDS ({health.backends.length})</div>
               <div className="space-y-1">
-                {health.backends.map((b) => (
+                {health.backends.map((b: any) => (
                   <div key={b.model_id} className="flex justify-between">
                     <span className={b.status === "healthy" ? "text-green-400" : "text-red-400"}>{b.model_id}</span>
                     <span className="text-zinc-500">{b.status}</span>
@@ -213,7 +212,7 @@ export const ConnectionSettings: React.FC<{
                   <div className="text-zinc-500">No MCPs reported</div>
                 ) : (
                   <div className="space-y-1">
-                    {mcp.items.map((it) => (
+                    {mcp.items.map((it: any) => (
                       <div key={it.id} className="flex justify-between">
                         <span className="text-zinc-300">{it.id}</span>
                         <span className="text-zinc-500">{it.status ?? "unknown"}</span>

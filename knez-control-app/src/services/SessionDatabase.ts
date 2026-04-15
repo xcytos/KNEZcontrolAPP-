@@ -14,7 +14,7 @@ export interface Session {
 export interface StoredMessage {
   id: string;
   sessionId: string;
-  from: 'user' | 'knez';
+  from: 'user' | 'assistant' | 'tool_execution' | 'tool_result' | 'system' | 'knez';
   text: string;
   createdAt: string;
   metrics?: any;

@@ -1,6 +1,7 @@
 // P2.6 — OUTPUT INTERPRETER LAYER
 // Structured parsing only. No regex string matching.
 // Laws: AI is the only entity that produces user-visible output.
+// Phase 3: Schema validation and strict canonical type enforcement
 
 export type OutputClass = "plain_text" | "tool_call" | "system_payload" | "invalid_fragment";
 
@@ -29,11 +30,13 @@ const SYSTEM_PAYLOAD_KEYS: ReadonlySet<string> = new Set([
 /**
  * Classify a complete model output string.
  * Uses structured JSON.parse — no regex.
+ * Phase 3: Schema validation and strict canonical type enforcement
  */
 export function interpretOutput(text: string): InterpretResult {
   const trimmed = text.trim();
 
   if (!trimmed) {
+    // Log: empty input
     return { classification: "invalid_fragment" };
   }
 
@@ -54,6 +57,7 @@ export function interpretOutput(text: string): InterpretResult {
     if (leadingText.length > 20) {
       return { classification: "plain_text" };
     }
+    // Log: invalid JSON
     return { classification: "invalid_fragment" };
   }
 
@@ -63,32 +67,47 @@ export function interpretOutput(text: string): InterpretResult {
 
   const obj = parsed as Record<string, unknown>;
 
-  // ─── tool_call shape ────────────────────────────────────────────────────
+  // ─── tool_call shape with schema validation ───────────────────────────────
   if (obj.tool_call && typeof obj.tool_call === "object") {
     const tc = obj.tool_call as Record<string, unknown>;
+    const name = String(tc.name ?? "").trim();
+    const args = tc.arguments && typeof tc.arguments === "object" && !Array.isArray(tc.arguments)
+      ? (tc.arguments as Record<string, any>)
+      : {};
+
+    // Schema validation: tool_call must have name and arguments only
+    const tcKeys = Object.keys(tc);
+    if (tcKeys.length !== 2 || !tcKeys.includes("name") || !tcKeys.includes("arguments")) {
+      // Log: invalid tool_call schema - extra keys or missing required keys
+      return { classification: "invalid_fragment" };
+    }
+
+    if (!name) {
+      // Log: tool_call missing name
+      return { classification: "invalid_fragment" };
+    }
+
     return {
       classification: "tool_call",
-      toolCall: {
-        name: String(tc.name ?? ""),
-        arguments:
-          tc.arguments && typeof tc.arguments === "object" && !Array.isArray(tc.arguments)
-            ? (tc.arguments as Record<string, any>)
-            : {},
-      },
+      toolCall: { name, arguments: args },
     };
   }
 
-  // ─── tool_calls array shape ─────────────────────────────────────────────
+  // ─── tool_calls array shape with schema validation ───────────────────────
   if (Array.isArray(obj.tool_calls) && obj.tool_calls.length > 0) {
     const first = obj.tool_calls[0] as Record<string, any>;
     const fn = first?.function ?? first;
+    const name = String(fn?.name ?? "").trim();
+    const args = fn?.arguments && typeof fn.arguments === "object" ? fn.arguments : {};
+
+    if (!name) {
+      // Log: tool_calls array missing name
+      return { classification: "invalid_fragment" };
+    }
+
     return {
       classification: "tool_call",
-      toolCall: {
-        name: String(fn?.name ?? ""),
-        arguments:
-          fn?.arguments && typeof fn.arguments === "object" ? fn.arguments : {},
-      },
+      toolCall: { name, arguments: args },
     };
   }
 

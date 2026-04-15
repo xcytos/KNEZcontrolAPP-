@@ -56,7 +56,7 @@ export class ChatService {
   private maxOutgoingPerSession = 1;
   private lastMcpSignatureBySessionId = new Map<string, string>();
   private static get MCP_ENABLED(): boolean {
-    try { 
+    try {
       const stored = localStorage.getItem("knez_mcp_enabled");
       // Enable by default, but respect user override if set to "0"
       return stored === "0" ? false : true;
@@ -65,7 +65,7 @@ export class ChatService {
   static setMcpEnabled(enabled: boolean): void {
     try { localStorage.setItem("knez_mcp_enabled", enabled ? "1" : "0"); } catch {}
   }
-  private approvalResolvers = new Map<string, (approved: boolean) => void>();
+  // Manual approval removed - approvalResolvers removed
   private _pendingNotify = false;
   private _notifyTimer: number | null = null;
   
@@ -1064,7 +1064,19 @@ export class ChatService {
       `CRITICAL: Only call a tool if the user's request EXPLICITLY requires a tool action.\n` +
       `Simple messages (greetings, questions, conversation) MUST receive direct plain-text replies.\n` +
       `Do NOT call tools on messages like "hi", "hello", "how are you", "what can you do" etc.\n` +
-      `If you need to use a tool, reply with JSON ONLY and NOTHING ELSE: {"tool_call":{"name":"<allowed_tool_name>","arguments":{...}}}.\n` +
+      `\n` +
+      `STRICT JSON SCHEMA REQUIREMENT:\n` +
+      `You MUST respond in one of two formats ONLY:\n` +
+      `\n` +
+      `Format 1 - Plain Text Response:\n` +
+      `For normal conversation, greetings, or questions that don't require tools:\n` +
+      `Reply directly with natural language text. No JSON. No special formatting.\n` +
+      `Example: "Hello! How can I help you today?"\n` +
+      `\n` +
+      `Format 2 - Tool Call:\n` +
+      `When a tool action is required, reply with JSON ONLY and NOTHING ELSE:\n` +
+      `{"tool_call":{"name":"<allowed_tool_name>","arguments":{...}}}\n` +
+      `\n` +
       `STRICT REQUIREMENTS:\n` +
       `- If tool_call is required: DO NOT ask for permission.\n` +
       `- If tool_call is required: DO NOT explain.\n` +
@@ -1076,7 +1088,9 @@ export class ChatService {
       `- Do not wrap in markdown or backticks.\n` +
       `- Do not include explanations.\n` +
       `- Use ONLY tool names from the Allowed Tool Names list.\n` +
+      `\n` +
       `Allowed tool names:\n${toolNames.map((n) => `- ${n}`).join("\n")}\n` +
+      `\n` +
       `Otherwise, reply normally with plain text.\n`;
 
     const conversation: any[] = baseMessages.map((m, idx) => {
@@ -1088,7 +1102,12 @@ export class ChatService {
     const allowedToolNames = new Set(toolNames);
 
     const maxSteps = 3;
+    let consecutiveFailures = 0;
+    const toolHistory: Array<{ name: string; args: any }> = [];
+
     for (let step = 0; step < maxSteps; step++) {
+      logger.info("mcp_loop", "loop_iteration_start", { assistantId, step, maxSteps });
+
       const res = await knezClient.chatCompletionsNonStreamRaw(conversation, sessionId, {
         tools: toolsForModel,
         toolChoice: toolsForModel.length ? "auto" : "none",
@@ -1158,6 +1177,25 @@ export class ChatService {
         logger.warn("mcp_loop", "non_canonical_tool_name", { assistantId, step, toolName });
       }
 
+      // Phase 6: Detect redundant tool invocations
+      const argsStr = JSON.stringify(args);
+      const isRedundant = toolHistory.some(h => h.name === toolName && JSON.stringify(h.args) === argsStr);
+      if (isRedundant) {
+        logger.warn("mcp_loop", "redundant_tool_invocation", { assistantId, step, toolName });
+        consecutiveFailures++;
+        if (consecutiveFailures >= 2) {
+          logger.error("mcp_loop", "too_many_consecutive_failures", { assistantId, step, consecutiveFailures });
+          break;
+        }
+        conversation.push({
+          role: "system",
+          content: "You attempted to call the same tool with identical arguments. This indicates a loop. Please either use the result to answer the user or try a different approach."
+        });
+        continue;
+      }
+      toolHistory.push({ name: toolName, args });
+      consecutiveFailures = 0; // Reset on successful tool invocation
+
       const startedAt = new Date().toISOString();
       const traceId = newMessageId();
       const traceMessageId = `${assistantId}-tool-${step}-0`;
@@ -1178,26 +1216,48 @@ export class ChatService {
       await this.updateToolTrace(sessionId, traceMessageId, { toolCall: { ...toolCall, status: "running" } });
 
       let result: any;
-      const exec = await this.executeToolDeterministic({
-        sessionId,
-        assistantId,
-        toolCallId: traceMessageId,
-        toolName,
-        args,
-        traceId
-      });
-      const ok = exec.ok;
-      const errorMsg = exec.errorMsg;
-      result = exec.payload;
+      let ok = false;
+      let errorMsg: string | undefined;
+      let durationMs: number | undefined;
+      let mcpLatencyMs: number | undefined;
+
+      // Phase 8: Graceful error handling - tool execution errors should not break the loop
+      try {
+        const mcpStart = performance.now();
+        const exec = await this.executeToolDeterministic({
+          sessionId,
+          assistantId,
+          toolCallId: traceMessageId,
+          toolName,
+          args,
+          traceId
+        });
+        const mcpEnd = performance.now();
+        mcpLatencyMs = mcpEnd - mcpStart;
+        ok = exec.ok;
+        errorMsg = exec.errorMsg;
+        result = exec.payload;
+        durationMs = exec.durationMs;
+      } catch (toolErr: any) {
+        logger.error("mcp_loop", "tool_execution_exception", { assistantId, step, toolName, error: String(toolErr) });
+        ok = false;
+        errorMsg = `tool_execution_exception:${String(toolErr?.message ?? toolErr)}`;
+        result = { error: errorMsg };
+      }
 
       const finishedAt = new Date().toISOString();
       const toolContent = this.stringifyToolPayload(result, 20000);
       await this.updateToolTrace(sessionId, traceMessageId, {
         text: toolContent,
-        toolCall: { ...toolCall, status: ok ? "succeeded" : "failed", result: ok ? result : undefined, error: ok ? undefined : errorMsg, finishedAt, executionTimeMs: exec.durationMs }
+        toolCall: { ...toolCall, status: ok ? "succeeded" : "failed", result: ok ? result : undefined, error: ok ? undefined : errorMsg, finishedAt, executionTimeMs: durationMs, mcpLatencyMs }
       });
 
       conversation.push({ role: "tool", tool_call_id: traceMessageId, content: toolContent });
+      // Phase 7: Add system hint after tool result
+      conversation.push({
+        role: "system",
+        content: "Use this tool result to answer the user."
+      });
     }
     throw new Error("tool_loop_limit_reached");
   }
@@ -1213,44 +1273,29 @@ export class ChatService {
   private classifyIntent(userText: string): { intent: "chat_only" | "tool_required"; confidence: number } {
     if (!ChatService.MCP_ENABLED) return { intent: "chat_only", confidence: 1.0 };
     const lower = userText.toLowerCase().trim();
-    // Detect if text contains tool_call JSON (generic, no hardcoded tool names)
-    const hasToolCallJson = lower.includes('"tool_call"') || lower.includes('tool_call');
-    if (!hasToolCallJson) return { intent: "chat_only", confidence: 1.0 };
-    return { intent: "tool_required", confidence: 0.95 };
-  }
 
-  // ─── P2.4 PHASE 3 TASK 9: MANUAL APPROVAL ─────────────────────────────
-  private async requestToolApproval(
-    sessionId: string,
-    toolName: string,
-    args: Record<string, any>
-  ): Promise<boolean> {
-    if (this.sessionId !== sessionId) return false;
-    const approvalId = `approval-${Date.now()}`;
-    this.state.pendingToolApproval = { id: approvalId, toolName, args };
-    this.notify();
-    return new Promise<boolean>((resolve) => {
-      this.approvalResolvers.set(approvalId, resolve);
-      setTimeout(() => {
-        if (this.approvalResolvers.has(approvalId)) {
-          this.approvalResolvers.delete(approvalId);
-          this.state.pendingToolApproval = null;
-          this.notify();
-          resolve(false);
-        }
-      }, 60000);
-    });
-  }
+    // Detect tool-relevant requests (navigation, search, file operations, etc.)
+    const toolKeywords = [
+      "navigate", "open", "browse", "visit", "goto", "go to",
+      "search", "find", "lookup", "query",
+      "file", "read", "write", "save", "delete", "create",
+      "execute", "run", "command", "shell",
+      "puppeteer", "browser", "chrome",
+      "test", "check", "verify"
+    ];
 
-  approveToolExecution(approvalId: string, approved: boolean) {
-    const resolver = this.approvalResolvers.get(approvalId);
-    if (resolver) {
-      this.approvalResolvers.delete(approvalId);
-      this.state.pendingToolApproval = null;
-      this.notify();
-      resolver(approved);
+    const hasToolKeyword = toolKeywords.some(kw => lower.includes(kw));
+    const hasUrl = /https?:\/\/|www\./.test(lower);
+    const hasDomain = /\.com|\.org|\.net|\.io|\.in/.test(lower);
+
+    if (hasToolKeyword || hasUrl || hasDomain) {
+      return { intent: "tool_required", confidence: 0.85 };
     }
+
+    return { intent: "chat_only", confidence: 0.9 };
   }
+
+  // Manual approval removed - tools auto-approve (requestToolApproval and approveToolExecution removed)
 
   // ─── P2.6 PHASE 5: RECOVERY RESPONSE ───────────────────────────────
   private async generateRecoveryResponse(input: {
@@ -1402,8 +1447,8 @@ export class ChatService {
       await sessionDatabase.updateMessage(assistantId, { metrics: { modelId, backendStatus } });
       if (this.sessionId === sessionId) {
         this.state.messages = messages;
-        this.notify();
       }
+      this.notify();
     }
 
     let streamId: string | undefined;
@@ -1418,6 +1463,65 @@ export class ChatService {
         if (next) toolModelId = next;
         if (meta?.totalTokens) streamedTokenCount = meta.totalTokens;
       };
+
+      // Phase 16 fix: Check intent BEFORE streaming to decide if tool execution is needed
+      const { intent, confidence } = this.classifyIntent(item.text);
+      const shouldForceToolLoop = intent === "tool_required" && confidence >= 0.8 && ChatService.MCP_ENABLED && toolsForModel.length > 0;
+
+      if (shouldForceToolLoop) {
+        logger.info("mcp_routing", "skipping_streaming_for_tool_loop", { intent, confidence, userText: item.text.slice(0, 100) });
+        // Skip streaming entirely, go directly to tool loop
+        streamId = newMessageId();
+        const controller = new AbortController();
+        this.activeDelivery = { sessionId, outgoingId: id, assistantId, controller, stopRequested: false };
+
+        let processedText = "";
+        let toolExecutionTime: number | undefined;
+        try {
+          const toolLoopStart = Date.now();
+          processedText = await this.runPromptToolLoop(sessionId, injectedMessages as any, assistantId, toolsForModel, onMeta);
+          toolExecutionTime = Date.now() - toolLoopStart;
+        } catch (mcpErr) {
+          logger.warn("mcp_execution", "tool_execution_failed", { error: String(mcpErr) });
+          processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
+        }
+
+        if (!processedText.trim()) {
+          logger.error("response_guarantee", "empty_response_after_tool_loop", { sessionId, assistantId });
+          processedText = "⚠️ Failed to generate response. The AI did not produce a valid output.";
+        }
+
+        const responseTimeMs = Date.now() - responseStart;
+        const finalAssistant: Partial<ChatMessage> = {
+          isPartial: false,
+          text: processedText,
+          deliveryStatus: "delivered",
+          refusal: false,
+          metrics: { finishReason: "completed", totalTokens: streamedTokenCount, modelId: toolModelId ?? modelId, backendStatus, responseTimeMs, ...(toolExecutionTime !== undefined ? { toolExecutionTime } : {}) } as any
+        };
+
+        await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered" });
+        await sessionDatabase.updateMessage(assistantId, {
+          deliveryStatus: "delivered",
+          text: processedText,
+          metrics: finalAssistant.metrics,
+          isPartial: false,
+          refusal: false
+        });
+        if (this.sessionId === sessionId) {
+          this.state.messages = this.state.messages.map((m) => {
+            if (m.id === id) return { ...m, deliveryStatus: "delivered" };
+            if (m.id === assistantId) return { ...m, ...finalAssistant };
+            return m;
+          });
+          this.state.sending = false;
+          this.state.streaming = false;
+          this.state.currentStreamId = null;
+          this.notify();
+        }
+        return;
+      }
+
       const support = await knezClient.getToolCallingSupport().catch(() => "unsupported" as const);
       logger.info("mcp_model", "tool_calling_support", {
         support,
@@ -1434,23 +1538,33 @@ export class ChatService {
         this.notify();
       }
 
+      logger.info("streaming", "stream_start", { streamId, sessionId, assistantId });
+
       // ─── P2.6 PHASES 1-5: buffer → classify → route ──────────────────────
       let interpretBuffer = "";
       let outputClass: OutputClass | null = null;
 
       for await (const chunk of knezClient.chatCompletionsStream(injectedMessages as any, sessionId, { signal: controller.signal, onMeta })) {
-        if (streamId !== this.state.currentStreamId) return;
-        if (controller.signal.aborted) return;
+        if (streamId !== this.state.currentStreamId) {
+          logger.warn("streaming", "stream_aborted_mismatch", { streamId, currentStreamId: this.state.currentStreamId });
+          return;
+        }
+        if (controller.signal.aborted) {
+          logger.info("streaming", "stream_aborted", { streamId });
+          return;
+        }
 
         if (outputClass === null) {
           interpretBuffer += chunk;
           if (canClassifyEarly(interpretBuffer)) {
             const interp = interpretOutput(interpretBuffer);
             outputClass = interp.classification;
+            logger.info("streaming", "classification_decided", { streamId, outputClass });
             if (outputClass === "plain_text") {
               this.appendToMessage(assistantId, interpretBuffer);
               interpretBuffer = ""; // free buffer after flush
             } else {
+              logger.info("streaming", "stream_stop_non_plain_text", { streamId, outputClass });
               break;
             }
           }
@@ -1459,7 +1573,10 @@ export class ChatService {
         }
       }
 
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) {
+        logger.info("streaming", "stream_aborted_post_loop", { streamId });
+        return;
+      }
 
       if (outputClass === null) {
         const interp = interpretOutput(interpretBuffer);
@@ -1480,17 +1597,16 @@ export class ChatService {
       } else if (outputClass === "tool_call" && ChatService.MCP_ENABLED) {
         const interp = interpretOutput(interpretBuffer);
         if (interp.toolCall) {
-          const { intent, confidence } = this.classifyIntent(item.text);
           if (intent === "tool_required" && confidence >= 0.8) {
             // Auto-approve all tool calls - no manual approval required
             try {
               const toolLoopStart = Date.now();
               processedText = await this.runPromptToolLoop(sessionId, injectedMessages as any, assistantId, toolsForModel, onMeta);
               toolExecutionTime = Date.now() - toolLoopStart;
-              } catch (mcpErr) {
-                logger.warn("mcp_execution", "tool_execution_failed", { toolName: interp.toolCall.name, error: String(mcpErr) });
-                processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
-              }
+            } catch (mcpErr) {
+              logger.warn("mcp_execution", "tool_execution_failed", { toolName: interp.toolCall.name, error: String(mcpErr) });
+              processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
+            }
           } else {
             processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
           }
