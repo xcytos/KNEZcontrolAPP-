@@ -79,6 +79,7 @@ const MessageItemInner: React.FC<{
   const [isHovered, setIsHovered] = useState(false);
   const [copied, setCopied] = useState(false);
   const [thoughtsOpen, setThoughtsOpen] = useState(false);
+  const [toolDetailsOpen, setToolDetailsOpen] = useState(false);
 
   const parts = parseMessageContent(msg.text);
   // const hasThink = parts.some(p => p.type === 'think');
@@ -138,8 +139,18 @@ const MessageItemInner: React.FC<{
         {/* Content Rendering */}
         {msg.toolCall ? (
           <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-3">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-xs font-mono text-zinc-200 break-all min-w-0">MCP Tool Execution</div>
+            <button
+              onClick={() => setToolDetailsOpen(!toolDetailsOpen)}
+              className="w-full flex items-center justify-between mb-2 text-left"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono text-zinc-200 break-all min-w-0">
+                  MCP: {msg.toolCall.tool}
+                </span>
+                <span className="text-[10px] text-zinc-500">
+                  {toolDetailsOpen ? '▼' : '▶'}
+                </span>
+              </div>
               <div className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
                 msg.toolCall.status === "succeeded"
                   ? "bg-green-900/20 text-green-300 border-green-900/40"
@@ -149,13 +160,32 @@ const MessageItemInner: React.FC<{
               }`}>
                 {msg.toolCall.status === "calling" ? "executing" : msg.toolCall.status}
               </div>
-            </div>
-            {msg.toolCall.status === "calling" ? (
-              <div className="text-xs text-blue-200">⚡ Executing...</div>
-            ) : msg.toolCall.status === "succeeded" ? (
-              <div className="text-xs text-green-300">✅ Completed</div>
-            ) : (
-              <div className="text-xs text-red-300">Failed: {String(msg.toolCall.error ?? "unknown error")}</div>
+            </button>
+            {toolDetailsOpen && (
+              <div className="mt-3 space-y-3">
+                <div>
+                  <div className="text-[10px] font-mono text-zinc-500 mb-1">REQUEST</div>
+                  <pre className="text-[10px] text-zinc-300 bg-zinc-900/50 p-2 rounded border border-zinc-800 overflow-x-auto">
+                    {JSON.stringify(msg.toolCall.args, null, 2)}
+                  </pre>
+                </div>
+                {msg.toolCall.status === "succeeded" && msg.toolCall.result !== undefined && (
+                  <div>
+                    <div className="text-[10px] font-mono text-zinc-500 mb-1">OUTPUT</div>
+                    <pre className="text-[10px] text-zinc-300 bg-zinc-900/50 p-2 rounded border border-zinc-800 overflow-x-auto">
+                      {typeof msg.toolCall.result === 'string' ? msg.toolCall.result : JSON.stringify(msg.toolCall.result, null, 2)}
+                    </pre>
+                  </div>
+                )}
+                {msg.toolCall.status === "failed" && msg.toolCall.error && (
+                  <div>
+                    <div className="text-[10px] font-mono text-red-400 mb-1">ERROR</div>
+                    <pre className="text-[10px] text-red-300 bg-red-900/10 p-2 rounded border border-red-900/30 overflow-x-auto">
+                      {msg.toolCall.error}
+                    </pre>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         ) : isRawToolCallJson ? (
