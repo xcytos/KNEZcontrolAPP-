@@ -112,8 +112,8 @@ const MessageItemInner: React.FC<{
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {/* Avatar for Assistant */}
-      {msg.from !== "user" && (
+      {/* Avatar for Assistant - hide for tool_execution to merge with response */}
+      {msg.from !== "user" && (msg.from as string) !== 'tool_execution' && (
          <div className="w-8 h-8 rounded-full bg-indigo-900/50 flex items-center justify-center border border-indigo-700/50 mr-3 mt-1 shrink-0 text-xs font-bold text-indigo-200">
             K
          </div>
@@ -128,17 +128,20 @@ const MessageItemInner: React.FC<{
             ? "bg-zinc-800 text-zinc-100 rounded-tr-sm"
             : msg.refusal
               ? "bg-red-900/10 border border-red-900/30 text-red-200 rounded-tl-sm"
-              : "bg-transparent text-zinc-300 pl-0 pt-0" // Transparent for assistant (Claude style)
+              : (msg.from as string) === 'tool_execution'
+                ? "bg-transparent text-zinc-300 pl-0 pt-0 w-full max-w-full" // Transparent and full width for tool execution
+                : "bg-transparent text-zinc-300 pl-0 pt-0" // Transparent for assistant (Claude style)
         }`}
       >
-        {/* Header Label */}
-        <div className="text-xs font-bold text-zinc-500 mb-1">
-           {(msg.from as string) === 'user' ? 'You' : 
-            (msg.from as string) === 'assistant' || (msg.from as string) === 'knez' ? 'Assistant' :
-            (msg.from as string) === 'tool_execution' ? 'Tool Execution' :
-            (msg.from as string) === 'tool_result' ? 'Tool Result' :
-            (msg.from as string) === 'system' ? 'System' : 'Assistant'}
-        </div>
+        {/* Header Label - hide for tool_execution to merge with response */}
+        {(msg.from as string) !== 'tool_execution' && (
+          <div className="text-xs font-bold text-zinc-500 mb-1">
+             {(msg.from as string) === 'user' ? 'You' :
+              (msg.from as string) === 'assistant' || (msg.from as string) === 'knez' ? 'Assistant' :
+              (msg.from as string) === 'tool_result' ? 'Tool Result' :
+              (msg.from as string) === 'system' ? 'System' : 'Assistant'}
+          </div>
+        )}
 
         {/* Content Rendering */}
         {msg.toolCall ? (
@@ -191,24 +194,30 @@ const MessageItemInner: React.FC<{
                 )}
                 <div>
                   <div className="text-[10px] font-mono text-zinc-500 mb-1">REQUEST</div>
-                  <pre className="text-[10px] text-zinc-300 bg-zinc-900/50 p-2 rounded border border-zinc-800 overflow-x-auto">
-                    {JSON.stringify(msg.toolCall.args, null, 2)}
-                  </pre>
+                  <div className="max-w-full overflow-x-auto">
+                    <pre className="text-[10px] text-zinc-300 bg-zinc-900/50 p-2 rounded border border-zinc-800 whitespace-pre-wrap break-all word-break-all">
+                      {JSON.stringify(msg.toolCall.args, null, 2)}
+                    </pre>
+                  </div>
                 </div>
                 {msg.toolCall.status === "succeeded" && msg.toolCall.result !== undefined && (
                   <div>
                     <div className="text-[10px] font-mono text-zinc-500 mb-1">OUTPUT</div>
-                    <pre className="text-[10px] text-zinc-300 bg-zinc-900/50 p-2 rounded border border-zinc-800 overflow-x-auto">
-                      {typeof msg.toolCall.result === 'string' ? msg.toolCall.result : JSON.stringify(msg.toolCall.result, null, 2)}
-                    </pre>
+                    <div className="max-w-full overflow-x-auto">
+                      <pre className="text-[10px] text-zinc-300 bg-zinc-900/50 p-2 rounded border border-zinc-800 whitespace-pre-wrap break-all word-break-all">
+                        {typeof msg.toolCall.result === 'string' ? msg.toolCall.result : JSON.stringify(msg.toolCall.result, null, 2)}
+                      </pre>
+                    </div>
                   </div>
                 )}
                 {msg.toolCall.status === "failed" && msg.toolCall.error && (
                   <div>
                     <div className="text-[10px] font-mono text-red-400 mb-1">ERROR</div>
-                    <pre className="text-[10px] text-red-300 bg-red-900/10 p-2 rounded border border-red-900/30 overflow-x-auto">
-                      {msg.toolCall.error}
-                    </pre>
+                    <div className="max-w-full overflow-x-auto">
+                      <pre className="text-[10px] text-red-300 bg-red-900/10 p-2 rounded border border-red-900/30 whitespace-pre-wrap break-all word-break-all">
+                        {msg.toolCall.error}
+                      </pre>
+                    </div>
                   </div>
                 )}
               </div>

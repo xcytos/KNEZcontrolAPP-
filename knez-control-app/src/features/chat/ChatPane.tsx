@@ -432,11 +432,9 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   // const [showPerception, setShowPerception] = useState(false);
   // Use ChatService state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [sending, setSending] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "request_sent" | "model_thinking" | "tool_execution" | "streaming" | "completed" | "error">("idle");
   const [activeTools, setActiveTools] = useState<{ search: boolean }>({ search: false });
   const [searchProvider, setSearchProvider] = useState<"off" | "taqwin" | "proxy">("off");
-  
-  const [streaming, setStreaming] = useState(false);
   // Manual approval removed - tools auto-approve
   // const [pendingToolApproval, setPendingToolApproval] = useState<ChatState["pendingToolApproval"]>(null);
   const [inputValue, setInputValue] = useState("");
@@ -477,7 +475,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
       : String(backend.status ?? "down")
     : "status:n/a";
   const lastAssistant = [...messages].reverse().find((m) => m.from === "knez");
-  const canContinue = !readOnly && !sending && (lastAssistant?.metrics as any)?.finishReason === "stopped";
+  const canContinue = !readOnly && phase === "idle" && (lastAssistant?.metrics as any)?.finishReason === "stopped";
   const [visibleCount, setVisibleCount] = useState(50);
   const [toolExposureTick, setToolExposureTick] = useState(0);
   const [mcpTick, setMcpTick] = useState(0);
@@ -534,8 +532,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   useEffect(() => {
     const unsub = chatService.subscribe((state) => {
        setMessages(state.messages);
-       setSending(state.sending);
-       setStreaming(state.streaming);
+       setPhase(state.phase);
        setActiveTools(state.activeTools);
        setSearchProvider(state.searchProvider);
        // Manual approval removed - tools auto-approve
@@ -555,6 +552,12 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!inputValue.trim()) return;
+
+    // T4+T8: Gate send on KNEZ online status
+    if (!online) {
+      showToast("KNEZ not ready. Please wait for connection.", "warning");
+      return;
+    }
 
     if (editingMessageId) {
       void chatService.editUserMessageAndResend(editingMessageId, inputValue);
@@ -725,6 +728,78 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
       );
     }
     return null;
+  };
+
+  // P5.2 T6: AgentProgressBar — shows thinking/executing/generating stages based on phase
+  const AgentProgressBar: React.FC<{
+    phase: "idle" | "request_sent" | "model_thinking" | "tool_execution" | "streaming" | "completed" | "error";
+    messages: ChatMessage[];
+  }> = ({ phase, messages }) => {
+    const [isCollapsed, setIsCollapsed] = useState(false);
+    const activeToolMsg = [...messages].reverse().find(
+      (m: ChatMessage) => m.toolCall?.status === "running" || m.toolCall?.status === "pending"
+    );
+
+    // P5.2 T7: Collapse based on lifecycle (idle or completed phase)
+    const shouldHide = phase === "idle" || phase === "completed";
+
+    // P5.2 T7: Auto-collapse when phase completes
+    useEffect(() => {
+      if (phase === "idle" || phase === "completed") {
+        const timer = setTimeout(() => setIsCollapsed(true), 2000);
+        return () => clearTimeout(timer);
+      } else {
+        setIsCollapsed(false);
+      }
+    }, [phase]);
+
+    if (shouldHide) return null;
+
+    let stage = "";
+    let stageColor = "bg-blue-400";
+    if (activeToolMsg || phase === "tool_execution") {
+      const toolShortName = activeToolMsg?.toolCall?.tool.split("__").pop() ?? "tool";
+      stage = `executing: ${toolShortName}`;
+      stageColor = "bg-green-400";
+    } else if (phase === "streaming") {
+      stage = "generating response...";
+      stageColor = "bg-purple-400";
+    } else if (phase === "model_thinking") {
+      stage = "thinking...";
+      stageColor = "bg-yellow-400";
+    } else if (phase === "request_sent") {
+      stage = "sending...";
+    } else if (phase === "error") {
+      stage = "error";
+      stageColor = "bg-red-400";
+    }
+
+    if (isCollapsed) {
+      return (
+        <div className="flex items-center gap-2 px-4 py-2 text-xs text-zinc-400 border-t border-zinc-800 cursor-pointer hover:bg-zinc-800/50 transition-colors"
+             onClick={() => setIsCollapsed(false)}>
+          <div className={`w-1.5 h-1.5 rounded-full ${stageColor}`} />
+          <span>{stage}</span>
+          <span className="text-zinc-500">(click to expand)</span>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex items-center gap-2 px-4 py-2 text-xs text-zinc-400 border-t border-zinc-800">
+        <div className={`w-1.5 h-1.5 rounded-full ${stageColor} animate-pulse`} />
+        <span>{stage}</span>
+        {phase === "streaming" && (
+          <button
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className="ml-2 text-zinc-500 hover:text-zinc-300 transition-colors"
+            title="Toggle visibility"
+          >
+            {isCollapsed ? "▶" : "▼"}
+          </button>
+        )}
+      </div>
+    );
   };
 
   const isTauri = useMemo(() => {
@@ -1045,6 +1120,9 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
             <div ref={messagesEndRef} className="h-4" />
           </div>
 
+          {/* P5.2 T6: AgentProgressBar above input bar */}
+          <AgentProgressBar phase={phase} messages={messages} />
+
           <div className="p-4 border-t border-zinc-800 bg-zinc-900/30">
             <div className="flex gap-2 mb-2 px-1">
                <button 
@@ -1176,7 +1254,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                   }
                 }}
               />
-              {composerMode === "chat" && sending && (
+              {composerMode === "chat" && (phase === "streaming" || phase === "model_thinking" || phase === "tool_execution" || phase === "request_sent") && (
                 <button
                   type="button"
                   onClick={() => chatService.stopCurrentResponse()}
@@ -1217,10 +1295,10 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                 <button
                   data-testid="chat-send"
                   type="submit"
-                  disabled={!inputValue.trim() || sending || streaming}
+                  disabled={!inputValue.trim() || phase !== "idle"}
                   className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg shadow-blue-900/20"
                 >
-                  {streaming ? "Streaming..." : sending ? "Sending..." : "Send"}
+                  {phase === "streaming" ? "Streaming..." : phase === "request_sent" ? "Sending..." : "Send"}
                 </button>
               )}
             </form>
