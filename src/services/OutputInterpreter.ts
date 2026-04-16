@@ -2,6 +2,9 @@
 // Structured parsing only. No regex string matching.
 // Laws: AI is the only entity that produces user-visible output.
 // Phase 3: Schema validation and strict canonical type enforcement
+// T3: JSON Repair and Recovery integration
+
+import { repairJson, extractJsonFragment } from "./JsonRepair";
 
 export type OutputClass = "plain_text" | "tool_call" | "system_payload" | "invalid_fragment";
 
@@ -50,15 +53,35 @@ export function interpretOutput(text: string): InterpretResult {
   try {
     parsed = JSON.parse(trimmed);
   } catch {
-    // Starts with '{' but is not valid JSON.
-    // If there's substantial non-JSON text before the brace, treat as plain_text.
-    const braceIdx = text.indexOf("{");
-    const leadingText = text.slice(0, braceIdx).trim();
-    if (leadingText.length > 20) {
-      return { classification: "plain_text" };
+    // T3: Try to repair malformed JSON
+    const repaired = repairJson(trimmed);
+    if (repaired) {
+      try {
+        parsed = JSON.parse(repaired);
+      } catch {
+        // Repair failed, try extracting JSON fragment
+        const fragment = extractJsonFragment(trimmed);
+        if (fragment) {
+          try {
+            parsed = JSON.parse(fragment);
+          } catch {
+            // All repair attempts failed
+          }
+        }
+      }
     }
-    // Log: invalid JSON
-    return { classification: "invalid_fragment" };
+
+    if (!parsed) {
+      // Starts with '{' but is not valid JSON.
+      // If there's substantial non-JSON text before the brace, treat as plain_text.
+      const braceIdx = text.indexOf("{");
+      const leadingText = text.slice(0, braceIdx).trim();
+      if (leadingText.length > 20) {
+        return { classification: "plain_text" };
+      }
+      // Log: invalid JSON
+      return { classification: "invalid_fragment" };
+    }
   }
 
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {

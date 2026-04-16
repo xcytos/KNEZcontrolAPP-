@@ -12,11 +12,10 @@
       },
       "disabled": false
     },
-    "io.windsurf/puppeteer": {
+    "playwright": {
       "command": "npx",
       "args": [
-        "-y",
-        "@modelcontextprotocol/server-puppeteer"
+        "@playwright/mcp@latest"
       ],
       "disabled": false
     },

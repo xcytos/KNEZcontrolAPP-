@@ -16,15 +16,38 @@ import { toolExecutionService } from "./ToolExecutionService";
 import { memoryInjectionService } from "./MemoryInjectionService";
 import { governanceService } from "./GovernanceService";
 import { interpretOutput, canClassifyEarly, OutputClass } from "./OutputInterpreter";
+import { validateToolResult } from "./ToolResultValidator";
+import { getTimeoutConfig, adaptiveTimeoutManager } from "./TimeoutConfig";
+import { agentLoopService } from "./agent/AgentLoopService";
+import { failureClassifier } from "./agent/FailureClassifier";
+
+export type ChatPhase =
+  | "idle"
+  | "request_sent"
+  | "model_thinking"
+  | "tool_execution"
+  | "streaming"
+  | "completed"
+  | "error";
+
+export type EventType =
+  | "USER_SEND"
+  | "MODEL_CALL_START"
+  | "FIRST_TOKEN"
+  | "TOOL_START"
+  | "TOOL_END"
+  | "STREAM_END"
+  | "ERROR";
 
 export interface ChatState {
   messages: ChatMessage[];
-  sending: boolean;
-  streaming: boolean;
+  phase: ChatPhase;
   currentStreamId: string | null;
   activeTools: { search: boolean };
   searchProvider: "off" | "taqwin" | "proxy";
   pendingToolApproval: { id: string; toolName: string; args: Record<string, any> } | null;
+  responseStart?: number;
+  responseEnd?: number;
 }
 
 export type StateListener = (state: ChatState) => void;
@@ -33,8 +56,7 @@ export class ChatService {
   private listeners: StateListener[] = [];
   private state: ChatState = {
     messages: [],
-    sending: false,
-    streaming: false,
+    phase: "idle",
     currentStreamId: null,
     activeTools: { search: false },
     searchProvider: "off",
@@ -94,7 +116,14 @@ export class ChatService {
     this.sessionId = sessionController.getSessionId();
     void this.load(this.sessionId);
     sessionController.subscribe(({ sessionId }) => {
+      const previousSessionId = this.sessionId;
+      // T7: Cancel previous session queue when switching sessions
+      if (previousSessionId && previousSessionId !== sessionId) {
+        void this.forceStopForSession(previousSessionId);
+      }
       this.sessionId = sessionId;
+      // P5.2 T12: Reset to idle on session change for state isolation
+      this.resetToIdle();
       const stored = localStorage.getItem(`chat_search_enabled:${sessionId}`);
       const enabled = stored === "1";
       this.state.activeTools = { search: enabled };
@@ -116,7 +145,7 @@ export class ChatService {
   }
 
   private notify() {
-    if (this.state.streaming) {
+    if (this.state.phase === "streaming") {
       if (!this._pendingNotify) {
         this._pendingNotify = true;
         this._notifyTimer = window.setTimeout(() => {
@@ -133,6 +162,53 @@ export class ChatService {
       }
       this.listeners.forEach(l => l(this.state));
     }
+  }
+
+  // P5.2 T2: Event-driven state engine
+  private setPhase(event: EventType): void {
+    const phaseTransition: Record<EventType, ChatPhase> = {
+      USER_SEND: "request_sent",
+      MODEL_CALL_START: "model_thinking",
+      FIRST_TOKEN: "streaming",
+      TOOL_START: "tool_execution",
+      TOOL_END: "model_thinking",
+      STREAM_END: "completed",
+      ERROR: "error"
+    };
+
+    const newPhase = phaseTransition[event];
+    if (!newPhase) {
+      logger.warn("chat_service", "invalid_phase_transition", { event });
+      return;
+    }
+
+    const oldPhase = this.state.phase;
+    this.state.phase = newPhase;
+
+    // Response time measurement (P5.2 T10)
+    if (event === "USER_SEND") {
+      this.state.responseStart = Date.now();
+    }
+    if (event === "STREAM_END" || event === "ERROR") {
+      this.state.responseEnd = Date.now();
+    }
+
+    logger.info("chat_service", "phase_transition", {
+      event,
+      from: oldPhase,
+      to: newPhase
+    });
+
+    this.notify();
+  }
+
+  // Helper to reset to idle
+  private resetToIdle(): void {
+    this.state.phase = "idle";
+    this.state.currentStreamId = null;
+    this.state.responseStart = undefined;
+    this.state.responseEnd = undefined;
+    this.notify();
   }
 
   async load(sessionId: string) {
@@ -154,6 +230,13 @@ export class ChatService {
 
   async sendMessage(text: string, forceContext?: string): Promise<void> {
     if (!text.trim()) return;
+
+    // Stop any current delivery for this session to prioritize new message
+    if (this.activeDelivery && this.activeDelivery.sessionId === this.sessionId) {
+      logger.info("chat", "stopping_current_delivery_for_new_message", { sessionId: this.sessionId });
+      this.activeDelivery.stopRequested = true;
+      this.activeDelivery.controller.abort();
+    }
 
     const now = new Date().toISOString();
     const userId = newMessageId();
@@ -219,6 +302,20 @@ export class ChatService {
     options?: { searchEnabled?: boolean; forceContext?: string }
   ): Promise<string> {
     if (!text.trim()) return "";
+
+    // T8: System readiness guard - check KNEZ health before first message
+    const sessionMessages = await persistenceService.loadChat(sessionId);
+    if (!sessionMessages || sessionMessages.length === 0) {
+      try {
+        logger.info("system_readiness", "checking_knez_health", { sessionId });
+        await knezClient.health({ timeoutMs: 5000 });
+        logger.info("system_readiness", "knez_healthy", { sessionId });
+      } catch (error) {
+        logger.error("system_readiness", "knez_unhealthy", { sessionId, error });
+        throw new Error("System is not ready. KNEZ backend is not responding. Please try again later.");
+      }
+    }
+
     const now = new Date().toISOString();
     const userId = newMessageId();
     const assistantId = `${userId}-assistant`;
@@ -292,11 +389,21 @@ export class ChatService {
       logger.warn("chat_service", "append_message_not_found", { messageId });
       return;
     }
+    const msg = msgs[idx];
+    const isFirstToken = !msg.hasReceivedFirstToken;
     this.state.messages = msgs.map((m, i) =>
       i === idx
         ? { ...m, text: (m.text ?? "") + text, hasReceivedFirstToken: true }
         : m
     );
+    // T5: Clear first-token watchdog on first token received
+    if (isFirstToken) {
+      const timer = (this as any).firstTokenTimer;
+      if (timer) {
+        window.clearTimeout(timer);
+        (this as any).firstTokenTimer = undefined;
+      }
+    }
     this.notify();
   }
   stopCurrentResponse() {
@@ -431,7 +538,12 @@ export class ChatService {
 
     if (!outgoingId || !assistantId) return;
 
-    await sessionDatabase.removeOutgoing(outgoingId);
+    // Clear ALL outgoing messages for this session to ensure queue priority
+    const allOutgoing = await sessionDatabase.listOutgoing();
+    const sessionOutgoing = allOutgoing.filter((x) => x.sessionId === sessionId);
+    for (const msg of sessionOutgoing) {
+      await sessionDatabase.removeOutgoing(msg.id);
+    }
 
     const inState = this.state.messages.find((m) => m.id === assistantId);
     const persisted = await sessionDatabase.getMessage(assistantId);
@@ -463,8 +575,9 @@ export class ChatService {
         }
         return m;
       });
-      this.state.sending = false;
-      this.notify();
+      if (this.sessionId === sessionId) {
+        this.setPhase("STREAM_END");
+      }
     }
   }
 
@@ -476,7 +589,7 @@ export class ChatService {
 
   private async flushOutgoingQueue(forceContexts?: Record<string, string>) {
     if (this.queueFlushInFlight) return;
-    if (this.state.streaming) return;
+    if (this.state.phase === "streaming") return;
     this.queueFlushInFlight = true;
     try {
       const now = Date.now();
@@ -574,6 +687,11 @@ export class ChatService {
     const runtimeHint = serverIdHint ? mcpOrchestrator.getServer(serverIdHint) : null;
     const startedAt = performance.now();
 
+    // P5.2 T5: Trigger TOOL_START event
+    if (this.sessionId === input.sessionId) {
+      this.setPhase("TOOL_START");
+    }
+
     void this.tryEmit(
       "tool_call_started",
       {
@@ -609,8 +727,13 @@ export class ChatService {
       correlationId: input.assistantId,
       tool: toolName
     });
+
+    // T6: Get adaptive timeout configuration for this tool
+    const timeoutConfig = getTimeoutConfig(toolName);
+    const adaptiveTimeout = adaptiveTimeoutManager.getAdaptiveTimeout(toolName, timeoutConfig);
+
     const exec = await toolExecutionService.executeNamespacedTool(toolName, input.args, {
-      timeoutMs: 180000,
+      timeoutMs: adaptiveTimeout,
       traceId: input.traceId,
       toolCallId: input.toolCallId,
       correlationId: input.assistantId
@@ -623,6 +746,11 @@ export class ChatService {
       : Math.round(performance.now() - startedAt);
 
     if (exec.ok) {
+      // P5.2 T5: Trigger TOOL_END event on success
+      if (this.sessionId === input.sessionId) {
+        this.setPhase("TOOL_END");
+      }
+
       void this.tryEmit(
         "tool_call_completed",
         {
@@ -665,6 +793,11 @@ export class ChatService {
     }
 
     const errorMsg = `${exec.error.code}:${exec.error.message}`;
+    // P5.2 T5: Trigger TOOL_END event
+    if (this.sessionId === input.sessionId) {
+      this.setPhase("TOOL_END");
+    }
+
     void this.tryEmit(
       "tool_call_failed",
       {
@@ -800,7 +933,7 @@ export class ChatService {
       toolChoice: toolsForModel.length ? "auto" : "none"
     });
     const conversation: any[] = baseMessages.map((m) => ({ role: m.role, content: m.content }));
-    const maxSteps = 3;
+    const maxSteps = 5;
     for (let step = 0; step < maxSteps; step++) {
       const res = await knezClient.chatCompletionsNonStreamRaw(conversation, sessionId, {
         tools: toolsForModel,
@@ -1058,12 +1191,22 @@ export class ChatService {
     toolsForModel: Array<{ name: string; description: string; parameters: any }>,
     onMeta?: (meta: { model?: string }) => void
   ): Promise<string> {
+    // Initialize agent context via AgentLoopService
+    const userGoal = baseMessages.find(m => m.role === "user")?.content || "unknown";
+    agentLoopService.initializeContext(sessionId, userGoal);
+
     const toolNames = toolsForModel.map((t) => t.name).slice(0, 80);
+    
+    // Get context summary for model via AgentLoopService
+    const contextSummary = agentLoopService.getContextSummary(sessionId);
+    
     const protocol =
       `\n\n[SYSTEM: TOOL_PROTOCOL]\n` +
       `CRITICAL: Only call a tool if the user's request EXPLICITLY requires a tool action.\n` +
       `Simple messages (greetings, questions, conversation) MUST receive direct plain-text replies.\n` +
       `Do NOT call tools on messages like "hi", "hello", "how are you", "what can you do" etc.\n` +
+      `\n` +
+      `${contextSummary}\n` +
       `\n` +
       `STRICT JSON SCHEMA REQUIREMENT:\n` +
       `You MUST respond in one of two formats ONLY:\n` +
@@ -1091,7 +1234,27 @@ export class ChatService {
       `\n` +
       `Allowed tool names:\n${toolNames.map((n) => `- ${n}`).join("\n")}\n` +
       `\n` +
-      `Otherwise, reply normally with plain text.\n`;
+      `T4: MULTI-STEP WORKFLOW GUIDANCE\n` +
+      `For complex multi-step tasks, follow this pattern:\n` +
+      `1. Navigate to target URL (playwright_browser_navigate)\n` +
+      `2. Wait for page load and content to render\n` +
+      `3. Click navigation elements (playwright_browser_click) if needed\n` +
+      `4. Extract content (playwright_browser_snapshot or similar)\n` +
+      `5. Analyze and summarize results\n` +
+      `\n` +
+      `WORKFLOW EXAMPLES:\n` +
+      `- "List all blogs on a site": navigate → click "Blog" → snapshot → extract headings/links\n` +
+      `- "Find product information": navigate → search → click product → extract details\n` +
+      `- "Get documentation": navigate → find docs section → extract content\n` +
+      `\n` +
+      `TOOL EXECUTION BEST PRACTICES:\n` +
+      `- Always use the full URL including https://\n` +
+      `- Use specific selectors when clicking (ref from snapshot)\n` +
+      `- Allow time for dynamic content to load (use waitFor if available)\n` +
+      `- Extract structured data (headings, links, content) for analysis\n` +
+      `- If a tool fails, retry with different parameters or alternative approach\n` +
+      `\n` +
+      `Otherwise, reply normally with plain text.`;
 
     const conversation: any[] = baseMessages.map((m, idx) => {
       if (idx === baseMessages.length - 1 && m.role === "user") {
@@ -1101,11 +1264,13 @@ export class ChatService {
     });
     const allowedToolNames = new Set(toolNames);
 
-    const maxSteps = 3;
+    const maxSteps = 5;
     let consecutiveFailures = 0;
     const toolHistory: Array<{ name: string; args: any }> = [];
+    let toolRetryCount = 0;
 
     for (let step = 0; step < maxSteps; step++) {
+      agentLoopService.incrementStep(sessionId);
       logger.info("mcp_loop", "loop_iteration_start", { assistantId, step, maxSteps });
 
       const res = await knezClient.chatCompletionsNonStreamRaw(conversation, sessionId, {
@@ -1143,30 +1308,8 @@ export class ChatService {
           });
           continue; // [FIX A1/A3] — NEVER return; always continue loop
         }
-        if (isToolCallAttempt) {
-          // [FIX H/C3/D1] — Model tried to emit a tool call but format was invalid.
-          // Block from reaching UI; inject correction and retry.
-          logger.warn("mcp_loop", "strict_json_parse_failed", { assistantId, step, rawModelOutput: assistantContent.slice(0, 2000) });
-          const toolCallId = `${assistantId}:protocol_error:${step}`;
-          await this.appendSyntheticToolError({
-            sessionId,
-            assistantId,
-            step,
-            toolCallId,
-            toolName: "mcp_protocol__strict_json",
-            errorCode: "mcp_invalid_tool_call_json",
-            errorMessage: "Invalid tool_call JSON emitted by model",
-            conversation
-          });
-          conversation.push({
-            role: "system",
-            content:
-              "Invalid tool_call JSON detected. NEVER output raw tool_call JSON as a reply. Re-emit valid strict JSON only with root " +
-              '{"tool_call":{"name":"serverId__toolName","arguments":{}}} and no extra keys, markdown, or prose. ' +
-              "If no tool is needed, reply with a plain natural language answer instead."
-          });
-          continue; // [FIX A1/A3] — NEVER return tool JSON to caller
-        }
+        // If it looks like a tool call but failed parse, let it pass through to interpreter
+        // The interpreter will handle natural language and tool calls appropriately
         // No tool call detected and content is safe — return final assistant answer
         return assistantContent;
       }
@@ -1175,6 +1318,53 @@ export class ChatService {
       const args = req.arguments ?? {};
       if (!allowedToolNames.has(toolName)) {
         logger.warn("mcp_loop", "non_canonical_tool_name", { assistantId, step, toolName });
+      }
+
+      // T3: Enforce snapshot-first execution for click tools
+      if (toolName.includes("click") || toolName.includes("type")) {
+        const hasRecentSnapshot = toolHistory.some(h => h.name.includes("snapshot"));
+        if (!hasRecentSnapshot) {
+          logger.warn("mcp_loop", "snapshot_first_violation", { assistantId, step, toolName });
+          conversation.push({
+            role: "system",
+            content: "ERROR: You must take a snapshot before clicking or typing. Take a snapshot first to get element refs, then use those refs to interact."
+          });
+          continue;
+        }
+        // T3: Validate that click uses ref from snapshot, not element name
+        if (args.element && typeof args.element === "string" && !args.element.startsWith("ref=")) {
+          logger.warn("mcp_loop", "click_without_ref", { assistantId, step, toolName });
+          conversation.push({
+            role: "system",
+            content: "ERROR: You must use element refs from snapshot (e.g., ref=abc123) instead of element names. Take a snapshot, extract the ref, and use it."
+          });
+          continue;
+        }
+      }
+
+      // T4: Tool argument validation - reject vague inputs
+      if (toolName.includes("click") || toolName.includes("type") || toolName.includes("snapshot")) {
+        // Check for vague element names (capitalized words that look like labels)
+        if (args.element && typeof args.element === "string") {
+          const vaguePatterns = /^[A-Z][a-z]+$/; // Single capitalized word like "Blog", "Menu", etc.
+          if (vaguePatterns.test(args.element)) {
+            logger.warn("mcp_loop", "vague_element_name", { assistantId, step, element: args.element });
+            conversation.push({
+              role: "system",
+              content: `ERROR: Element "${args.element}" is too vague. Use the ref from snapshot (e.g., ref=abc123) to precisely identify the element. Take a snapshot and extract the actual element reference.`
+            });
+            continue;
+          }
+        }
+        // Check for missing required arguments
+        if (toolName.includes("navigate") && !args.url) {
+          logger.warn("mcp_loop", "missing_required_arg", { assistantId, step, toolName });
+          conversation.push({
+            role: "system",
+            content: "ERROR: Navigate tool requires a 'url' argument. Provide the full URL including https://."
+          });
+          continue;
+        }
       }
 
       // Phase 6: Detect redundant tool invocations
@@ -1238,15 +1428,73 @@ export class ChatService {
         errorMsg = exec.errorMsg;
         result = exec.payload;
         durationMs = exec.durationMs;
+        
+        // Record successful tool execution via AgentLoopService
+        agentLoopService.recordToolExecution(sessionId, toolName, args, result, ok);
       } catch (toolErr: any) {
         logger.error("mcp_loop", "tool_execution_exception", { assistantId, step, toolName, error: String(toolErr) });
         ok = false;
         errorMsg = `tool_execution_exception:${String(toolErr?.message ?? toolErr)}`;
         result = { error: errorMsg };
+        
+        // Record failed tool execution and error via AgentLoopService
+        agentLoopService.recordToolExecution(sessionId, toolName, args, result, false);
+        agentLoopService.recordError(sessionId, "tool_execution_exception", errorMsg, step);
       }
 
       const finishedAt = new Date().toISOString();
       const toolContent = this.stringifyToolPayload(result, 20000);
+
+      // T1: Validate tool result — detect 404, empty, missing data
+      const validation = ok ? validateToolResult(toolName, args, result) : null;
+      if (ok && validation && !validation.isValid) {
+        // T1+T3: Invalid result — inject retry hint and STRUCTURED_CONTEXT
+        logger.warn("mcp_loop", "tool_result_invalid", { assistantId, step, toolName, reasons: validation.reasons });
+        await this.updateToolTrace(sessionId, traceMessageId, {
+          text: toolContent,
+          toolCall: { ...toolCall, status: "failed", result: undefined, error: validation.reasons.join(","), finishedAt, executionTimeMs: durationMs, mcpLatencyMs }
+        });
+        conversation.push({ role: "tool", tool_call_id: traceMessageId, content: toolContent });
+        conversation.push({ role: "system", content: validation.structuredContext });
+        conversation.push({ role: "system", content: validation.retryHint });
+        toolRetryCount++;
+        
+        // T5: Use FailureClassifier for intelligent retry decisions
+        const classification = failureClassifier.classify({ error: validation.reasons.join(",") }, toolName, args);
+        if (!failureClassifier.shouldRetry(classification, toolRetryCount)) {
+          logger.warn("mcp_loop", "failure_classifier_abort", { assistantId, step, toolName, classification });
+          break;
+        }
+        
+        if (toolRetryCount >= 2) {
+          logger.warn("mcp_loop", "tool_retry_limit_reached", { assistantId, step, toolName });
+          break;
+        }
+        continue;
+      }
+      
+      // T5: Handle tool execution failures with FailureClassifier
+      if (!ok) {
+        const classification = failureClassifier.classify({ error: errorMsg || "unknown" }, toolName, args);
+        logger.warn("mcp_loop", "tool_failure_classified", { assistantId, step, toolName, classification });
+        
+        // Record failure via AgentLoopService
+        agentLoopService.recordError(sessionId, classification.type, errorMsg || "unknown", step);
+        
+        // Check if should retry
+        if (failureClassifier.shouldRetry(classification, toolRetryCount)) {
+          conversation.push({ role: "tool", tool_call_id: traceMessageId, content: toolContent });
+          conversation.push({ role: "system", content: classification.suggestedAction || "Tool failed. Retry with corrected parameters." });
+          toolRetryCount++;
+          
+          if (toolRetryCount >= 2) {
+            logger.warn("mcp_loop", "tool_retry_limit_reached", { assistantId, step, toolName });
+            break;
+          }
+          continue;
+        }
+      }
+
       await this.updateToolTrace(sessionId, traceMessageId, {
         text: toolContent,
         toolCall: { ...toolCall, status: ok ? "succeeded" : "failed", result: ok ? result : undefined, error: ok ? undefined : errorMsg, finishedAt, executionTimeMs: durationMs, mcpLatencyMs }
@@ -1254,15 +1502,18 @@ export class ChatService {
 
       conversation.push({ role: "tool", tool_call_id: traceMessageId, content: toolContent });
       // Phase 7: Add system hint after tool result
-      conversation.push({
-        role: "system",
-        content: "Use this tool result to answer the user."
-      });
+      // T2: Include STRUCTURED_CONTEXT for valid results to help model understand tool output
+      const systemHint = validation && validation.isValid
+        ? validation.structuredContext + "\nUse this tool result to answer the user."
+        : "Use this tool result to answer the user.";
+      conversation.push({ role: "system", content: systemHint });
     }
+    
+    // Finalize agent context when loop completes
+    agentLoopService.finalizeContext(sessionId);
     throw new Error("tool_loop_limit_reached");
   }
 
-  // ─── P2.4 PHASE 2: OUTPUT SANITIZATION ────────────────────────────────
   private sanitizeOutput(text: string): string {
     // Interpreter has already classified this as plain_text.
     // No regex. No structured removal. Trim only.
@@ -1298,6 +1549,72 @@ export class ChatService {
   // Manual approval removed - tools auto-approve (requestToolApproval and approveToolExecution removed)
 
   // ─── P2.6 PHASE 5: RECOVERY RESPONSE ───────────────────────────────
+  private async generateFinalAnswer(input: {
+    sessionId: string;
+    baseMessages: Array<{ role: string; content: string }>;
+    assistantId: string;
+    streamId: string;
+    controller: AbortController;
+    onMeta?: (meta: { model?: string }) => void;
+  }): Promise<string> {
+    const { sessionId, baseMessages, assistantId, streamId, controller, onMeta } = input;
+    const finalMessages = [
+      ...baseMessages,
+      { role: "user", content: "Summarize the tool results and provide a clear, complete answer to the user's question. Do not output tool calls. Plain text only." },
+    ];
+    this.state.messages = this.state.messages.map((m) =>
+      m.id === assistantId ? { ...m, text: "", hasReceivedFirstToken: false } : m
+    );
+    this.notify();
+
+    let finalBuffer = "";
+    let finalClass: OutputClass | null = null;
+    let firstTokenReceived = false;
+    try {
+      for await (const chunk of knezClient.chatCompletionsStream(finalMessages as any, sessionId, { signal: controller.signal, onMeta })) {
+        if (streamId !== this.state.currentStreamId) break;
+        if (controller.signal.aborted) break;
+
+        // P5.2 T3/T4: Trigger FIRST_TOKEN event on first chunk
+        if (!firstTokenReceived && chunk.trim()) {
+          firstTokenReceived = true;
+          this.setPhase("FIRST_TOKEN");
+        }
+
+        if (finalClass === null) {
+          finalBuffer += chunk;
+          if (canClassifyEarly(finalBuffer)) {
+            const interp = interpretOutput(finalBuffer);
+            finalClass = interp.classification;
+            if (finalClass === "plain_text") {
+              this.appendToMessage(assistantId, finalBuffer);
+              finalBuffer = "";
+            } else {
+              break;
+            }
+          }
+        } else if (finalClass === "plain_text") {
+          this.appendToMessage(assistantId, chunk);
+        }
+      }
+    } catch (err) {
+      logger.warn("output_interpreter", "final_answer_stream_failed", { error: String(err) });
+    }
+    if (finalClass === null && finalBuffer) {
+      const interp = interpretOutput(finalBuffer);
+      finalClass = interp.classification;
+      if (finalClass === "plain_text") {
+        this.appendToMessage(assistantId, finalBuffer);
+      }
+    }
+    if (finalClass === "plain_text") {
+      const accText = this.state.messages.find((m) => m.id === assistantId)?.text ?? "";
+      return accText.trim() || "⚠️ Unable to generate a final summary. Please try again.";
+    }
+    logger.warn("output_interpreter", "final_answer_also_non_plain", { classification: finalClass, preview: finalBuffer.slice(0, 80) });
+    return "⚠️ Unable to generate a final summary. Please try again.";
+  }
+
   private async generateRecoveryResponse(input: {
     sessionId: string;
     baseMessages: Array<{ role: string; content: string }>;
@@ -1361,6 +1678,60 @@ export class ChatService {
     if (!item) return;
     const responseStart = Date.now();
 
+    // T4: Pre-flight health check — block if KNEZ is not ready
+    try {
+      const health = await knezClient.health({ timeoutMs: 2000 });
+      if (!health || health.status !== "ok") {
+        logger.warn("chat", "pre_flight_health_check_failed", { sessionId: item.sessionId, health });
+        const errorMsg = "KNEZ not ready. Please wait for connection.";
+        await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered", deliveryError: undefined });
+        await sessionDatabase.updateMessage(`${id}-assistant`, {
+          deliveryStatus: "failed",
+          deliveryError: errorMsg,
+          isPartial: false,
+          text: "⚠️ KNEZ not ready. Please wait for connection.",
+          refusal: true
+        });
+        await sessionDatabase.removeOutgoing(id);
+        if (this.sessionId === item.sessionId) {
+          this.state.messages = this.state.messages.map((m) => {
+            if (m.id === id) return { ...m, deliveryStatus: "delivered", deliveryError: undefined };
+            if (m.id === `${id}-assistant`) {
+              return { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: "⚠️ KNEZ not ready. Please wait for connection.", refusal: true };
+            }
+            return m;
+          });
+          // P5.2 T11: Set ERROR phase on health check failure
+          this.setPhase("ERROR");
+        }
+        return;
+      }
+    } catch (healthErr) {
+      logger.warn("chat", "pre_flight_health_check_exception", { sessionId: item.sessionId, error: String(healthErr) });
+      const errorMsg = "KNEZ not ready. Please wait for connection.";
+      await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered", deliveryError: undefined });
+      await sessionDatabase.updateMessage(`${id}-assistant`, {
+        deliveryStatus: "failed",
+        deliveryError: errorMsg,
+        isPartial: false,
+        text: "⚠️ KNEZ not ready. Please wait for connection.",
+        refusal: true
+      });
+      await sessionDatabase.removeOutgoing(id);
+      if (this.sessionId === item.sessionId) {
+        this.state.messages = this.state.messages.map((m) => {
+          if (m.id === id) return { ...m, deliveryStatus: "delivered", deliveryError: undefined };
+          if (m.id === `${id}-assistant`) {
+            return { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: "⚠️ KNEZ not ready. Please wait for connection.", refusal: true };
+          }
+          return m;
+        });
+        // P5.2 T11: Set ERROR phase on health check exception
+        this.setPhase("ERROR");
+      }
+      return;
+    }
+
     const ageMs = Date.now() - Date.parse(item.createdAt);
     if (item.attempts >= this.maxOutgoingAttempts || ageMs > this.maxOutgoingAgeMs) {
       const errorMsg =
@@ -1408,8 +1779,15 @@ export class ChatService {
 
     if (this.sessionId === sessionId) {
       this.state.messages = messages;
-      this.state.sending = true;
-      this.notify();
+      // P5.2 T8: Readiness checks before USER_SEND
+      await this.ensureSessionExists(sessionId);
+      const existing = await sessionDatabase.getSession(sessionId);
+      if (!existing) {
+        logger.error("chat_service", "session_not_initialized", { sessionId });
+        this.setPhase("ERROR");
+        return;
+      }
+      this.setPhase("USER_SEND");
     }
 
     const searchContext = await this.buildSearchContext({
@@ -1454,8 +1832,8 @@ export class ChatService {
     let streamId: string | undefined;
     let firstTokenTimer: number | undefined;
     let watchdogId: number | undefined;
+    const toolsForModel = toolExposureService.getToolsForModel();
     try {
-      const toolsForModel = toolExposureService.getToolsForModel();
       let toolModelId: string | undefined = modelId;
       let streamedTokenCount = 0;
       const onMeta = (meta: { model?: string; totalTokens?: number }) => {
@@ -1488,7 +1866,23 @@ export class ChatService {
 
         if (!processedText.trim()) {
           logger.error("response_guarantee", "empty_response_after_tool_loop", { sessionId, assistantId });
-          processedText = "⚠️ Failed to generate response. The AI did not produce a valid output.";
+          // T10: Check if we had successful tool executions
+          const hadSuccessfulTools = this.state.messages.some(
+            (m) => m.toolCall?.status === "succeeded" || m.toolCall?.status === "completed"
+          );
+          if (hadSuccessfulTools) {
+            // Force final answer from model
+            processedText = await this.generateFinalAnswer({
+              sessionId,
+              baseMessages: injectedMessages as any,
+              assistantId,
+              streamId: streamId!,
+              controller,
+              onMeta
+            });
+          } else {
+            processedText = "⚠️ Failed to generate response. The AI did not produce a valid output.";
+          }
         }
 
         const responseTimeMs = Date.now() - responseStart;
@@ -1514,10 +1908,8 @@ export class ChatService {
             if (m.id === assistantId) return { ...m, ...finalAssistant };
             return m;
           });
-          this.state.sending = false;
-          this.state.streaming = false;
           this.state.currentStreamId = null;
-          this.notify();
+          this.setPhase("STREAM_END");
         }
         return;
       }
@@ -1533,12 +1925,17 @@ export class ChatService {
       const controller = new AbortController();
       this.activeDelivery = { sessionId, outgoingId: id, assistantId, controller, stopRequested: false };
       if (this.sessionId === sessionId) {
-        this.state.streaming = true;
         this.state.currentStreamId = streamId;
-        this.notify();
+        this.setPhase("MODEL_CALL_START");
       }
 
       logger.info("streaming", "stream_start", { streamId, sessionId, assistantId });
+
+      // T5: First-token watchdog — abort stream if no token received within 20s
+      firstTokenTimer = window.setTimeout(() => {
+        logger.warn("streaming", "first_token_timeout", { streamId, assistantId });
+        controller.abort();
+      }, 20000);
 
       // ─── P2.6 PHASES 1-5: buffer → classify → route ──────────────────────
       let interpretBuffer = "";
@@ -1654,12 +2051,10 @@ export class ChatService {
           if (m.id === assistantId) return { ...m, ...finalAssistant };
           return m;
         });
-        this.state.sending = false;
         if (streamId === this.state.currentStreamId) {
-          this.state.streaming = false;
           this.state.currentStreamId = null;
+          this.setPhase("STREAM_END");
         }
-        this.notify();
       }
 
       void this.tryEmit(
@@ -1783,12 +2178,10 @@ export class ChatService {
         clearInterval(watchdogId);
       }
       if (this.sessionId === sessionId) {
-        this.state.sending = false;
         if (streamId !== undefined && streamId === this.state.currentStreamId) {
-          this.state.streaming = false;
           this.state.currentStreamId = null;
+          this.setPhase("STREAM_END");
         }
-        this.notify();
       }
     }
   }
