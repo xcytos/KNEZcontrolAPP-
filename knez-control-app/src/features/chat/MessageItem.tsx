@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { ChatMessage } from '../../domain/DataContracts';
+import { AgentTrace } from '../../services/agent/AgentTracer';
 import { parseMessageContent, formatMarkdown, copyToClipboard } from './ChatUtils';
 
 const CodeBlock: React.FC<{ language: string; content: string }> = ({ language, content }) => {
@@ -69,17 +70,19 @@ const FormattedContent: React.FC<{ text: string }> = ({ text }) => {
   );
 };
 
-const MessageItemInner: React.FC<{ 
-  msg: ChatMessage; 
+const MessageItemInner: React.FC<{
+  msg: ChatMessage;
   readOnly: boolean;
   onStop?: (id: string) => void;
   onRetry?: (id: string) => void;
   onEdit?: (id: string) => void;
-}> = ({ msg, readOnly, onStop, onRetry, onEdit }) => {
+  agentTrace?: AgentTrace;
+}> = ({ msg, readOnly, onStop, onRetry, onEdit, agentTrace }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [copied, setCopied] = useState(false);
   const [thoughtsOpen, setThoughtsOpen] = useState(false);
   const [toolDetailsOpen, setToolDetailsOpen] = useState(false);
+  const [timelineOpen, setTimelineOpen] = useState(false);
 
   const parts = parseMessageContent(msg.text);
   // const hasThink = parts.some(p => p.type === 'think');
@@ -280,7 +283,45 @@ const MessageItemInner: React.FC<{
             return <FormattedContent key={i} text={part.content} />;
           })
         )}
-        
+
+        {/* P6.2 T9: Execution Timeline */}
+        {agentTrace && agentTrace.steps.length > 0 && (
+          <div className="mt-3 border border-zinc-800 bg-zinc-950/60 rounded-lg p-3">
+            <button
+              onClick={() => setTimelineOpen(!timelineOpen)}
+              className="w-full flex items-center justify-between text-left"
+            >
+              <span className="text-xs font-medium text-zinc-300">⏱️ Execution Timeline ({agentTrace.steps.length} steps)</span>
+              <span className="text-[10px] text-zinc-500">{timelineOpen ? '▼' : '▶'}</span>
+            </button>
+            {timelineOpen && (
+              <div className="mt-3 space-y-2">
+                {agentTrace.steps.map((step, idx) => (
+                  <div key={idx} className="pl-3 border-l-2 border-zinc-700">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-mono text-zinc-400">Step {step.stepNumber + 1}</span>
+                      {step.timing.duration > 0 && (
+                        <span className="text-[10px] text-zinc-500">{step.timing.duration}ms</span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-zinc-300 mb-1">{step.decision}</div>
+                    {step.retry && (
+                      <div className="text-[10px] text-yellow-400 flex items-center gap-1">
+                        🔄 Retry {step.retry.attempt}
+                      </div>
+                    )}
+                    {step.failure && (
+                      <div className="text-[10px] text-red-400 flex items-center gap-1">
+                        ❌ {step.failure.type}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {msg.isPartial && <span data-testid="partial-cursor" className="inline-block w-2 h-4 ml-1 bg-indigo-500 animate-pulse align-middle" />}
 
         {/* Metadata Footer */}
