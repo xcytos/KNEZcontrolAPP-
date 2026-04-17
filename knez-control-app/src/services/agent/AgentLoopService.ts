@@ -4,7 +4,6 @@
  */
 
 import { agentContextManager } from "./AgentContext";
-import { ToolCallMessage } from "../../domain/DataContracts";
 
 export interface ToolExecutionResult {
   ok: boolean;

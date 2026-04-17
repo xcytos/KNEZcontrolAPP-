@@ -1,6 +1,8 @@
 import React from 'react';
 import { DriftMetric } from '../../domain/DataContracts';
 
+// TODO: Integrate with real drift metrics service
+// Currently using mock data for exploratory visualization
 const MOCK_DRIFT: DriftMetric[] = [
   {
     id: 'd1',

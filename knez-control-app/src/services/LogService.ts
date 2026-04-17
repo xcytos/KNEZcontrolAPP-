@@ -1,6 +1,7 @@
 
 import { writeTextFile, BaseDirectory, readTextFile } from '@tauri-apps/plugin-fs';
 import { redactAny, redactString } from "../utils/redact";
+import { SLICE_LIMITS } from "../config/features";
 
 export enum LogLevel {
   DEBUG = "DEBUG",
@@ -24,6 +25,8 @@ class LogService {
   private maxLogs = 1000;
   private logFile = "app-runtime.log";
   private lastLogByKey = new Map<string, number>();
+  private errorHandler: ((event: ErrorEvent) => void) | null = null;
+  private rejectionHandler: ((event: PromiseRejectionEvent) => void) | null = null;
   private consoleMirror = {
     log: console.log.bind(console),
     info: console.info.bind(console),
@@ -33,7 +36,7 @@ class LogService {
 
   constructor() {
     // Capture unhandled errors
-    window.addEventListener("error", (event) => {
+    this.errorHandler = (event) => {
       this.error("runtime", "Unhandled Exception", {
         message: event.message,
         filename: event.filename,
@@ -41,13 +44,15 @@ class LogService {
         colno: event.colno,
         error: event.error?.stack,
       });
-    });
+    };
+    window.addEventListener("error", this.errorHandler);
 
-    window.addEventListener("unhandledrejection", (event) => {
+    this.rejectionHandler = (event) => {
       this.error("runtime", "Unhandled Promise Rejection", {
         reason: event.reason,
       });
-    });
+    };
+    window.addEventListener("unhandledrejection", this.rejectionHandler);
 
     this.hydrate();
   }
@@ -65,7 +70,7 @@ class LogService {
        );
        
        if (content && typeof content === 'string') {
-         const lines = content.split('\n').filter(Boolean).slice(-150);
+         const lines = content.split('\n').filter(Boolean).slice(-SLICE_LIMITS.LOG_LINES);
          const seenIds = new Set<string>();
          for (const line of lines) {
            try {
@@ -203,6 +208,17 @@ class LogService {
     return () => {
       this.listeners = this.listeners.filter((l) => l !== callback);
     };
+  }
+
+  cleanup(): void {
+    if (this.errorHandler) {
+      window.removeEventListener("error", this.errorHandler);
+      this.errorHandler = null;
+    }
+    if (this.rejectionHandler) {
+      window.removeEventListener("unhandledrejection", this.rejectionHandler);
+      this.rejectionHandler = null;
+    }
   }
 
   private notify(log: LogEntry) {

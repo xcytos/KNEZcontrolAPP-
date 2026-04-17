@@ -510,8 +510,8 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
       }, 50);
     };
-    window.addEventListener("chat-focus-message", onFocus as any);
-    return () => window.removeEventListener("chat-focus-message", onFocus as any);
+    window.addEventListener("chat-focus-message", onFocus);
+    return () => window.removeEventListener("chat-focus-message", onFocus);
   }, []);
 
   // Accessibility: Escape to close modals
@@ -913,8 +913,8 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         if (e?.detail?.runNow) void runTerminal(cmd);
       }, 0);
     };
-    window.addEventListener("knez-terminal-run", onRun as any);
-    return () => window.removeEventListener("knez-terminal-run", onRun as any);
+    window.addEventListener("knez-terminal-run", onRun);
+    return () => window.removeEventListener("knez-terminal-run", onRun);
   }, [runTerminal]);
 
   // CP16: Enterprise Header

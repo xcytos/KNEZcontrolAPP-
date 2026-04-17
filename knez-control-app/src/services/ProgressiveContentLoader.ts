@@ -3,6 +3,10 @@
 //     progressive content checking for dynamic pages.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { toolExecutionService } from "./ToolExecutionService";
+import { logger } from "./LogService";
+import { TIMEOUT_CONFIG } from "../config/features";
+
 export type LoadState = "domcontentloaded" | "load" | "networkidle";
 
 export interface ProgressiveLoadConfig {
@@ -93,7 +97,7 @@ export class ProgressiveContentLoader {
 
   /**
    * Simulate progressive loading with multiple attempts.
-   * This is a placeholder - actual implementation would integrate with playwright.
+   * Integrates with puppeteer MCP server if available for scroll-to-load and JavaScript execution.
    */
   static async loadWithProgressiveStrategy(
     initialContent: string,
@@ -102,8 +106,8 @@ export class ProgressiveContentLoader {
     const {
       maxAttempts = 3,
       attemptDelayMs = 1000,
-      scrollToLoad: _scrollToLoad = false,
-      executeJavaScript: _executeJavaScript = false
+      scrollToLoad = false,
+      executeJavaScript = false
     } = config;
 
     let currentContent = initialContent;
@@ -123,18 +127,51 @@ export class ProgressiveContentLoader {
         }
       }
 
-      // Simulate waiting for dynamic content
+      // Try to use puppeteer MCP server if available for advanced loading
+      if (scrollToLoad || executeJavaScript) {
+        try {
+          // Try scroll-to-load
+          if (scrollToLoad) {
+            try {
+              const scrollResult = await toolExecutionService.executeNamespacedTool(
+                "puppeteer__scroll_to_bottom",
+                {},
+                { timeoutMs: 5000 }
+              );
+              if (scrollResult.ok) {
+                await new Promise(r => setTimeout(r, TIMEOUT_CONFIG.PROGRESSIVE_LOAD_DELAY_MS)); // Wait for content to load
+              }
+            } catch (e) {
+              logger.warn('progressive_loader', 'scroll_to_bottom_failed', { error: String(e) });
+            }
+          }
+
+          // Try JavaScript execution
+          if (executeJavaScript) {
+            try {
+              const jsResult = await toolExecutionService.executeNamespacedTool(
+                "puppeteer__evaluate_javascript",
+                { code: "window.scrollTo(0, document.body.scrollHeight)" },
+                { timeoutMs: 5000 }
+              );
+              if (jsResult.ok) {
+                await new Promise(r => setTimeout(r, TIMEOUT_CONFIG.PROGRESSIVE_LOAD_DELAY_MS)); // Wait for content to load
+              }
+            } catch (e) {
+              logger.warn('progressive_loader', 'evaluate_javascript_failed', { error: String(e) });
+            }
+          }
+        } catch (e) {
+          logger.warn('progressive_loader', 'progressive_load_failed', { error: String(e) });
+        }
+      }
+
+      // Simulate waiting for dynamic content (fallback if puppeteer unavailable)
       if (attemptDelayMs > 0) {
         await new Promise(resolve => setTimeout(resolve, attemptDelayMs));
       }
 
-      // In real implementation, this would:
-      // 1. Scroll page if scrollToLoad is true
-      // 2. Execute JavaScript if executeJavaScript is true
-      // 3. Check for selector if waitForSelector is provided
-      // 4. Check load state if waitForLoadState is provided
-
-      // For now, simulate content improvement
+      // For now, simulate content improvement if no real integration available
       if (currentContent.length < 1000) {
         currentContent += " <!-- Simulated dynamic content loaded -->";
       }

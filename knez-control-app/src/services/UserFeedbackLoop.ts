@@ -5,22 +5,31 @@
 
 export type FeedbackAction = "retry" | "skip" | "correct" | "abort";
 
+// NOTE: Using Record<string, unknown> for tool arguments to maintain flexibility
+// across different tool schemas. Tool-specific types would require a registry.
 export interface FeedbackRequest {
   tool: string;
-  args: any;
+  args: Record<string, unknown>;
   error: string;
   suggestedActions: FeedbackAction[];
   suggestedCorrections?: Array<{ field: string; suggestion: string }>;
 }
 
+// NOTE: Using Record<string, unknown> for corrected arguments to maintain flexibility.
+// Tool-specific types would require a schema registry.
 export interface FeedbackResponse {
   action: FeedbackAction;
-  correctedArgs?: any;
+  correctedArgs?: Record<string, unknown>;
   userMessage?: string;
 }
 
 /**
  * User feedback loop manager for handling tool execution failures.
+ *
+ * NOTE: This service uses a global singleton pattern (userFeedbackLoop instance below).
+ * Dependency injection refactoring is out of scope for this cleanup phase.
+ * The singleton pattern is acceptable for the current architecture as these services
+ * are stateful singletons with application-wide lifecycle.
  */
 export class UserFeedbackLoop {
   private pendingFeedback: Map<string, FeedbackRequest> = new Map();
@@ -75,7 +84,7 @@ export class UserFeedbackLoop {
   /**
    * Generate suggested corrections based on error.
    */
-  generateSuggestedCorrections(_tool: string, args: any, error: string): Array<{ field: string; suggestion: string }> {
+  generateSuggestedCorrections(_tool: string, args: Record<string, unknown>, error: string): Array<{ field: string; suggestion: string }> {
     const corrections: Array<{ field: string; suggestion: string }> = [];
     const lowerError = error.toLowerCase();
 
@@ -92,9 +101,10 @@ export class UserFeedbackLoop {
     // Timeout errors
     if (lowerError.includes("timeout")) {
       if (args.timeout) {
+        const timeout = Number(args.timeout);
         corrections.push({
           field: "timeout",
-          suggestion: `Increase timeout from ${args.timeout}ms to ${args.timeout * 2}ms`
+          suggestion: `Increase timeout from ${timeout}ms to ${timeout * 2}ms`
         });
       } else {
         corrections.push({

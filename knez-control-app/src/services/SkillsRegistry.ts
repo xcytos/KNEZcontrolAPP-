@@ -1,4 +1,5 @@
 import { BaseDirectory, readTextFile, writeTextFile, exists, mkdir } from '@tauri-apps/plugin-fs'
+import { logger } from './LogService'
 
 type SkillMeta = {
   name: string
@@ -22,7 +23,13 @@ class SkillsRegistry {
         return
       }
       const rawIndex = await readTextFile(indexPath, { baseDir: BaseDirectory.AppLocalData })
-      const names: string[] = JSON.parse(rawIndex)
+      let names: string[] = []
+      try {
+        names = JSON.parse(rawIndex)
+      } catch (e) {
+        logger.warn('skills_registry', 'parse_index_failed', { error: String(e) })
+        names = []
+      }
       const loaded: SkillMeta[] = []
       for (const name of names) {
         const skillPath = `${this.baseDir}/${name}/SKILL.md`
@@ -39,7 +46,8 @@ class SkillsRegistry {
         })
       }
       this.skills = loaded
-    } catch {
+    } catch (e) {
+      logger.warn('skills_registry', 'load_failed', { error: String(e) });
       this.skills = []
     }
   }
@@ -56,8 +64,8 @@ class SkillsRegistry {
       const updated = this.ensureLearningsSection(skill.content) + `\n- [${timestamp}] ${entry}\n`
       await writeTextFile(skill.path, updated, { baseDir: BaseDirectory.AppLocalData })
       await this.load()
-    } catch {
-      // swallow
+    } catch (e) {
+      logger.error('skills_registry', 'append_learning_failed', { skillName, error: String(e) });
     }
   }
 
