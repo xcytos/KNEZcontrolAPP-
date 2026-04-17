@@ -20,6 +20,7 @@ import { validateToolResult } from "./ToolResultValidator";
 import { getTimeoutConfig, adaptiveTimeoutManager } from "./TimeoutConfig";
 import { agentLoopService } from "./agent/AgentLoopService";
 import { failureClassifier } from "./agent/FailureClassifier";
+import { agentOrchestrator } from "./agent/AgentOrchestrator";
 
 export type ChatPhase =
   | "idle"
@@ -856,6 +857,80 @@ export class ChatService {
       this.state.messages = this.state.messages.map((m) => m.id === messageId ? { ...m, ...patch } : m);
       this.notify();
     }
+  }
+
+  // ─── P6.2 T12: AGENT ORCHESTRATOR INTEGRATION ─────────────────────────
+  /**
+   * Run agent via AgentOrchestrator (hard cutover)
+   * This replaces the old runPromptToolLoop with the new controlled agent system
+   */
+  private async runAgentViaOrchestrator(
+    sessionId: string,
+    userInput: string,
+    assistantId: string,
+    _onMeta?: (meta: { model?: string }) => void
+  ): Promise<string> {
+    let finalOutput = "";
+    let currentToolMessageId: string | null = null;
+
+    await agentOrchestrator.runAgent(sessionId, userInput, {
+      onThinking: (isThinking) => {
+        this.setPhase(isThinking ? "MODEL_CALL_START" : "TOOL_END");
+      },
+      onStreamingChunk: (chunk) => {
+        // Streaming contract: ONLY stream final human text
+        // Filter out tool_call JSON, reasoning, logs
+        if (chunk && !chunk.includes('"tool_call"') && !chunk.startsWith('{')) {
+          this.state.messages = this.state.messages.map((m) =>
+            m.id === assistantId ? { ...m, text: (m.text || "") + chunk, hasReceivedFirstToken: true } : m
+          );
+          this.setPhase("FIRST_TOKEN");
+        }
+      },
+      onToolStart: (toolName, args) => {
+        this.setPhase("TOOL_START");
+        const startedAt = new Date().toISOString();
+        const traceMessageId = `${assistantId}-tool-${Date.now()}`;
+        currentToolMessageId = traceMessageId;
+        const toolCall: ToolCallMessage = { tool: toolName, args, status: "calling", startedAt };
+        this.persistToolTrace(sessionId, {
+          id: traceMessageId,
+          sessionId,
+          from: "tool_execution" as any,
+          text: "",
+          createdAt: startedAt,
+          toolCall,
+          deliveryStatus: "delivered",
+          replyToMessageId: assistantId,
+          correlationId: assistantId
+        });
+      },
+      onToolEnd: (toolName, result, success) => {
+        this.setPhase("TOOL_END");
+        if (currentToolMessageId) {
+          const finishedAt = new Date().toISOString();
+          const toolContent = this.stringifyToolPayload(result, 20000);
+          this.updateToolTrace(sessionId, currentToolMessageId, {
+            text: toolContent,
+            toolCall: {
+              tool: toolName,
+              args: {},
+              startedAt: new Date().toISOString(),
+              status: success ? "succeeded" : "failed",
+              result: success ? result : undefined,
+              error: success ? undefined : String(result),
+              finishedAt
+            }
+          });
+        }
+      },
+      onFinal: (output) => {
+        finalOutput = output;
+        this.setPhase("STREAM_END");
+      }
+    });
+
+    return finalOutput;
   }
 
   private isPermissionSeekingResponse(text: string): boolean {
@@ -1857,7 +1932,9 @@ export class ChatService {
         let toolExecutionTime: number | undefined;
         try {
           const toolLoopStart = Date.now();
-          processedText = await this.runPromptToolLoop(sessionId, injectedMessages as any, assistantId, toolsForModel, onMeta);
+          // P6.2 T12: Use AgentOrchestrator instead of runPromptToolLoop
+          const userText = item.text;
+          processedText = await this.runAgentViaOrchestrator(sessionId, userText, assistantId, onMeta);
           toolExecutionTime = Date.now() - toolLoopStart;
         } catch (mcpErr) {
           logger.warn("mcp_execution", "tool_execution_failed", { error: String(mcpErr) });
@@ -1998,7 +2075,9 @@ export class ChatService {
             // Auto-approve all tool calls - no manual approval required
             try {
               const toolLoopStart = Date.now();
-              processedText = await this.runPromptToolLoop(sessionId, injectedMessages as any, assistantId, toolsForModel, onMeta);
+              // P6.2 T12: Use AgentOrchestrator instead of runPromptToolLoop
+              const userText = item.text;
+              processedText = await this.runAgentViaOrchestrator(sessionId, userText, assistantId, onMeta);
               toolExecutionTime = Date.now() - toolLoopStart;
             } catch (mcpErr) {
               logger.warn("mcp_execution", "tool_execution_failed", { toolName: interp.toolCall.name, error: String(mcpErr) });
