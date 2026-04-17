@@ -234,14 +234,29 @@ export class KnezClient {
   private toolCallingSupportByEndpoint = new Map<string, "supported" | "unsupported">();
 
   constructor() {
-    const savedProfile = localStorage.getItem(PROFILE_STORAGE_KEY);
+    let savedProfile: string | null = null;
+    try {
+      savedProfile = localStorage.getItem(PROFILE_STORAGE_KEY);
+    } catch (e) {
+      // localStorage not available
+    }
     this.profile = savedProfile ? safeJsonParse<KnezConnectionProfile>(savedProfile) ?? DEFAULT_PROFILE : DEFAULT_PROFILE;
     const normalizedEndpoint = normalizeEndpoint(this.profile.endpoint);
     if (normalizedEndpoint !== this.profile.endpoint) {
       this.profile = { ...this.profile, endpoint: normalizedEndpoint };
-      localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(this.profile));
+      try {
+        localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(this.profile));
+      } catch (e) {
+        // localStorage not available - profile won't persist
+      }
     }
-    this.sessionId = localStorage.getItem(SESSION_STORAGE_KEY);
+    let sessionId: string | null = null;
+    try {
+      sessionId = localStorage.getItem(SESSION_STORAGE_KEY);
+    } catch (e) {
+      // localStorage not available
+    }
+    this.sessionId = sessionId;
     logger.info("knez_client", "Client initialized", { profile: this.profile.id });
   }
 

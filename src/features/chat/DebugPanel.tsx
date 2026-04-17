@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { ChatMessage } from '../../domain/DataContracts';
-import { agentTracer, AgentTrace, StepTrace } from '../../services/agent/AgentTracer';
+import { agentTracer, AgentTrace } from '../../services/agent/AgentTracer';
 
 interface ToolCallHistory {
   tool: string;

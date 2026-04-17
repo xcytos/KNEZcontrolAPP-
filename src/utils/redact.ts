@@ -8,6 +8,8 @@ export function redactString(input: string): string {
   return s;
 }
 
+// TODO: Consider using unknown instead of any for better type safety, but this is a safety function
+// that intentionally handles any data structure to redact sensitive keys recursively.
 export function redactAny(value: any): any {
   if (value == null) return value;
   if (typeof value === "string") return redactString(value);
@@ -26,7 +28,8 @@ export function redactAny(value: any): any {
   }
   try {
     return redactString(String(value));
-  } catch {
+  } catch (e) {
+    // Silently redact on error - this is a safety function
     return "[REDACTED]";
   }
 }

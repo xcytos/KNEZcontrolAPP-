@@ -1,6 +1,7 @@
 import { mcpOrchestrator } from "../mcp/McpOrchestrator";
 import { toolExposureService } from "./ToolExposureService";
 import { governanceService } from "./GovernanceService";
+import { SLICE_LIMITS } from '../config/features';
 
 type CompletionMessage = { role: string; content: string };
 
@@ -155,7 +156,7 @@ export class MemoryInjectionService {
     const ranked = this.staticSnippets
       .map((s) => ({ s, score: scoreOverlap(qTokens, this.staticTokenIndex.get(s.id) ?? new Set()) }))
       .sort((a, b) => b.score - a.score);
-    const chosen = ranked.filter((r) => r.score > 0).slice(0, 2).map((r) => r.s);
+    const chosen = ranked.filter((r) => r.score > 0).slice(0, SLICE_LIMITS.MEMORY_RETRIEVAL).map((r) => r.s);
 
     const governanceHash = await this.getGovernanceHash();
     const runtime = this.buildRuntimeBlock();

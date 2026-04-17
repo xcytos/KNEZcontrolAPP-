@@ -1,4 +1,5 @@
 import { taqwinMcpService } from "../mcp/taqwin/TaqwinMcpService";
+import { logger } from "./LogService";
 
 export type TaqwinActivationStatus = {
   state: "idle" | "starting" | "running" | "error";
@@ -18,7 +19,9 @@ class TaqwinActivationService {
     this.listeners.add(listener);
     try {
       listener(this.status);
-    } catch {}
+    } catch (e) {
+      logger.error('taqwin_activation', 'subscriber_callback_failed', { error: String(e) });
+    }
     return () => this.listeners.delete(listener);
   }
 
@@ -26,7 +29,9 @@ class TaqwinActivationService {
     for (const l of this.listeners) {
       try {
         l(this.status);
-      } catch {}
+      } catch (e) {
+        logger.error('taqwin_activation', 'emit_callback_failed', { error: String(e) });
+      }
     }
   }
 

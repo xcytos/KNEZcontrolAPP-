@@ -3,6 +3,9 @@
 //     content extraction fallbacks for better error recovery.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { deduplicateAndExclude } from "../utils/arrayUtils";
+import { SLICE_LIMITS } from "../config/features";
+
 export interface FallbackChain {
   primaryTool: string;
   fallbacks: Array<{
@@ -220,7 +223,7 @@ export function getNavigationAlternatives(url: string, _error: string): string[]
   }
 
   // Deduplicate and remove original
-  return [...new Set(alternatives)].filter(a => a !== url).slice(0, 4);
+  return deduplicateAndExclude(alternatives, url, SLICE_LIMITS.URL_ALTERNATIVES);
 }
 
 /**

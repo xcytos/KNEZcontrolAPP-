@@ -945,6 +945,7 @@ export class ChatService {
     );
   }
 
+  // @ts-ignore — intentionally retained as reference; never called
   private async appendSyntheticToolError(input: {
     sessionId: string;
     assistantId: string;
@@ -1259,6 +1260,7 @@ export class ChatService {
     return simulationPatterns.some(pattern => pattern.test(lowered));
   }
 
+  // @ts-ignore — intentionally retained as reference; never called
   private async runPromptToolLoop(
     sessionId: string,
     baseMessages: Array<{ role: string; content: string }>,
@@ -1357,7 +1359,6 @@ export class ChatService {
       const assistantContent = String(msg?.content ?? "");
       conversation.push({ role: "assistant", content: assistantContent });
       const req = this.parsePromptToolRequest(assistantContent);
-      const looksLikeToolJson = assistantContent.trim().startsWith("{") || assistantContent.includes("\"tool_call\"");
       logger.info("mcp_loop", "prompt_model_output", {
         assistantId,
         step,
@@ -1368,11 +1369,6 @@ export class ChatService {
       if (!req) {
         // [FIX A1/B2/H] — STRICT: Never return raw tool_call JSON or simulation to UI
         // Any response that looks like a tool call but failed parse must be corrected and retried
-        const isToolCallAttempt =
-          looksLikeToolJson ||
-          assistantContent.trim().includes('"tool_call"') ||
-          assistantContent.trim().includes("tool_call");
-
         if (this.isSimulationResponse(assistantContent) || this.isPermissionSeekingResponse(assistantContent)) {
           logger.warn("mcp_loop", "simulation_or_permission_blocked", { assistantId, step });
           conversation.push({

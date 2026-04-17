@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { MistakeEntry } from '../../domain/DataContracts';
 
+// TODO: Integrate with TAQWIN mistake tracking system for real mistake data
+// Currently using mock data for visualization
 const MOCK_MISTAKES: MistakeEntry[] = [
   {
     id: 'mis1',

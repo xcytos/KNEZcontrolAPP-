@@ -102,15 +102,13 @@ export const GovernancePanel: React.FC = () => {
       
       // Let's try to fetch from KNEZ backend if we add a route? 
       // No, let's use FS but catch errors.
-      // Actually, since we can't easily guess the path in production, 
+      // Actually, since we can't easily guess the path in production,
       // let's display a placeholder if FS fails, or implementing a backend route is cleaner.
       // I'll stick to the existing plan: try FS, fallback to "Unavailable in this build".
-      
-      // However, for this environment, I'll mock the read for the sake of the ticket if FS fails?
-      // NO. CP7 says "Assert zero simulation".
-      // So if FS fails, we show "Governance files not accessible".
-      
-      // Wait, I can add a simple backend endpoint to KNEZ to serve these files? 
+
+      // CP7 says "Assert zero simulation" - so if FS fails, we show "Governance files not accessible".
+
+      // Wait, I can add a simple backend endpoint to KNEZ to serve these files?
       // That would be robust. But modifying backend is extra scope.
       // Let's try to read via Tauri FS using a relative path from the app executable? 
       // Or just assume CWD is repo root for development.

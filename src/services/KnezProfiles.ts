@@ -15,23 +15,36 @@ function safeParse(raw: string | null): KnezConnectionProfile[] {
 
 export function listProfiles(): KnezConnectionProfile[] {
   const current = knezClient.getProfile();
-  const saved = safeParse(localStorage.getItem(KEY));
+  let saved: KnezConnectionProfile[] = [];
+  try {
+    saved = safeParse(localStorage.getItem(KEY));
+  } catch (e) {
+    // localStorage not available
+  }
   const byId = new Map(saved.map((p) => [p.id, p]));
   byId.set(current.id, current);
   return Array.from(byId.values());
 }
 
 export function saveProfile(profile: KnezConnectionProfile): void {
-  const saved = safeParse(localStorage.getItem(KEY));
-  const byId = new Map(saved.map((p) => [p.id, p]));
-  byId.set(profile.id, profile);
-  localStorage.setItem(KEY, JSON.stringify(Array.from(byId.values())));
+  try {
+    const saved = safeParse(localStorage.getItem(KEY));
+    const byId = new Map(saved.map((p) => [p.id, p]));
+    byId.set(profile.id, profile);
+    localStorage.setItem(KEY, JSON.stringify(Array.from(byId.values())));
+  } catch (e) {
+    // localStorage not available - profile won't persist
+  }
 }
 
 export function deleteProfile(id: string): void {
-  const saved = safeParse(localStorage.getItem(KEY));
-  const next = saved.filter((p) => p.id !== id);
-  localStorage.setItem(KEY, JSON.stringify(next));
+  try {
+    const saved = safeParse(localStorage.getItem(KEY));
+    const next = saved.filter((p) => p.id !== id);
+    localStorage.setItem(KEY, JSON.stringify(next));
+  } catch (e) {
+    // localStorage not available - profile won't be deleted
+  }
 }
 
 export function setActiveProfile(id: string): void {

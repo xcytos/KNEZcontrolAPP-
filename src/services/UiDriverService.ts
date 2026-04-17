@@ -1,9 +1,11 @@
+import { TIMEOUT_CONFIG } from '../config/features';
+
 type WaitOpts = { timeoutMs?: number, intervalMs?: number }
 
 class UiDriverService {
   async waitVisible(selector: string, opts: WaitOpts = {}): Promise<Element> {
-    const timeout = opts.timeoutMs ?? 5000
-    const interval = opts.intervalMs ?? 100
+    const timeout = opts.timeoutMs ?? TIMEOUT_CONFIG.DEFAULT_UI_TIMEOUT_MS
+    const interval = opts.intervalMs ?? TIMEOUT_CONFIG.DEFAULT_UI_INTERVAL_MS
     const start = Date.now()
     
     // Custom pseudo-selector handling

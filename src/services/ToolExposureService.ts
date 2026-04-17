@@ -1,6 +1,7 @@
 import { mcpOrchestrator, type ServerRuntime } from "../mcp/McpOrchestrator";
 import type { McpToolDefinition } from "./McpTypes";
 import type { McpAuthority } from "../mcp/authority";
+import { logger } from "./LogService";
 
 export type ToolRiskLevel = "low" | "medium" | "high";
 
@@ -29,7 +30,8 @@ function namespaceToolName(serverId: string, originalName: string): string {
 function stableHash(value: any): string {
   try {
     return JSON.stringify(value ?? null);
-  } catch {
+  } catch (e) {
+    logger.warn('tool_exposure', 'stable_hash_failed', { error: String(e) });
     return String(Date.now());
   }
 }
@@ -122,7 +124,9 @@ export class ToolExposureService {
     for (const fn of this.subscribers) {
       try {
         fn();
-      } catch {}
+      } catch (e) {
+        logger.error('tool_exposure', 'subscriber_callback_failed', { error: String(e) });
+      }
     }
   }
 

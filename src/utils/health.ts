@@ -1,4 +1,5 @@
 import type { HealthBackend } from "../domain/DataContracts";
+import { TIMEOUT_CONFIG } from "../config/features";
 
 export function backendHasLiveMetrics(be: HealthBackend): boolean {
   return be.latency_ms !== undefined && be.latency_ms !== null
@@ -19,7 +20,7 @@ export function isOverallHealthyStatus(status: string | undefined | null): boole
 
 export function isBackendStale(be: HealthBackend): boolean {
   if (!be.last_ping) return true;
-  const raw: any = be.last_ping as any;
+  const raw: string | number = be.last_ping as string | number;
   let t: number | null = null;
   if (typeof raw === "number") {
     t = raw < 10_000_000_000 ? raw * 1000 : raw;
@@ -28,7 +29,7 @@ export function isBackendStale(be: HealthBackend): boolean {
     if (!isNaN(parsed)) t = parsed;
   }
   if (!t) return true;
-  return Date.now() - t > 60000;
+  return Date.now() - t > TIMEOUT_CONFIG.HEALTH_BACKEND_STALE_MS;
 }
 
 export function selectPrimaryBackend(backends: HealthBackend[] | null | undefined): HealthBackend | null {

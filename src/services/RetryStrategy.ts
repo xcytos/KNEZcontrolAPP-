@@ -64,7 +64,6 @@ export function getArgumentModifier(error: string): ((args: any) => any) | null 
  * Determine retry strategy based on error and attempt count.
  */
 export function determineRetryStrategy(
-  toolName: string,
   error: string,
   attemptCount: number,
   maxAttempts: number = 3

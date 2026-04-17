@@ -3,7 +3,8 @@ import React, { useEffect, useState } from 'react';
 export const PerformancePanel: React.FC = () => {
   const [metrics, setMetrics] = useState<any[]>([]);
 
-  // Mock metrics until backend provides real telemetry stream
+  // TODO: Integrate with real metrics stream from backend (streaming metrics event emitter)
+  // Currently using mock metrics for visualization
   useEffect(() => {
     const timer = setInterval(() => {
       setMetrics(prev => {

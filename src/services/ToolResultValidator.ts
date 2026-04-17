@@ -5,6 +5,9 @@
 // T3: Self-Correcting Navigation — generates URL alternatives on failure.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { deduplicateAndExclude } from "../utils/arrayUtils";
+import { SLICE_LIMITS, TIMEOUT_CONFIG } from "../config/features";
+
 export interface ValidatedToolResult {
   isValid: boolean;
   reasons: string[];
@@ -55,7 +58,7 @@ function parseStructuredContext(toolName: string, args: any, result: any): strin
   const contentStr = String(result.content ?? result.text ?? result.snapshot ?? "");
   const contentLength = contentStr.length;
   lines.push(`content_length: ${contentLength}`);
-  lines.push(`page_valid: ${contentLength > 100}`);
+  lines.push(`page_valid: ${contentLength > TIMEOUT_CONFIG.CONTENT_LENGTH_THRESHOLD}`);
 
   // Console errors
   const consoleErrors: string[] = [];
@@ -64,20 +67,21 @@ function parseStructuredContext(toolName: string, args: any, result: any): strin
   } else if (Array.isArray(result.errors)) {
     consoleErrors.push(...result.errors.map(String));
   }
-  if (consoleErrors.length > 0) {
-    lines.push(`console_errors: ${consoleErrors.slice(0, 5).join(" | ")}`);
+  const uniqueConsoleErrors = [...new Set(consoleErrors)].filter(e => e !== "");
+  if (uniqueConsoleErrors.length > 0) {
+    lines.push(`console_errors: ${uniqueConsoleErrors.slice(0, SLICE_LIMITS.CONSOLE_ERRORS).join(" | ")}`);
   }
 
   // Headings
   const headings = extractHeadings(contentStr);
   if (headings.length > 0) {
-    lines.push(`headings: ${headings.slice(0, 6).join(" | ")}`);
+    lines.push(`headings: ${headings.slice(0, SLICE_LIMITS.HEADINGS).join(" | ")}`);
   }
 
   // Links
   const links = extractLinks(contentStr);
   if (links.length > 0) {
-    lines.push(`links: ${links.slice(0, 8).join(" | ")}`);
+    lines.push(`links: ${links.slice(0, SLICE_LIMITS.LINKS).join(" | ")}`);
   }
 
   // Page type heuristic
@@ -315,5 +319,5 @@ export function generateNavigationAlternatives(url: string, _reason: string): st
   }
 
   // Deduplicate and remove original
-  return [...new Set(alternatives)].filter(a => a !== url).slice(0, 4);
+  return deduplicateAndExclude(alternatives, url, SLICE_LIMITS.URL_ALTERNATIVES);
 }

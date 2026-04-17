@@ -3,6 +3,8 @@ import { chatService } from "./ChatService";
 import { persistenceService } from "./PersistenceService";
 import { sessionController } from "./SessionController";
 import { sessionDatabase } from "./SessionDatabase";
+import { logger } from "./LogService";
+import { TIMEOUT_CONFIG } from "../config/features";
 
 export interface TestResult {
   id: string;
@@ -71,7 +73,9 @@ export class TestRunner {
           } else if (test.name.includes("UI")) {
             skillsRegistry.appendLearning('ui-driver', `Failed test ${test.id}: ${e.message}`);
           }
-        } catch {}
+        } catch (skillsError) {
+          logger.error('test_runner', 'skills_registry_append_failed', { error: String(skillsError) });
+        }
       }
     };
 
@@ -106,8 +110,8 @@ export class TestRunner {
     cond: () => boolean | Promise<boolean>,
     opts: { timeoutMs?: number; intervalMs?: number; timeoutMessage?: string } = {}
   ) {
-    const timeoutMs = opts.timeoutMs ?? 8000;
-    const intervalMs = opts.intervalMs ?? 250;
+    const timeoutMs = opts.timeoutMs ?? TIMEOUT_CONFIG.TEST_RUNNER_TIMEOUT_MS;
+    const intervalMs = opts.intervalMs ?? TIMEOUT_CONFIG.TEST_RUNNER_INTERVAL_MS;
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       if (await cond()) return;

@@ -13,7 +13,7 @@ import { securityLayer } from "./SecurityLayer";
 import { agentTracer } from "./AgentTracer";
 import { knezClient } from "../KnezClient";
 import { toolExposureService } from "../ToolExposureService";
-import { memoryInjectionService } from "../MemoryInjectionService";
+import { toolExecutionService } from "../ToolExecutionService";
 
 export interface AgentCallbacks {
   onThinking: (isThinking: boolean) => void;
@@ -200,7 +200,7 @@ export class AgentOrchestrator {
         agentTracer.logFailure(sessionId, failureType, errorMsg, step);
 
         // Check retry strategy
-        const retryStrategy = retryStrategyEngine.getRetryStrategy(
+        const retryStrategy = await retryStrategyEngine.getRetryStrategy(
           failureType,
           toolCall.args,
           attempt,
@@ -230,7 +230,7 @@ export class AgentOrchestrator {
     }
 
     // Normalize tool result
-    const normalized = toolResultNormalizer.normalize(toolResult);
+    const normalized = toolResultNormalizer.normalize(toolCall.name, toolResult);
     const modelInput = normalized.structuredData;
 
     // Update context with tool result
@@ -249,10 +249,35 @@ export class AgentOrchestrator {
    * Call the model
    */
   private async callModel(sessionId: string, userInput: string, _context: AgentContext): Promise<string> {
-    // Build conversation messages
     const toolsForModel = toolExposureService.getToolsForModel();
+    const contextSummary = agentLoopService.getContextSummary(sessionId);
+
+    const systemPrompt = `
+You are an intelligent agent that executes tools with self-correction capabilities.
+
+CRITICAL RULES:
+1. When a tool fails, ANALYZE the error message to understand WHY it failed
+2. If the error indicates:
+   - Selector not found: Try alternative selectors (data-testid, aria-label, class)
+   - Navigation failed: Check URL validity, try different navigation method
+   - Timeout: Increase timeout, retry with same args
+   - Invalid arguments: Fix the argument format or values
+3. NEVER give up after a single failure
+4. If multiple attempts fail, explain what you tried and what the errors were
+5. Use the tool execution history to avoid repeating failed approaches
+
+${contextSummary}
+
+TOOL CALL FORMAT:
+{"tool_call":{"name":"<tool_name>","arguments":{...}}}
+
+PLAIN TEXT FORMAT:
+For normal conversation, respond directly with natural language.
+`;
+
     const conversation = [
-      { role: "user" as const, content: userInput }
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userInput }
     ];
 
     // Call KNEZ client
@@ -269,10 +294,39 @@ export class AgentOrchestrator {
    * Parse tool call from model output
    */
   private parseToolCall(modelOutput: string): { name: string; args: any } | null {
-    // This is a placeholder - in real implementation, this would parse JSON from model output
-    if (modelOutput.includes('"tool_call"')) {
+    const text = String(modelOutput ?? "").trim();
+    if (!text) return null;
+
+    // Try direct JSON first
+    if (text.includes('"tool_call"')) {
       try {
-        const parsed = JSON.parse(modelOutput);
+        const parsed = JSON.parse(text);
+        if (parsed.tool_call) {
+          return { name: parsed.tool_call.name, args: parsed.tool_call.arguments };
+        }
+      } catch {
+        // Invalid JSON, try other formats
+      }
+    }
+
+    // Try markdown code block extraction
+    const codeBlockMatch = text.match(/```(?:json)?\s*\n?(\{.*?\})\s*```/s);
+    if (codeBlockMatch) {
+      try {
+        const parsed = JSON.parse(codeBlockMatch[1]);
+        if (parsed.tool_call) {
+          return { name: parsed.tool_call.name, args: parsed.tool_call.arguments };
+        }
+      } catch {
+        // Invalid JSON in code block
+      }
+    }
+
+    // Try to find JSON object in mixed text
+    const jsonMatch = text.match(/\{[^{}]*"tool_call"[^{}]*\}/);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
         if (parsed.tool_call) {
           return { name: parsed.tool_call.name, args: parsed.tool_call.arguments };
         }
@@ -280,6 +334,7 @@ export class AgentOrchestrator {
         // Invalid JSON
       }
     }
+
     return null;
   }
 
@@ -290,9 +345,27 @@ export class AgentOrchestrator {
     const executionId = `${sessionId}-${toolName}-${Date.now()}`;
 
     return executionSandbox.execute(executionId, async (_signal) => {
-      // This is a placeholder - in real implementation, this would call the MCP tool
-      // For now, return a mock result
-      return { success: true, data: `Tool ${toolName} executed with args: ${JSON.stringify(args)}` };
+      // Resolve namespaced name from toolExposureService
+      const toolsCatalog = toolExposureService.getCatalog();
+      const toolMeta = toolsCatalog.find(t => t.originalName === toolName || t.name === toolName);
+
+      if (!toolMeta) {
+        throw new Error(`Tool not found in catalog: ${toolName}`);
+      }
+
+      const namespacedName = toolMeta.name;
+
+      // Execute via toolExecutionService (real MCP tool execution)
+      const outcome = await toolExecutionService.executeNamespacedTool(namespacedName, args, {
+        timeoutMs: 30000,
+        traceId: executionId
+      });
+
+      if (outcome.ok) {
+        return { success: true, data: outcome.result, durationMs: outcome.durationMs };
+      } else {
+        throw new Error(`${outcome.error.code}: ${outcome.error.message}`);
+      }
     }, 30000);
   }
 

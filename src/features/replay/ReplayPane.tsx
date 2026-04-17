@@ -22,13 +22,13 @@ export const ReplayPane: React.FC<{ sessionId: string | null }> = ({ sessionId }
   }, [sessionId]);
 
   useEffect(() => {
-    const onFocus = (e: any) => {
-      const id = String(e?.detail?.eventId ?? "");
+    const onFocus = (e: Event) => {
+      const id = String((e as CustomEvent).detail?.eventId ?? "");
       if (!id) return;
       setFocusEventId(id);
     };
-    window.addEventListener("replay-focus-event", onFocus as any);
-    return () => window.removeEventListener("replay-focus-event", onFocus as any);
+    window.addEventListener("replay-focus-event", onFocus);
+    return () => window.removeEventListener("replay-focus-event", onFocus);
   }, []);
 
   if (loading) return <div className="p-8 text-center text-zinc-500">Loading replay data...</div>;

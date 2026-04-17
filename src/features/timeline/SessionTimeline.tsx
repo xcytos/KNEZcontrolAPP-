@@ -1,6 +1,8 @@
 import React from 'react';
 import { SessionSegment } from '../../domain/DataContracts';
 
+// NOTE: Currently using mock data for visualization.
+// FUTURE: Integrate with session database to load real session segments
 const MOCK_SEGMENTS: SessionSegment[] = [
   {
     id: 's1',

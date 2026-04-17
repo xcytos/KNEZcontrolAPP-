@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import "./index.css";
 import App from "./App";
-import { ErrorBoundary } from "./components/layout/ErrorBoundary";
+import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import "./utils/observer"; // Initialize observer
 import "./mcp/rustEventBridge";
 import { governanceService } from "./services/GovernanceService";

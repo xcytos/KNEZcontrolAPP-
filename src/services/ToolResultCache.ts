@@ -3,6 +3,8 @@
 //     for better performance when tools are called repeatedly with same args.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { TIMEOUT_CONFIG } from '../config/features';
+
 export interface CacheEntry {
   tool: string;
   args: any;
@@ -26,14 +28,21 @@ export interface CacheStatistics {
 export class ToolResultCache {
   private cache: Map<string, CacheEntry> = new Map();
   private stats = { hits: 0, misses: 0 };
-  private maxEntries = 1000;
-  private defaultTTL = 300000; // 5 minutes default
+  private maxEntries = TIMEOUT_CONFIG.TOOL_CACHE_MAX_ENTRIES;
+  private defaultTTL = TIMEOUT_CONFIG.TOOL_CACHE_DEFAULT_TTL_MS; // 5 minutes default
+  public cleanupIntervalId: number | null = null;
 
   /**
    * Generate cache key from tool name and arguments.
    */
   private generateKey(tool: string, args: any): string {
-    const argsStr = JSON.stringify(args);
+    let argsStr: string;
+    try {
+      argsStr = JSON.stringify(args);
+    } catch (e) {
+      // Circular reference or unserializable data - use timestamp as fallback
+      argsStr = String(Date.now());
+    }
     return `${tool}:${argsStr}`;
   }
 
@@ -157,7 +166,12 @@ export class ToolResultCache {
 
     let totalSize = 0;
     for (const entry of this.cache.values()) {
-      totalSize += JSON.stringify(entry.result).length;
+      try {
+        totalSize += JSON.stringify(entry.result).length;
+      } catch (e) {
+        // Unserializable data - estimate size
+        totalSize += 1000;
+      }
     }
 
     return {
@@ -199,7 +213,12 @@ export class ToolResultCache {
   getSize(): number {
     let size = 0;
     for (const entry of this.cache.values()) {
-      size += JSON.stringify(entry.result).length;
+      try {
+        size += JSON.stringify(entry.result).length;
+      } catch (e) {
+        // Unserializable data - estimate size
+        size += 1000;
+      }
     }
     return size;
   }
@@ -220,7 +239,15 @@ export const toolResultCache = new ToolResultCache();
 
 // Periodic cleanup (every 5 minutes)
 if (typeof window !== "undefined") {
-  setInterval(() => {
+  toolResultCache.cleanupIntervalId = window.setInterval(() => {
     toolResultCache.cleanup();
-  }, 300000);
+  }, TIMEOUT_CONFIG.CACHE_CLEANUP_INTERVAL_MS);
+}
+
+// Export cleanup function for app shutdown
+export function cleanupToolResultCache() {
+  if (toolResultCache.cleanupIntervalId !== null) {
+    clearInterval(toolResultCache.cleanupIntervalId);
+    toolResultCache.cleanupIntervalId = null;
+  }
 }

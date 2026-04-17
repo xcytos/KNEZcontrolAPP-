@@ -3,6 +3,8 @@
  * Determines retry strategy based on failure type and context
  */
 
+import { knezClient } from "../KnezClient";
+
 export interface RetryStrategy {
   shouldRetry: boolean;
   refinedArgs?: any;
@@ -38,14 +40,14 @@ export class RetryStrategyEngine {
   /**
    * Get retry strategy based on failure type
    */
-  getRetryStrategy(
+  async getRetryStrategy(
     failureType: string,
     args: any,
-    currentRetryCount: number,
-    totalRetryCount: number
-  ): RetryStrategy {
-    // Check hard limits
-    if (currentRetryCount >= this.config.maxRetryPerStep) {
+    attempt: number,
+    totalRetries: number
+  ): Promise<RetryStrategy> {
+    // Check retry limits
+    if (attempt >= this.config.maxRetryPerStep) {
       return {
         shouldRetry: false,
         delayMs: 0,
@@ -53,7 +55,7 @@ export class RetryStrategyEngine {
       };
     }
 
-    if (totalRetryCount >= this.config.maxTotalRetries) {
+    if (totalRetries >= this.config.maxTotalRetries) {
       return {
         shouldRetry: false,
         delayMs: 0,
@@ -73,7 +75,7 @@ export class RetryStrategyEngine {
         return this.handleTimeout(args);
 
       case "invalid_args":
-        return this.handleInvalidArgs(args);
+        return await this.handleInvalidArgs(args);
 
       case "tool_execution_exception":
         return this.handleToolExecutionException(args);
@@ -130,16 +132,88 @@ export class RetryStrategyEngine {
 
   /**
    * Handle invalid args failure
-   * Strategy: regenerate args via model (placeholder for now)
+   * Strategy: apply heuristic fixes, then regenerate args via model if needed
    */
-  private handleInvalidArgs(_args: any): RetryStrategy {
-    // In a full implementation, this would call the model to regenerate args
-    // For now, we return false as we can't regenerate without model context
+  private async handleInvalidArgs(args: any, context?: any): Promise<RetryStrategy> {
+    // Apply heuristic fixes for common issues
+    const refinedArgs = { ...args };
+
+    // Fix URL format if missing protocol
+    if (args.url && !args.url.startsWith('http')) {
+      refinedArgs.url = `https://${args.url}`;
+    }
+
+    // Fix selector format if not a valid CSS selector
+    if (args.selector && !args.selector.startsWith('#') && !args.selector.startsWith('.') && !args.selector.startsWith('[')) {
+      refinedArgs.selector = `[data-testid="${args.selector}"]`;
+    }
+
+    // If heuristic fixes applied, retry with refined args
+    if (JSON.stringify(refinedArgs) !== JSON.stringify(args)) {
+      return {
+        shouldRetry: true,
+        refinedArgs,
+        delayMs: 1000,
+        reason: "Invalid arguments - applied heuristic fixes"
+      };
+    }
+
+    // No heuristic fix available, try model regeneration
+    try {
+      const regenerationPrompt = `
+The previous tool call failed due to invalid arguments.
+Original tool: ${context?.toolName || 'unknown'}
+Original args: ${JSON.stringify(args)}
+Error: ${context?.error || 'unknown'}
+
+Please regenerate corrected arguments in JSON format:
+{"tool_call":{"name":"${context?.toolName || 'unknown'}","arguments":{...}}}
+`;
+
+      const response = await knezClient.chatCompletionsNonStreamRaw(
+        [{ role: "user", content: regenerationPrompt }],
+        context?.sessionId || "regen",
+        {}
+      );
+
+      const regenerated = this.parseToolCall(String(response?.choices?.[0]?.message?.content || ""));
+      if (regenerated) {
+        return {
+          shouldRetry: true,
+          refinedArgs: regenerated.args,
+          delayMs: 2000,
+          reason: "Invalid arguments - regenerated via model"
+        };
+      }
+    } catch {
+      // Model regeneration failed, fall through
+    }
+
     return {
       shouldRetry: false,
       delayMs: 0,
       reason: "Invalid arguments - cannot automatically regenerate"
     };
+  }
+
+  /**
+   * Parse tool call from model output (helper for arg regeneration)
+   */
+  private parseToolCall(modelOutput: string): { name: string; args: any } | null {
+    const text = String(modelOutput ?? "").trim();
+    if (!text) return null;
+
+    if (text.includes('"tool_call"')) {
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed.tool_call) {
+          return { name: parsed.tool_call.name, args: parsed.tool_call.arguments };
+        }
+      } catch {
+        // Invalid JSON
+      }
+    }
+    return null;
   }
 
   /**

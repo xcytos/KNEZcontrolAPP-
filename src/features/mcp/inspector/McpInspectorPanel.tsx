@@ -91,8 +91,8 @@ export const McpInspectorPanel: React.FC = () => {
         configRef.current?.scrollIntoView({ block: "center" });
       } catch {}
     };
-    window.addEventListener("mcp-inspector-open-config", onOpenConfig as any);
-    return () => window.removeEventListener("mcp-inspector-open-config", onOpenConfig as any);
+    window.addEventListener("mcp-inspector-open-config", onOpenConfig);
+    return () => window.removeEventListener("mcp-inspector-open-config", onOpenConfig);
   }, []);
 
   const tools = useMemo(() => {
