@@ -1591,31 +1591,9 @@ export class ChatService {
     return text.trim();
   }
 
-  // ─── P2.4 PHASE 3: STRICT INTENT CLASSIFIER ───────────────────────────
-  private classifyIntent(userText: string): { intent: "chat_only" | "tool_required"; confidence: number } {
-    if (!ChatService.MCP_ENABLED) return { intent: "chat_only", confidence: 1.0 };
-    const lower = userText.toLowerCase().trim();
-
-    // Detect tool-relevant requests (navigation, search, file operations, etc.)
-    const toolKeywords = [
-      "navigate", "open", "browse", "visit", "goto", "go to",
-      "search", "find", "lookup", "query",
-      "file", "read", "write", "save", "delete", "create",
-      "execute", "run", "command", "shell",
-      "puppeteer", "browser", "chrome",
-      "test", "check", "verify"
-    ];
-
-    const hasToolKeyword = toolKeywords.some(kw => lower.includes(kw));
-    const hasUrl = /https?:\/\/|www\./.test(lower);
-    const hasDomain = /\.com|\.org|\.net|\.io|\.in/.test(lower);
-
-    if (hasToolKeyword || hasUrl || hasDomain) {
-      return { intent: "tool_required", confidence: 0.85 };
-    }
-
-    return { intent: "chat_only", confidence: 0.9 };
-  }
+  // ─── P2.4 PHASE 3: INTENT CLASSIFIER REMOVED ───────────────────────────
+  // Intent classification removed to allow AI model to decide when to use tools
+  // instead of blocking tool execution based on keyword matching
 
   // Manual approval removed - tools auto-approve (requestToolApproval and approveToolExecution removed)
 
@@ -1913,12 +1891,11 @@ export class ChatService {
         if (meta?.totalTokens) streamedTokenCount = meta.totalTokens;
       };
 
-      // Phase 16 fix: Check intent BEFORE streaming to decide if tool execution is needed
-      const { intent, confidence } = this.classifyIntent(item.text);
-      const shouldForceToolLoop = intent === "tool_required" && confidence >= 0.8 && ChatService.MCP_ENABLED && toolsForModel.length > 0;
+      // Phase 16 fix: Check if tools are available to decide if tool execution is needed
+      const shouldForceToolLoop = ChatService.MCP_ENABLED && toolsForModel.length > 0;
 
       if (shouldForceToolLoop) {
-        logger.info("mcp_routing", "skipping_streaming_for_tool_loop", { intent, confidence, userText: item.text.slice(0, 100) });
+        logger.info("mcp_routing", "skipping_streaming_for_tool_loop", { toolsCount: toolsForModel.length, userText: item.text.slice(0, 100) });
         // Skip streaming entirely, go directly to tool loop
         streamId = newMessageId();
         const controller = new AbortController();
@@ -2067,19 +2044,15 @@ export class ChatService {
       } else if (outputClass === "tool_call" && ChatService.MCP_ENABLED) {
         const interp = interpretOutput(interpretBuffer);
         if (interp.toolCall) {
-          if (intent === "tool_required" && confidence >= 0.8) {
-            // Auto-approve all tool calls - no manual approval required
-            try {
-              const toolLoopStart = Date.now();
-              // P6.2 T12: Use AgentOrchestrator instead of runPromptToolLoop
-              const userText = item.text;
-              processedText = await this.runAgentViaOrchestrator(sessionId, userText, assistantId, onMeta);
-              toolExecutionTime = Date.now() - toolLoopStart;
-            } catch (mcpErr) {
-              logger.warn("mcp_execution", "tool_execution_failed", { toolName: interp.toolCall.name, error: String(mcpErr) });
-              processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
-            }
-          } else {
+          // Auto-approve all tool calls - no manual approval required
+          try {
+            const toolLoopStart = Date.now();
+            // P6.2 T12: Use AgentOrchestrator instead of runPromptToolLoop
+            const userText = item.text;
+            processedText = await this.runAgentViaOrchestrator(sessionId, userText, assistantId, onMeta);
+            toolExecutionTime = Date.now() - toolLoopStart;
+          } catch (mcpErr) {
+            logger.warn("mcp_execution", "tool_execution_failed", { toolName: interp.toolCall.name, error: String(mcpErr) });
             processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
           }
         } else {

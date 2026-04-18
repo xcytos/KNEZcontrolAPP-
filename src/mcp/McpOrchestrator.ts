@@ -254,20 +254,12 @@ export class McpOrchestrator {
   }
 
   private async maybeAutoStartServers(): Promise<void> {
-    const authority = getMcpAuthority();
     const isTauri = isTauriRuntime();
     const servers = this.getServers();
-    const stdioAutoStarts = servers.filter((s) => s.enabled && s.start_on_boot && s.type === "stdio");
-    if (authority === "rust" && stdioAutoStarts.length > 1) {
-      for (const s of stdioAutoStarts.slice(1)) {
-        this.autoStartBackoffUntilByServerId.set(s.serverId, Date.now() + 60000);
-      }
-    }
 
     for (const s of servers) {
       if (!s.enabled || !s.start_on_boot) continue;
       if (!isTauri && s.type !== "http") continue;
-      if (authority === "rust" && s.type === "stdio" && stdioAutoStarts.length > 1 && s.serverId !== stdioAutoStarts[0]?.serverId) continue;
       if (s.state === "READY") continue;
 
       const backoffUntil = this.autoStartBackoffUntilByServerId.get(s.serverId) ?? 0;
