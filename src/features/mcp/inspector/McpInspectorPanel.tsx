@@ -220,11 +220,40 @@ export const McpInspectorPanel: React.FC = () => {
       const next = insert as any;
       if (!next.schema_version) next.schema_version = "1";
       if (!Array.isArray(next.inputs)) next.inputs = [];
-      if (!next.servers && next.mcpServers) {
-        next.servers = next.mcpServers;
-        delete next.mcpServers;
+      
+      // Merge servers instead of replacing
+      const insertServers = next.servers || next.mcpServers || {};
+      const draftObj: any = parsedDraft && typeof parsedDraft === "object" && !Array.isArray(parsedDraft) ? parsedDraft : { schema_version: "1", mcpServers: {} };
+      if (!draftObj.schema_version) draftObj.schema_version = "1";
+      if (!draftObj.mcpServers && draftObj.servers) {
+        draftObj.mcpServers = draftObj.servers;
+        delete draftObj.servers;
       }
-      return JSON.stringify(next, null, 2);
+      if (!draftObj.mcpServers || typeof draftObj.mcpServers !== "object" || Array.isArray(draftObj.mcpServers)) {
+        draftObj.mcpServers = {};
+      }
+      if (!Array.isArray(draftObj.inputs)) draftObj.inputs = [];
+      
+      // Merge inputs
+      if (Array.isArray(next.inputs)) {
+        const inputMap = new Map<string, any>();
+        for (const it of draftObj.inputs) {
+          if (it?.id) inputMap.set(it.id, it);
+        }
+        for (const it of next.inputs) {
+          if (it?.id) inputMap.set(it.id, it);
+        }
+        draftObj.inputs = Array.from(inputMap.values());
+      }
+      
+      // Merge servers
+      for (const [key, val] of Object.entries(insertServers)) {
+        if (key && val && typeof val === "object" && !Array.isArray(val)) {
+          draftObj.mcpServers[key] = val;
+        }
+      }
+      
+      return JSON.stringify(draftObj, null, 2);
     }
 
     const draftObj: any = parsedDraft && typeof parsedDraft === "object" && !Array.isArray(parsedDraft) ? parsedDraft : { schema_version: "1", mcpServers: {} };
@@ -257,7 +286,7 @@ export const McpInspectorPanel: React.FC = () => {
           if (!k) continue;
           const v = (insert as any)[k];
           if (!v || typeof v !== "object" || Array.isArray(v)) continue;
-          draftObj.servers[k] = v;
+          draftObj.mcpServers[k] = v;
         }
         return JSON.stringify(draftObj, null, 2);
       }

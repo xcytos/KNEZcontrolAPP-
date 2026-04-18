@@ -433,9 +433,16 @@ export const McpRegistryView: React.FC<{
   };
 
   const handleOpenEditModal = (serverId: string) => {
-    const server = runtimeById[serverId] as any;
+    let server = runtimeById[serverId] as any;
+    
+    // If not found in runtime, check inspector service config
     if (!server) {
-      showToast("Server not found in runtime", "error");
+      const inspectorServers = mcpInspectorService.getServers();
+      server = inspectorServers.find((s: any) => s.id === serverId);
+    }
+    
+    if (!server) {
+      showToast("Server not found", "error");
       return;
     }
     
@@ -468,9 +475,16 @@ export const McpRegistryView: React.FC<{
 
   const handleAddToLocalConfig = async (serverId: string) => {
     try {
-      const server = runtimeById[serverId] as any;
+      let server = runtimeById[serverId] as any;
+      
+      // If not found in runtime, check inspector service config
       if (!server) {
-        showToast("Server not found in runtime", "error");
+        const inspectorServers = mcpInspectorService.getServers();
+        server = inspectorServers.find((s: any) => s.id === serverId);
+      }
+      
+      if (!server) {
+        showToast("Server not found", "error");
         return;
       }
       
