@@ -266,6 +266,11 @@ CRITICAL RULES:
 4. If multiple attempts fail, explain what you tried and what the errors were
 5. Use the tool execution history to avoid repeating failed approaches
 
+CRITICAL: If a task involves browsing, navigation, or extraction:
+- DO NOT answer directly
+- You MUST call a tool
+- NEVER simulate tool output
+
 ${contextSummary}
 
 TOOL CALL FORMAT:

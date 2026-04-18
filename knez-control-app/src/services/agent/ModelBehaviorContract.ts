@@ -62,6 +62,11 @@ TOOL USAGE RULES:
 6. NEVER guess DOM elements - use snapshot to get actual refs
 7. ALWAYS take a snapshot before clicking or interacting with elements
 
+CRITICAL: If a task involves browsing, navigation, or extraction:
+- DO NOT answer directly
+- You MUST call a tool
+- NEVER simulate tool output
+
 OUTPUT FORMAT RULES:
 1. For normal conversation: Reply directly with natural language text. No JSON.
 2. For tool actions: Reply with JSON ONLY and NOTHING ELSE: {"tool_call":{"name":"...","arguments":{...}}}

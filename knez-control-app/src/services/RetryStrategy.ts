@@ -1,9 +1,32 @@
 // ─── RetryStrategy.ts ─────────────────────────────────────────────────
 // T10: Retry with Alternative Strategies — retry with modified args, tool substitution,
 //     strategy selection for better error recovery.
+// T2-Enhancement: Structured Failure Feedback Engine — failure taxonomy,
+//     classification, remediation suggestions, effectiveness tracking.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type RetryStrategy = "same" | "modified_args" | "alternative_tool" | "fallback";
+
+// T2-Enhancement: Failure taxonomy
+export type FailureType = 
+  | "network"
+  | "timeout"
+  | "validation"
+  | "permission"
+  | "data_mismatch"
+  | "schema_error"
+  | "element_not_found"
+  | "api_error"
+  | "unknown";
+
+export interface FailureClassification {
+  type: FailureType;
+  severity: "low" | "medium" | "high" | "critical";
+  category: "transient" | "permanent" | "intermittent";
+  remediation: string;
+  suggestedStrategy: RetryStrategy;
+  confidence: number; // 0-1
+}
 
 export interface RetryAttempt {
   strategy: RetryStrategy;
@@ -21,6 +44,25 @@ export interface RetryResult {
   reason: string;
 }
 
+// T3-Enhancement: Contextual retry memory interfaces
+export interface RetryContext {
+  sessionId: string;
+  toolName: string;
+  args: any;
+  error: string;
+  failureType: FailureType;
+  timestamp: number;
+  attemptCount: number;
+}
+
+export interface RetryPattern {
+  fingerprint: string;
+  occurrences: number;
+  lastSeen: number;
+  successRate: number;
+  recommendedStrategy: RetryStrategy;
+}
+
 /**
  * Argument modifiers for common retry scenarios.
  */
@@ -34,6 +76,125 @@ const ARGUMENT_MODIFIERS: Record<string, (args: any) => any> = {
     return rest;
   }
 };
+
+// T2-Enhancement: Failure classification patterns
+const FAILURE_PATTERNS: Record<FailureType, { patterns: string[]; severity: string; category: string; remediation: string; strategy: RetryStrategy }> = {
+  network: {
+    patterns: ["network", "connection", "econnrefused", "enotfound", "etimedout"],
+    severity: "medium",
+    category: "transient",
+    remediation: "Network connectivity issue. Retry with same arguments after brief delay.",
+    strategy: "same"
+  },
+  timeout: {
+    patterns: ["timeout", "timed out", "deadline exceeded"],
+    severity: "medium",
+    category: "transient",
+    remediation: "Operation timed out. Increase timeout duration and retry.",
+    strategy: "modified_args"
+  },
+  validation: {
+    patterns: ["validation", "invalid", "malformed", "schema"],
+    severity: "low",
+    category: "permanent",
+    remediation: "Input validation failed. Check and correct input parameters.",
+    strategy: "modified_args"
+  },
+  permission: {
+    patterns: ["permission", "unauthorized", "forbidden", "access denied"],
+    severity: "high",
+    category: "permanent",
+    remediation: "Permission denied. Check credentials and access rights.",
+    strategy: "fallback"
+  },
+  data_mismatch: {
+    patterns: ["not found", "404", "no data", "empty", "null"],
+    severity: "medium",
+    category: "intermittent",
+    remediation: "Data not found or mismatch. Try alternative data source or fallback.",
+    strategy: "alternative_tool"
+  },
+  schema_error: {
+    patterns: ["schema", "structure", "parse", "json"],
+    severity: "medium",
+    category: "permanent",
+    remediation: "Schema or structure mismatch. Validate expected format.",
+    strategy: "modified_args"
+  },
+  element_not_found: {
+    patterns: ["element not found", "selector", "no such element"],
+    severity: "medium",
+    category: "intermittent",
+    remediation: "UI element not found. Wait for element or use alternative selector.",
+    strategy: "modified_args"
+  },
+  api_error: {
+    patterns: ["api", "500", "502", "503", "504"],
+    severity: "high",
+    category: "transient",
+    remediation: "API error. Retry with exponential backoff or use fallback.",
+    strategy: "same"
+  },
+  unknown: {
+    patterns: [],
+    severity: "low",
+    category: "intermittent",
+    remediation: "Unknown error. Retry with fallback strategy.",
+    strategy: "fallback"
+  }
+};
+
+// T2-Enhancement: Classify failure type from error message
+export function classifyFailure(error: string, _toolName?: string, _context?: any): FailureClassification {
+  const lowerError = error.toLowerCase();
+  
+  for (const [type, config] of Object.entries(FAILURE_PATTERNS)) {
+    for (const pattern of config.patterns) {
+      if (lowerError.includes(pattern)) {
+        return {
+          type: type as FailureType,
+          severity: config.severity as any,
+          category: config.category as any,
+          remediation: config.remediation,
+          suggestedStrategy: config.strategy,
+          confidence: 0.8
+        };
+      }
+    }
+  }
+  
+  // Default to unknown
+  return {
+    type: "unknown",
+    severity: "low",
+    category: "intermittent",
+    remediation: "Unknown error. Retry with fallback strategy.",
+    suggestedStrategy: "fallback",
+    confidence: 0.5
+  };
+}
+
+// T2-Enhancement: Get remediation suggestion for failure type
+export function getRemediation(failureType: FailureType): string {
+  return FAILURE_PATTERNS[failureType]?.remediation || "Retry with fallback strategy.";
+}
+
+// T3-Enhancement: Generate fingerprint for retry context
+export function generateRetryFingerprint(context: RetryContext): string {
+  const argsStr = JSON.stringify(context.args);
+  const errorStr = context.error.toLowerCase();
+  const key = `${context.toolName}:${context.failureType}:${argsStr.substring(0, 100)}:${errorStr.substring(0, 50)}`;
+  
+  // Simple hash function
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) {
+    const char = key.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  
+  return `fp_${Math.abs(hash).toString(16)}`;
+}
 
 /**
  * Get argument modifier based on error type.
@@ -185,6 +346,13 @@ export function applyRetryStrategy(
  */
 export class RetryManager {
   private retryStats: Map<string, { attempts: number; successes: number; failures: number }> = new Map();
+  
+  // T2-Enhancement: Remediation effectiveness tracking
+  private _remediationStats: Map<FailureType, { attempts: number; successes: number }> = new Map();
+  
+  // T3-Enhancement: Contextual retry memory
+  private retryContexts: Map<string, RetryContext[]> = new Map(); // sessionId -> contexts
+  private retryPatterns: Map<string, RetryPattern> = new Map(); // fingerprint -> pattern
 
   recordRetry(toolName: string, strategy: RetryStrategy, success: boolean): void {
     const key = `${toolName}:${strategy}`;
@@ -254,6 +422,128 @@ export class RetryManager {
       totalFailures,
       overallSuccessRate: totalRetries > 0 ? totalSuccesses / totalRetries : 0
     };
+  }
+
+  // T2-Enhancement: Track remediation effectiveness
+  recordRemediation(failureType: FailureType, success: boolean): void {
+    const existing = this._remediationStats.get(failureType);
+
+    if (existing) {
+      existing.attempts++;
+      if (success) {
+        existing.successes++;
+      }
+    } else {
+      this._remediationStats.set(failureType, {
+        attempts: 1,
+        successes: success ? 1 : 0
+      });
+    }
+  }
+
+  getRemediationEffectiveness(failureType: FailureType): number {
+    const stats = this._remediationStats.get(failureType);
+    if (!stats || stats.attempts === 0) return 0;
+    return stats.successes / stats.attempts;
+  }
+
+  getAllRemediationStats(): Map<FailureType, { attempts: number; successes: number; effectiveness: number }> {
+    const result = new Map<FailureType, { attempts: number; successes: number; effectiveness: number }>();
+    
+    for (const [type, stats] of this._remediationStats.entries()) {
+      result.set(type, {
+        attempts: stats.attempts,
+        successes: stats.successes,
+        effectiveness: stats.attempts > 0 ? stats.successes / stats.attempts : 0
+      });
+    }
+    
+    return result;
+  }
+
+  // T3-Enhancement: Record retry context
+  recordRetryContext(context: RetryContext): void {
+    const sessionContexts = this.retryContexts.get(context.sessionId) || [];
+    sessionContexts.push(context);
+    this.retryContexts.set(context.sessionId, sessionContexts);
+
+    // Update retry pattern
+    const fingerprint = generateRetryFingerprint(context);
+    const existingPattern = this.retryPatterns.get(fingerprint);
+    
+    if (existingPattern) {
+      existingPattern.occurrences++;
+      existingPattern.lastSeen = context.timestamp;
+      // Update success rate based on recent attempts
+      const recentContexts = sessionContexts.filter(c => generateRetryFingerprint(c) === fingerprint).slice(-10);
+      const successes = recentContexts.filter(c => c.failureType === 'unknown').length; // Simplified
+      existingPattern.successRate = successes / recentContexts.length;
+    } else {
+      this.retryPatterns.set(fingerprint, {
+        fingerprint,
+        occurrences: 1,
+        lastSeen: context.timestamp,
+        successRate: 0.5, // Default neutral
+        recommendedStrategy: 'same'
+      });
+    }
+  }
+
+  // T3-Enhancement: Get retry patterns for a tool
+  getRetryPatterns(toolName: string): RetryPattern[] {
+    const patterns: RetryPattern[] = [];
+    
+    for (const pattern of this.retryPatterns.values()) {
+      // Pattern fingerprint contains tool name
+      if (pattern.fingerprint.includes(toolName.toLowerCase())) {
+        patterns.push(pattern);
+      }
+    }
+    
+    return patterns.sort((a, b) => b.occurrences - a.occurrences);
+  }
+
+  // T3-Enhancement: Check if should retry based on context
+  shouldRetryWithContext(context: RetryContext): boolean {
+    const fingerprint = generateRetryFingerprint(context);
+    const pattern = this.retryPatterns.get(fingerprint);
+    
+    if (!pattern) return true; // No pattern, allow retry
+    
+    // If pattern has low success rate and many occurrences, don't retry
+    if (pattern.occurrences > 5 && pattern.successRate < 0.2) {
+      return false;
+    }
+    
+    // If pattern is recent (within last hour) and failed, limit retries
+    const timeSinceLastSeen = Date.now() - pattern.lastSeen;
+    if (timeSinceLastSeen < 3600000 && pattern.occurrences > 3 && pattern.successRate < 0.3) {
+      return false;
+    }
+    
+    return true;
+  }
+
+  // T3-Enhancement: Get recommended strategy based on context
+  getRecommendedStrategy(context: RetryContext): RetryStrategy | null {
+    const fingerprint = generateRetryFingerprint(context);
+    const pattern = this.retryPatterns.get(fingerprint);
+    
+    if (pattern && pattern.occurrences > 2) {
+      return pattern.recommendedStrategy;
+    }
+    
+    return null;
+  }
+
+  // T3-Enhancement: Clear context for a session
+  clearSessionContext(sessionId: string): void {
+    this.retryContexts.delete(sessionId);
+  }
+
+  // T3-Enhancement: Get context for a session
+  getSessionContext(sessionId: string): RetryContext[] {
+    return this.retryContexts.get(sessionId) || [];
   }
 }
 

@@ -54,6 +54,78 @@ export const McpInspectorPanel: React.FC = () => {
       (selected.type === "stdio" &&
         (!!(selected.env as any)?.TAQWIN_GOVERNANCE_SNAPSHOT_URL || !!(selected.env as any)?.KNEZ_ENDPOINT)));
 
+  // Include runtime servers from mcpOrchestrator to show all servers, not just local config
+  const runtimeServers = useMemo(() => {
+    const runtimeById = mcpOrchestrator.getSnapshot().servers;
+    const localServerIds = new Set(servers.map(s => s.id));
+    const allServers = [...servers];
+    
+    for (const [id, runtime] of Object.entries(runtimeById)) {
+      if (!localServerIds.has(id)) {
+        const rt = runtime as any;
+        // Add runtime server that's not in local config
+        allServers.push({
+          id,
+          type: runtime.type as "stdio" | "http",
+          enabled: runtime.enabled,
+          command: rt.command,
+          args: rt.args,
+          cwd: rt.cwd,
+          env: rt.env,
+          url: rt.url,
+          headers: rt.headers,
+          tags: runtime.tags,
+          start_on_boot: runtime.start_on_boot,
+          allowed_tools: rt.allowed_tools,
+          blocked_tools: rt.blocked_tools,
+        } as any);
+      }
+    }
+    
+    return allServers.sort((a, b) => a.id.localeCompare(b.id));
+  }, [servers]);
+
+  // Combine status from both inspector service and mcpOrchestrator
+  const allStatusById = useMemo(() => {
+    const runtimeById = mcpOrchestrator.getSnapshot().servers;
+    const combined = { ...statusById };
+    
+    for (const [id, runtime] of Object.entries(runtimeById)) {
+      if (!combined[id]) {
+        const rt = runtime as any;
+        // Add status for runtime server that's not in inspector service
+        combined[id] = {
+          id,
+          enabled: runtime.enabled,
+          tags: runtime.tags,
+          type: runtime.type as "stdio" | "http",
+          command: rt.command,
+          args: rt.args,
+          cwd: rt.cwd,
+          env: rt.env,
+          url: rt.url,
+          headers: rt.headers,
+          state: runtime.state,
+          pid: runtime.pid ?? null,
+          running: runtime.running ?? false,
+          framing: runtime.framing ?? "content-length",
+          lastOkAt: runtime.lastOkAt ?? null,
+          initializedAt: null,
+          initializeDurationMs: null,
+          toolsListDurationMs: null,
+          lastError: runtime.lastError ?? null,
+          toolsCached: runtime.tools?.length ?? 0,
+          toolsCacheAt: runtime.toolsCacheAt ?? null,
+          toolsPending: runtime.toolsPending ?? false,
+          stdoutTail: null,
+          stderrTail: null,
+        };
+      }
+    }
+    
+    return combined;
+  }, [statusById]);
+
   const [rawDraft, setRawDraft] = useState(cfg.raw);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string>("");
@@ -155,14 +227,14 @@ export const McpInspectorPanel: React.FC = () => {
       return JSON.stringify(next, null, 2);
     }
 
-    const draftObj: any = parsedDraft && typeof parsedDraft === "object" && !Array.isArray(parsedDraft) ? parsedDraft : { schema_version: "1", servers: {} };
+    const draftObj: any = parsedDraft && typeof parsedDraft === "object" && !Array.isArray(parsedDraft) ? parsedDraft : { schema_version: "1", mcpServers: {} };
     if (!draftObj.schema_version) draftObj.schema_version = "1";
-    if (!draftObj.servers && draftObj.mcpServers) {
-      draftObj.servers = draftObj.mcpServers;
-      delete draftObj.mcpServers;
+    if (!draftObj.mcpServers && draftObj.servers) {
+      draftObj.mcpServers = draftObj.servers;
+      delete draftObj.servers;
     }
-    if (!draftObj.servers || typeof draftObj.servers !== "object" || Array.isArray(draftObj.servers)) {
-      draftObj.servers = {};
+    if (!draftObj.mcpServers || typeof draftObj.mcpServers !== "object" || Array.isArray(draftObj.mcpServers)) {
+      draftObj.mcpServers = {};
     }
     if (!Array.isArray(draftObj.inputs)) draftObj.inputs = [];
 
@@ -170,7 +242,7 @@ export const McpInspectorPanel: React.FC = () => {
       const id = String((insert as any).id).trim();
       const entry = { ...(insert as any) };
       delete entry.id;
-      draftObj.servers[id] = entry;
+      draftObj.mcpServers[id] = entry;
       return JSON.stringify(draftObj, null, 2);
     }
 
@@ -197,16 +269,19 @@ export const McpInspectorPanel: React.FC = () => {
   const githubRemoteTemplate = () =>
     JSON.stringify(
       {
-        id: "github_remote",
-        type: "http",
-        url: "https://api.githubcopilot.com/mcp/",
-        headers: {
-          Authorization: "Bearer ${input:github_mcp_pat}",
-          "X-MCP-Toolsets": "repos,issues,pull_requests",
-          "X-MCP-Readonly": "true"
-        },
-        enabled: true,
-        tags: ["github", "mcp", "remote"]
+        mcpServers: {
+          github_remote: {
+            type: "http",
+            url: "https://api.githubcopilot.com/mcp/",
+            headers: {
+              Authorization: "Bearer ${input:github_mcp_pat}",
+              "X-MCP-Toolsets": "repos,issues,pull_requests",
+              "X-MCP-Readonly": "true"
+            },
+            enabled: true,
+            tags: ["github", "mcp", "remote"]
+          }
+        }
       },
       null,
       2
@@ -369,8 +444,8 @@ export const McpInspectorPanel: React.FC = () => {
               </button>
             </div>
             <div className="space-y-2 max-h-[260px] overflow-auto pr-1">
-              {servers.map((s) => {
-                const st = statusById[s.id];
+              {runtimeServers.map((s) => {
+                const st = allStatusById[s.id];
                 const active = s.id === selectedId;
                 return (
                   <button
@@ -388,7 +463,7 @@ export const McpInspectorPanel: React.FC = () => {
                   </button>
                 );
               })}
-              {servers.length === 0 && <div className="text-xs text-zinc-500">No servers configured.</div>}
+              {runtimeServers.length === 0 && <div className="text-xs text-zinc-500">No servers configured.</div>}
             </div>
           </div>
         </div>

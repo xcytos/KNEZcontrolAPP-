@@ -11,13 +11,14 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
         password: true
       }
     ],
-    servers: {
+    mcpServers: {
       taqwin: {
         command: "python",
         args: ["-u", "main.py", "mcp"],
         working_directory: "..\\\\TAQWIN_V1",
         env: { PYTHONUNBUFFERED: "1" },
         enabled: true,
+        start_on_boot: true,
         tags: ["taqwin", "mcp"]
       },
       chrome_devtools: {
@@ -49,7 +50,8 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
         command: "npx",
         args: ["-y", "@modelcontextprotocol/server-puppeteer"],
         env: {},
-        enabled: false,
+        enabled: true,
+        start_on_boot: true,
         tags: ["puppeteer", "browser", "mcp", "npx"]
       },
       "tauri-ui": {
@@ -69,40 +71,41 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
       taqwin: {
         id: "taqwin",
         type: "stdio",
-        command: String(rawObj.servers.taqwin.command),
-        args: rawObj.servers.taqwin.args.slice(),
-        cwd: String(rawObj.servers.taqwin.working_directory),
-        env: { ...rawObj.servers.taqwin.env },
+        command: String(rawObj.mcpServers.taqwin.command),
+        args: rawObj.mcpServers.taqwin.args.slice(),
+        cwd: String(rawObj.mcpServers.taqwin.working_directory),
+        env: { ...rawObj.mcpServers.taqwin.env },
         enabled: true,
-        tags: rawObj.servers.taqwin.tags.slice()
+        start_on_boot: true,
+        tags: rawObj.mcpServers.taqwin.tags.slice()
       },
       chrome_devtools: {
         id: "chrome_devtools",
         type: "stdio",
-        command: String((rawObj.servers as any).chrome_devtools.command),
-        args: (rawObj.servers as any).chrome_devtools.args.slice(),
+        command: String((rawObj.mcpServers as any).chrome_devtools.command),
+        args: (rawObj.mcpServers as any).chrome_devtools.args.slice(),
         cwd: undefined,
-        env: { ...(rawObj.servers as any).chrome_devtools.env },
+        env: { ...(rawObj.mcpServers as any).chrome_devtools.env },
         enabled: false,
-        tags: (rawObj.servers as any).chrome_devtools.tags.slice()
+        tags: (rawObj.mcpServers as any).chrome_devtools.tags.slice()
       },
       github_remote: {
         id: "github_remote",
         type: "http",
-        url: String((rawObj.servers as any).github_remote.url),
-        headers: { ...(rawObj.servers as any).github_remote.headers },
+        url: String((rawObj.mcpServers as any).github_remote.url),
+        headers: { ...(rawObj.mcpServers as any).github_remote.headers },
         enabled: false,
-        tags: (rawObj.servers as any).github_remote.tags.slice()
+        tags: (rawObj.mcpServers as any).github_remote.tags.slice()
       },
       github_local: {
         id: "github_local",
         type: "stdio",
-        command: String((rawObj.servers as any).github_local.command),
-        args: (rawObj.servers as any).github_local.args.slice(),
+        command: String((rawObj.mcpServers as any).github_local.command),
+        args: (rawObj.mcpServers as any).github_local.args.slice(),
         cwd: undefined,
-        env: { ...(rawObj.servers as any).github_local.env },
+        env: { ...(rawObj.mcpServers as any).github_local.env },
         enabled: false,
-        tags: (rawObj.servers as any).github_local.tags.slice()
+        tags: (rawObj.mcpServers as any).github_local.tags.slice()
       },
       "io.windsurf/puppeteer": {
         id: "io.windsurf/puppeteer",
@@ -112,6 +115,7 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
         cwd: undefined,
         env: {},
         enabled: true,
+        start_on_boot: true,
         tags: ["puppeteer", "browser", "mcp", "npx"]
       },
       "tauri-ui": {

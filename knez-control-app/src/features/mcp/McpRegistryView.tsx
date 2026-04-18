@@ -9,6 +9,83 @@ import { mcpInspectorService } from '../../mcp/inspector/McpInspectorService';
 import { mcpOrchestrator } from '../../mcp/McpOrchestrator';
 import { extractImportedMcpConfig } from '../../mcp/config/importMcpServers';
 
+const EditServerModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  onSave: (serverId: string, json: string) => Promise<void>;
+  serverId: string;
+  initialConfig: string;
+}> = ({ isOpen, onClose, onSave, serverId, initialConfig }) => {
+  const [json, setJson] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setJson(initialConfig);
+      setError(null);
+    }
+  }, [isOpen, initialConfig]);
+
+  const handleSave = async () => {
+    if (!json.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(serverId, json);
+      onClose();
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" role="dialog" aria-modal="true">
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg w-full max-w-lg shadow-xl flex flex-col max-h-[90vh] mx-4">
+        <div className="flex justify-between items-center p-4 border-b border-zinc-800">
+          <h3 className="text-lg font-bold text-zinc-100">Edit Server: {serverId}</h3>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white" aria-label="Close">✕</button>
+        </div>
+        <div className="p-4 flex-1 overflow-auto">
+          <p className="text-sm text-zinc-400 mb-2">
+            Edit the configuration for this server.
+          </p>
+          <textarea
+            className="w-full h-64 bg-zinc-950 border border-zinc-800 rounded p-3 text-sm font-mono text-zinc-300 focus:border-blue-500 outline-none resize-none"
+            value={json}
+            onChange={(e) => setJson(e.target.value)}
+            spellCheck={false}
+          />
+          {error && (
+            <div className="mt-2 text-red-400 text-sm bg-red-900/10 border border-red-900/30 p-2 rounded">
+              {error}
+            </div>
+          )}
+        </div>
+        <div className="p-4 border-t border-zinc-800 flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm text-zinc-300 hover:text-white hover:bg-zinc-800 rounded"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-4 py-2 text-sm bg-blue-600 text-white hover:bg-blue-500 rounded disabled:opacity-50"
+          >
+            {saving ? "Saving..." : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const AddServerModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
@@ -99,6 +176,9 @@ export const McpRegistryView: React.FC<{
   const [toolDetails, setToolDetails] = useState<{ serverId: string; tool: any } | null>(null);
   const [tick, setTick] = useState(0);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingServerId, setEditingServerId] = useState<string>("");
+  const [editingServerConfig, setEditingServerConfig] = useState<string>("");
 
   useEffect(() => {
     void mcpInspectorService.loadConfig();
@@ -322,6 +402,125 @@ export const McpRegistryView: React.FC<{
     }
   };
 
+  const handleEditServer = async (serverId: string, jsonStr: string) => {
+    try {
+      const parsed = JSON.parse(jsonStr);
+      const currentCfg = mcpInspectorService.getConfig();
+      
+      // Get current inputs and servers
+      const inputs = mcpInspectorService.getInputs();
+      const servers = mcpInspectorService.getServers();
+      const serverMap: Record<string, any> = {};
+      for (const s of servers) {
+        serverMap[s.id] = s;
+      }
+      
+      // Update the specific server
+      serverMap[serverId] = { ...parsed, id: serverId };
+      
+      const payload = {
+        schema_version: currentCfg.normalized?.schema_version ?? "1",
+        inputs,
+        mcpServers: serverMap
+      };
+      
+      await mcpInspectorService.saveConfig(JSON.stringify(payload, null, 2));
+      showToast(`Updated config for ${serverId}`, "success");
+      onRefresh();
+    } catch (e: any) {
+      throw new Error(`Failed to update server config: ${String(e?.message ?? e)}`);
+    }
+  };
+
+  const handleOpenEditModal = (serverId: string) => {
+    const server = runtimeById[serverId] as any;
+    if (!server) {
+      showToast("Server not found in runtime", "error");
+      return;
+    }
+    
+    // Extract server config
+    const serverConfig: any = {
+      id: serverId,
+      type: server.type,
+      enabled: server.enabled,
+      start_on_boot: server.start_on_boot,
+    };
+    
+    if (server.type === "http") {
+      serverConfig.url = server.url;
+      serverConfig.headers = server.headers;
+    } else {
+      serverConfig.command = server.command;
+      serverConfig.args = server.args;
+      serverConfig.cwd = server.cwd;
+      serverConfig.env = server.env;
+    }
+    
+    serverConfig.tags = server.tags;
+    serverConfig.allowed_tools = server.allowed_tools;
+    serverConfig.blocked_tools = server.blocked_tools;
+    
+    setEditingServerId(serverId);
+    setEditingServerConfig(JSON.stringify(serverConfig, null, 2));
+    setShowEditModal(true);
+  };
+
+  const handleAddToLocalConfig = async (serverId: string) => {
+    try {
+      const server = runtimeById[serverId] as any;
+      if (!server) {
+        showToast("Server not found in runtime", "error");
+        return;
+      }
+      
+      // Extract server config
+      const serverConfig: any = {
+        id: serverId,
+        type: server.type,
+        enabled: server.enabled,
+        start_on_boot: server.start_on_boot,
+      };
+      
+      if (server.type === "http") {
+        serverConfig.url = server.url;
+        serverConfig.headers = server.headers;
+      } else {
+        serverConfig.command = server.command;
+        serverConfig.args = server.args;
+        serverConfig.cwd = server.cwd;
+        serverConfig.env = server.env;
+      }
+      
+      serverConfig.tags = server.tags;
+      serverConfig.allowed_tools = server.allowed_tools;
+      serverConfig.blocked_tools = server.blocked_tools;
+      
+      const currentCfg = mcpInspectorService.getConfig();
+      const inputs = mcpInspectorService.getInputs();
+      const servers = mcpInspectorService.getServers();
+      const serverMap: Record<string, any> = {};
+      for (const s of servers) {
+        serverMap[s.id] = s;
+      }
+      
+      // Add the server to local config
+      serverMap[serverId] = serverConfig;
+      
+      const payload = {
+        schema_version: currentCfg.normalized?.schema_version ?? "1",
+        inputs,
+        mcpServers: serverMap
+      };
+      
+      await mcpInspectorService.saveConfig(JSON.stringify(payload, null, 2));
+      showToast(`Added ${serverId} to local config`, "success");
+      onRefresh();
+    } catch (e: any) {
+      showToast(`Failed to add to local config: ${String(e?.message ?? e)}`, "error");
+    }
+  };
+
   const handleAddServer = async (jsonStr: string) => {
     try {
       const parsed = JSON.parse(jsonStr);
@@ -376,7 +575,7 @@ export const McpRegistryView: React.FC<{
           {
             schema_version: extracted.schema_version ?? "1",
             inputs: mergedInputs,
-            servers: serverMap
+            mcpServers: serverMap
           },
           null,
           2
@@ -506,18 +705,20 @@ export const McpRegistryView: React.FC<{
                     >
                       Inspect
                     </button>
-                    {localServerIds.has(item.id) ? (
+                    <button
+                      onClick={() => handleOpenEditModal(item.id)}
+                      className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
+                    >
+                      Edit
+                    </button>
+                    {!localServerIds.has(item.id) && (
                       <button
-                        onClick={() => {
-                          mcpInspectorService.setSelectedId(item.id);
-                          setTab("inspector");
-                          window.dispatchEvent(new CustomEvent("mcp-inspector-open-config"));
-                        }}
-                        className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
+                        onClick={() => handleAddToLocalConfig(item.id)}
+                        className="text-xs px-3 py-1.5 rounded bg-green-700 text-white hover:bg-green-600 transition-colors"
                       >
-                        Edit
+                        + Add to Local Config
                       </button>
-                    ) : null}
+                    )}
                     {localServerIds.has(item.id) ? (
                       <button
                         onClick={() => handleRestart(item.id)}
@@ -718,6 +919,13 @@ export const McpRegistryView: React.FC<{
         isOpen={showAddModal} 
         onClose={() => setShowAddModal(false)}
         onSave={handleAddServer}
+      />
+      <EditServerModal
+        isOpen={showEditModal}
+        onClose={() => setShowEditModal(false)}
+        onSave={handleEditServer}
+        serverId={editingServerId}
+        initialConfig={editingServerConfig}
       />
       {toolDetails ? (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" role="dialog" aria-modal="true">

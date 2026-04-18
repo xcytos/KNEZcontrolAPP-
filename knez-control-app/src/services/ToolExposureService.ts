@@ -135,7 +135,8 @@ export class ToolExposureService {
     const tools: ExposedToolMeta[] = [];
 
     for (const runtime of Object.values(servers)) {
-      if (runtime.state !== "READY") continue;
+      // Expose tools from READY servers OR servers with cached tools
+      if (runtime.state !== "READY" && (!runtime.tools || runtime.tools.length === 0)) continue;
       for (const t of runtime.tools ?? []) {
         if (!t?.name) continue;
         tools.push(toolToMeta(t, runtime));

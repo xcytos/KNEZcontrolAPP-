@@ -17,6 +17,7 @@ export const TIMEOUT_CONFIG = {
   TEST_RUNNER_TIMEOUT_MS: 8000,
   TEST_RUNNER_INTERVAL_MS: 250,
   CACHE_CLEANUP_INTERVAL_MS: 300000, // 5 minutes
+  CONTEXT_WINDOW_TOKENS: 128000, // 128k tokens for context window
 };
 
 // Configuration constants for slice limits
