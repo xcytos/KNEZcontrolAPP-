@@ -44,6 +44,7 @@ import { analytics } from './services/AnalyticsService';
 import { logger } from './services/LogService';
 import { features } from './config/features';
 import { initMcpBoot } from './mcp/mcpBoot';
+import { getStaticMemoryLoader } from './services/StaticMemoryLoader';
 
 // ...
 
@@ -67,6 +68,20 @@ function AppContent() {
 
   useEffect(() => {
     void initMcpBoot();
+  }, []);
+
+  // Load static memories on startup
+  useEffect(() => {
+    const loadMemories = async () => {
+      try {
+        const loader = getStaticMemoryLoader();
+        const status = await loader.loadMemories();
+        console.log('[App] Static memories loaded:', status);
+      } catch (error) {
+        console.error('[App] Failed to load static memories:', error);
+      }
+    };
+    void loadMemories();
   }, []);
 
   useEffect(() => {
