@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { knezClient } from "../../services/KnezClient";
 import { KnowledgeBaseView } from "./KnowledgeBaseView";
 import { useStatus } from "../../contexts/useStatus";
+import { EventSourcedMemoryView } from "./EventSourcedMemoryView";
 
 const MemoryDetailModal: React.FC<{ 
   memoryId: string | null;
@@ -78,7 +79,7 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
   const { online } = useStatus();
   const [memories, setMemories] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"memories" | "knowledge" | "graph" | "gate">("memories");
+  const [activeTab, setActiveTab] = useState<"memories" | "knowledge" | "graph" | "gate" | "eventsourced">("memories");
   const [error, setError] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [sessions, setSessions] = useState<string[]>([])
@@ -259,6 +260,12 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
             >
               Gate
             </button>
+            <button 
+              onClick={() => setActiveTab("eventsourced")}
+              className={`text-xs px-2 py-1 rounded ${activeTab === 'eventsourced' ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+            >
+              Event Sourced
+            </button>
             </div>
         </div>
       </div>
@@ -392,6 +399,8 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
             );
           })}
         </div>
+      ) : activeTab === 'eventsourced' ? (
+        <EventSourcedMemoryView />
       ) : (
         <div className="flex-1 p-4 flex flex-col items-center justify-center bg-zinc-950 text-zinc-600">
            {/* CP8-8: Simple Node Graph Visualization */}

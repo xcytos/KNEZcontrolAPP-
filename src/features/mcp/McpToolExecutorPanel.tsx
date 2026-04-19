@@ -2,6 +2,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { mcpOrchestrator } from "../../mcp/McpOrchestrator";
 import type { McpToolDefinition } from "../../services/McpTypes";
 import { logger } from "../../services/LogService";
+import { Badge } from "../../components/ui/core/Badge";
+import { Button } from "../../components/ui/core/Button";
+import { Input } from "../../components/ui/core/Input";
 
 type ToolRef = { serverId: string; tool: McpToolDefinition };
 
@@ -43,15 +46,15 @@ function buildDefaultArgs(schema: any): string {
 }
 
 const ServerBadge: React.FC<{ state: string }> = ({ state }) => {
-  const color =
+  const variant =
     state === "READY" || state === "INITIALIZED"
-      ? "bg-emerald-500"
+      ? "success"
       : state === "STARTING" || state === "LISTING_TOOLS"
-      ? "bg-amber-500"
+      ? "warning"
       : state === "ERROR"
-      ? "bg-red-500"
-      : "bg-zinc-600";
-  return <span className={`inline-block w-1.5 h-1.5 rounded-full ${color} flex-none`} />;
+      ? "error"
+      : "default";
+  return <Badge variant={variant} className="w-1.5 h-1.5 p-0"><span className="block w-1.5 h-1.5 rounded-full bg-current" /></Badge>;
 };
 
 const ExecutionRecordRow: React.FC<{
@@ -233,11 +236,10 @@ export const McpToolExecutorPanel: React.FC = () => {
           <span className="text-[10px] text-zinc-600 font-mono">{totalToolCount} across {readyServerCount} srv</span>
         </div>
         <div className="px-2 py-2 border-b border-zinc-800">
-          <input
-            className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-300 placeholder-zinc-600 outline-none focus:border-blue-600"
-            placeholder="Filter tools…"
+          <Input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter tools…"
           />
         </div>
         <div className="flex-1 overflow-y-auto">
@@ -302,20 +304,14 @@ export const McpToolExecutorPanel: React.FC = () => {
               <span className="text-sm text-zinc-600">Select a tool from the left panel</span>
             )}
           </div>
-          <button
+          <Button
             onClick={handleExecute}
             disabled={!selectedTool || executing || !!argsError}
-            className="flex items-center gap-2 px-4 py-1.5 rounded bg-blue-600 text-white text-xs font-semibold hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            loading={executing}
+            size="xs"
           >
-            {executing ? (
-              <>
-                <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                Running…
-              </>
-            ) : (
-              <>▶ Execute</>
-            )}
-          </button>
+            Execute
+          </Button>
         </div>
 
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">

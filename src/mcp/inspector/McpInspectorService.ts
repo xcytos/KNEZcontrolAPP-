@@ -295,6 +295,22 @@ export class McpInspectorService {
   }
 
   async saveConfig(raw: string): Promise<void> {
+    // Validate JSON structure before save
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") {
+        throw new Error("Config must be a valid JSON object");
+      }
+      if (parsed.mcpServers && typeof parsed.mcpServers !== "object") {
+        throw new Error("mcpServers must be an object");
+      }
+    } catch (e: any) {
+      if (e instanceof SyntaxError) {
+        throw new Error("Invalid JSON: " + e.message);
+      }
+      throw e;
+    }
+    
     const { config } = await mcpHostConfigService.save(raw);
     const normalized = normalizeMcpConfig({ schema_version: config.schema_version, inputs: config.inputs ?? [], servers: config.servers });
     this.applyConfig(

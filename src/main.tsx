@@ -7,7 +7,12 @@ import "./utils/observer"; // Initialize observer
 import "./mcp/rustEventBridge";
 import { governanceService } from "./services/GovernanceService";
 
+// Initialize governance service
 void governanceService.getSnapshot().catch(() => null);
+
+// Note: MemoryLoaderService disabled for browser compatibility
+// It uses Node.js fs module which doesn't work in browser/Tauri environment
+// To enable: Move file watching to Rust backend or use Tauri's file system API
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

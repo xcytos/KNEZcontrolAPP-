@@ -1,33 +1,10 @@
 {
   "schema_version": "1",
   "mcpServers": {
-    "taqwin": {
-      "command": "C:\\Users\\syedm\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
-      "args": [
-        "-u",
-        "C:\\Users\\syedm\\Downloads\\ASSETS\\controlAPP\\TAQWIN_V1\\main.py"
-      ],
-      "env": {
-        "PYTHONUNBUFFERED": "1"
-      },
-      "disabled": false
-    },
     "playwright": {
       "command": "npx",
       "args": [
-        "@playwright/mcp@latest"
-      ],
-      "disabled": false
-    },
-    "tauri-ui": {
-      "command": "__builtin__",
-      "args": [],
-      "disabled": false
-    },
-    "taqwin-cdp": {
-      "command": "node",
-      "args": [
-        "C:\\Users\\syedm\\Downloads\\ASSETS\\controlAPP\\TAQWIN_V1\\taqwin-mcp-cdp\\server.js"
+        "@playwright/mcp"
       ],
       "disabled": false
     }

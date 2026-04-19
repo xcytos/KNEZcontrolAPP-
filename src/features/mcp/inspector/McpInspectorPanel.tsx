@@ -3,7 +3,7 @@ import { useMcpInspector } from "./useMcpInspector";
 import type { McpTrafficEvent } from "../../../mcp/inspector/McpTraffic";
 import { mcpOrchestrator } from "../../../mcp/McpOrchestrator";
 
-type LogTab = "traffic" | "stdout" | "stderr" | "parse";
+type LogTab = "lifecycle" | "traffic" | "stdout" | "stderr" | "parse";
 
 function isTauriRuntime(): boolean {
   const w = window as any;
@@ -131,17 +131,14 @@ export const McpInspectorPanel: React.FC = () => {
   const [saveError, setSaveError] = useState<string>("");
   const [selectedTool, setSelectedTool] = useState<string>("");
   const [toolSearch, setToolSearch] = useState("");
-  const [toolArgsText, setToolArgsText] = useState("{}");
-  const [toolTimeoutMs, setToolTimeoutMs] = useState(180000);
-  const [toolResult, setToolResult] = useState<string>("");
-  const [toolError, setToolError] = useState<string>("");
-  const [logTab, setLogTab] = useState<LogTab>("traffic");
+  const [logTab, setLogTab] = useState<LogTab>("lifecycle");
   const [trafficLimit, setTrafficLimit] = useState(300);
   const [checkingKnez, setCheckingKnez] = useState(false);
   const [toolsListTimeoutMs, setToolsListTimeoutMs] = useState(60000);
   const [logSearch, setLogSearch] = useState("");
   const [autoScroll, setAutoScroll] = useState(true);
   const logsRef = useRef<HTMLDivElement | null>(null);
+  const logsSectionRef = useRef<HTMLDivElement | null>(null);
   const configRef = useRef<HTMLTextAreaElement | null>(null);
   const [showAddServer, setShowAddServer] = useState(false);
   const [addServerText, setAddServerText] = useState("");
@@ -165,6 +162,19 @@ export const McpInspectorPanel: React.FC = () => {
     };
     window.addEventListener("mcp-inspector-open-config", onOpenConfig);
     return () => window.removeEventListener("mcp-inspector-open-config", onOpenConfig);
+  }, []);
+
+  useEffect(() => {
+    const onFocusLogs = () => {
+      try {
+        setLogTab("lifecycle");
+        setTimeout(() => {
+          logsSectionRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }, 100);
+      } catch {}
+    };
+    window.addEventListener("mcp-inspector-focus-logs", onFocusLogs);
+    return () => window.removeEventListener("mcp-inspector-focus-logs", onFocusLogs);
   }, []);
 
   const tools = useMemo(() => {
@@ -200,6 +210,63 @@ export const McpInspectorPanel: React.FC = () => {
     const searched = q ? filtered.filter((e) => asText(e).toLowerCase().includes(q)) : filtered;
     return searched.slice(Math.max(0, searched.length - trafficLimit));
   }, [selectedId, logTab, trafficLimit, logSearch, servers.length]);
+
+  const lifecycleLogs = useMemo(() => {
+    if (!selectedId) return [];
+    const all = svc.getTraffic(selectedId);
+    const st = allStatusById[selectedId];
+    const entries: { at: number; level: "info" | "warn" | "error"; text: string }[] = [];
+    let hasConnected = false;
+    let toolNames: string[] = [];
+    for (const evt of all) {
+      if (evt.kind === "spawn_error") {
+        entries.push({ at: evt.at, level: "error", text: `Spawn failed: ${evt.message}` });
+      } else if (evt.kind === "process_closed") {
+        entries.push({ at: evt.at, level: evt.code === 0 ? "info" : "error", text: `Process exited (code=${String(evt.code ?? "null")})` });
+      } else if (evt.kind === "request" && (evt as any).method === "initialize") {
+        if (!hasConnected) {
+          const cmd = st?.command ? `${st.command} ${(st.args ?? []).join(" ")}`.trim() : selectedId;
+          entries.push({ at: evt.at, level: "info", text: `Connecting: ${cmd}` });
+        }
+      } else if (evt.kind === "response" && !hasConnected) {
+        const json = (evt as any).json;
+        if (json?.result?.serverInfo || json?.result?.capabilities) {
+          hasConnected = true;
+          const pid = st?.pid ? ` PID=${st.pid}` : "";
+          entries.push({ at: evt.at, level: "info", text: `Connected.${pid}` });
+        }
+      } else if (evt.kind === "request" && (evt as any).method === "tools/list") {
+        entries.push({ at: evt.at, level: "info", text: "Listing tools..." });
+      } else if (evt.kind === "response" && toolNames.length === 0) {
+        const json = (evt as any).json;
+        if (json?.result?.tools && Array.isArray(json.result.tools)) {
+          toolNames = (json.result.tools as any[]).map((t: any) => String(t.name ?? "")).filter(Boolean);
+          if (toolNames.length > 0) {
+            entries.push({ at: evt.at, level: "info", text: `Got ${toolNames.length} tools: ${toolNames.join(", ")}` });
+          }
+        }
+      } else if (evt.kind === "raw_stderr") {
+        const text = evt.text.trim();
+        if (text) {
+          try {
+            const parsed = JSON.parse(text);
+            if (parsed.message) {
+              const level = String(parsed.level ?? "INFO").toLowerCase();
+              entries.push({ at: evt.at, level: level === "warning" || level === "warn" ? "warn" : level === "error" ? "error" : "info", text: `[${parsed.logger ?? "server"}] ${parsed.message}` });
+            }
+          } catch {
+            entries.push({ at: evt.at, level: "info", text: text });
+          }
+        }
+      }
+    }
+    if (st?.lastError && entries.length === 0) {
+      entries.push({ at: Date.now(), level: "error", text: st.lastError });
+    }
+    const q = logSearch.trim().toLowerCase();
+    const searched = q ? entries.filter((e) => e.text.toLowerCase().includes(q)) : entries;
+    return searched.slice(Math.max(0, searched.length - trafficLimit));
+  }, [selectedId, logTab, trafficLimit, logSearch, servers.length, allStatusById]);
 
   const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
 
@@ -517,18 +584,11 @@ export const McpInspectorPanel: React.FC = () => {
                   disabled={selected.type === "stdio" ? !isTauri : false}
                   onClick={() => {
                     void svc.handshake(selectedId, { toolsListTimeoutMs }).catch(() => {});
+                    setLogTab("lifecycle");
+                    setTimeout(() => logsSectionRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 300);
                   }}
                 >
                   Start
-                </button>
-                <button
-                  className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors disabled:opacity-50"
-                  disabled={selected.type === "stdio" ? !isTauri : false}
-                  onClick={() => {
-                    void svc.start(selectedId).catch(() => {});
-                  }}
-                >
-                  Spawn
                 </button>
                 <button
                   className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors disabled:opacity-50"
@@ -544,6 +604,8 @@ export const McpInspectorPanel: React.FC = () => {
                   disabled={selected.type === "stdio" ? !isTauri : false}
                   onClick={() => {
                     void svc.restart(selectedId).catch(() => {});
+                    setLogTab("lifecycle");
+                    setTimeout(() => logsSectionRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 300);
                   }}
                 >
                   Restart
@@ -552,33 +614,10 @@ export const McpInspectorPanel: React.FC = () => {
                   className="text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors disabled:opacity-50"
                   disabled={selected.type === "stdio" ? !isTauri : false}
                   onClick={() => {
-                    void svc.initialize(selectedId).catch(() => {});
-                  }}
-                >
-                  Initialize
-                </button>
-                <button
-                  className="text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors disabled:opacity-50"
-                  disabled={selected.type === "stdio" ? !isTauri : false}
-                  onClick={() => {
-                    void (async () => {
-                      try {
-                        await svc.initialize(selectedId);
-                        await svc.listTools(selectedId, { waitForResult: true, timeoutMs: toolsListTimeoutMs });
-                      } catch {}
-                    })();
-                  }}
-                >
-                  Test Connect
-                </button>
-                <button
-                  className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors disabled:opacity-50"
-                  disabled={selected.type === "stdio" ? !isTauri : false}
-                  onClick={() => {
                     void svc.listTools(selectedId, { waitForResult: false, timeoutMs: toolsListTimeoutMs }).catch(() => {});
                   }}
                 >
-                  tools/list
+                  List Tools
                 </button>
                 <input
                   value={toolsListTimeoutMs}
@@ -721,7 +760,7 @@ export const McpInspectorPanel: React.FC = () => {
           <div className="grid grid-cols-1 gap-3">
             <div className="border border-zinc-800 rounded p-2 bg-zinc-950">
               <div className="flex items-center justify-between mb-2">
-                <div className="text-xs text-zinc-300 font-semibold">Tools</div>
+                <div className="text-xs text-zinc-300 font-semibold">Tools ({tools.length})</div>
                 <input
                   value={toolSearch}
                   onChange={(e) => setToolSearch(e.target.value)}
@@ -729,66 +768,27 @@ export const McpInspectorPanel: React.FC = () => {
                   className="text-[11px] px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-zinc-200 w-[200px]"
                 />
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <div className="max-h-[180px] overflow-auto pr-1 space-y-1">
-                  {tools.map((t) => (
-                    <button
-                      key={t.name}
-                      className={`w-full text-left px-2 py-1 rounded border text-[11px] font-mono ${
-                        selectedTool === t.name ? "border-blue-700 bg-blue-900/20 text-zinc-100" : "border-zinc-800 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
-                      }`}
-                      onClick={() => {
-                        setSelectedTool(t.name);
-                        setToolResult("");
-                        setToolError("");
-                      }}
-                    >
-                      {t.name}
-                    </button>
-                  ))}
-                  {tools.length === 0 && <div className="text-xs text-zinc-500">No tools cached.</div>}
-                </div>
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <input
-                      value={toolTimeoutMs}
-                      onChange={(e) => setToolTimeoutMs(Math.max(1000, Number(e.target.value) || 0))}
-                      className="text-[11px] px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-zinc-200 w-[120px]"
-                    />
-                    <div className="text-[11px] text-zinc-500">timeout ms</div>
-                    <button
-                      disabled
-                      className="ml-auto text-xs px-2 py-1 rounded bg-zinc-700 text-zinc-300 transition-colors disabled:opacity-70"
-                      onClick={() => {}}
-                    >
-                      Call Disabled
-                    </button>
-                  </div>
-                  <textarea
-                    value={toolArgsText}
-                    onChange={(e) => setToolArgsText(e.target.value)}
-                    className="w-full h-[120px] bg-zinc-900 border border-zinc-800 rounded p-2 text-[11px] font-mono text-zinc-200"
-                    spellCheck={false}
-                  />
-                  <div className="mt-2 text-[11px] text-zinc-500">
-                    Manual inspector tool execution is disabled. Use chat; ChatService owns model and MCP tool loops.
-                  </div>
-                  {toolError && (
-                    <div className="mt-2 border border-red-900/40 bg-red-900/10 rounded p-2 text-red-300 text-xs whitespace-pre-wrap break-words">
-                      {toolError}
-                    </div>
-                  )}
-                  {toolResult && (
-                    <pre className="mt-2 bg-zinc-900 border border-zinc-800 rounded p-2 text-[10px] text-zinc-200 whitespace-pre-wrap break-words max-h-[220px] overflow-auto">
-                      {toolResult}
-                    </pre>
-                  )}
-                </div>
+              <div className="max-h-[180px] overflow-auto pr-1 space-y-1">
+                {tools.map((t) => (
+                  <button
+                    key={t.name}
+                    className={`w-full text-left px-2 py-1 rounded border text-[11px] font-mono ${
+                      selectedTool === t.name ? "border-blue-700 bg-blue-900/20 text-zinc-100" : "border-zinc-800 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
+                    }`}
+                    onClick={() => {
+                      setSelectedTool(t.name);
+                    }}
+                  >
+                    {t.name}
+                  </button>
+                ))}
+                {tools.length === 0 && <div className="text-xs text-zinc-500">No tools cached. Start the server to load tools.</div>}
               </div>
             </div>
 
-            <div className="border border-zinc-800 rounded p-2 bg-zinc-950">
+            <div ref={logsSectionRef} className="border border-zinc-800 rounded p-2 bg-zinc-950">
               <div className="flex items-center gap-2 mb-2">
+                <button onClick={() => setLogTab("lifecycle")} className={`text-xs px-2 py-1 rounded ${logTab === "lifecycle" ? "bg-emerald-800 text-white" : "text-zinc-400 hover:text-white"}`}>Lifecycle</button>
                 <button onClick={() => setLogTab("traffic")} className={`text-xs px-2 py-1 rounded ${logTab === "traffic" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"}`}>Traffic</button>
                 <button onClick={() => setLogTab("stdout")} className={`text-xs px-2 py-1 rounded ${logTab === "stdout" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"}`}>Stdout</button>
                 <button onClick={() => setLogTab("stderr")} className={`text-xs px-2 py-1 rounded ${logTab === "stderr" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"}`}>Stderr</button>
@@ -801,9 +801,9 @@ export const McpInspectorPanel: React.FC = () => {
                 />
                 <button
                   onClick={() => {
-                    const payload = traffic
-                      .map((evt) => `[${formatTime(evt.at)}] ${evt.kind}\n${asText(evt)}`)
-                      .join("\n\n---\n\n");
+                    const payload = logTab === "lifecycle"
+                      ? lifecycleLogs.map((e) => `[${formatTime(e.at)}] ${e.level === "error" ? "✗" : e.level === "warn" ? "⚠" : "✓"} ${e.text}`).join("\n")
+                      : traffic.map((evt) => `[${formatTime(evt.at)}] ${evt.kind}\n${asText(evt)}`).join("\n\n---\n\n");
                     void navigator.clipboard?.writeText(payload);
                   }}
                   className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
@@ -827,7 +827,25 @@ export const McpInspectorPanel: React.FC = () => {
                 </div>
               </div>
               <div ref={logsRef} className="max-h-[360px] overflow-auto border border-zinc-800 rounded bg-zinc-900 p-2">
-                {traffic.length === 0 ? (
+                {logTab === "lifecycle" ? (
+                  lifecycleLogs.length === 0 ? (
+                    <div className="text-xs text-zinc-500">No lifecycle events yet. Start the server to see connection logs.</div>
+                  ) : (
+                    <div className="space-y-1">
+                      {lifecycleLogs.map((entry, idx) => (
+                        <div key={idx} className="flex items-start gap-2 text-[11px] font-mono">
+                          <span className="text-zinc-600 shrink-0">{formatTime(entry.at)}</span>
+                          <span className={entry.level === "error" ? "text-red-300" : entry.level === "warn" ? "text-yellow-300" : "text-emerald-300"}>
+                            {entry.level === "error" ? "✗" : entry.level === "warn" ? "⚠" : "✓"}
+                          </span>
+                          <span className={entry.level === "error" ? "text-red-200" : entry.level === "warn" ? "text-yellow-200" : "text-zinc-200"}>
+                            {entry.text}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                ) : traffic.length === 0 ? (
                   <div className="text-xs text-zinc-500">No events.</div>
                 ) : (
                   <div className="space-y-2">
@@ -845,7 +863,6 @@ export const McpInspectorPanel: React.FC = () => {
                             <span className={evt.kind.includes("error") ? "text-red-400 font-bold" : "text-zinc-400"}>
                               {evt.kind}
                             </span>
-                            {/* FORENSIC AUDIT (MCP-004): Show trace ID or request ID if available */}
                             {(evt as any).id && <span className="font-mono text-zinc-600">#{(evt as any).id}</span>}
                           </div>
                           <div>{formatTime(evt.at)}</div>

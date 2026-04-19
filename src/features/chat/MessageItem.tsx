@@ -146,7 +146,54 @@ const MessageItemInner: React.FC<{
           </div>
         )}
 
-        {/* Content Rendering */}
+        {/* Content Rendering - Correct Order: Thoughts → Tools → Response */}
+        {parts.map((part, i) => {
+          if (part.type === 'think') {
+             return (
+               <div key={i} className="mb-3 pl-3 border-l-2 border-indigo-500/30">
+                 <button
+                   onClick={() => setThoughtsOpen(!thoughtsOpen)}
+                   className="text-xs font-medium text-indigo-400/70 hover:text-indigo-300 flex items-center gap-2 mb-1 transition-colors"
+                 >
+                   {thoughtsOpen ? 'Hide' : 'Show'} Thought Process
+                 </button>
+                 {thoughtsOpen && (
+                   <div className="text-zinc-500 text-sm italic whitespace-pre-wrap bg-zinc-900/50 p-3 rounded-lg border border-zinc-800/50">
+                     {part.content}
+                   </div>
+                 )}
+               </div>
+             );
+          }
+          if (part.type === "system") {
+            const title = (part as any).title ?? "SYSTEM";
+            const content = part.content ?? "";
+            return (
+              <div key={i} className="my-3 rounded-lg border border-zinc-800 bg-zinc-950/50 overflow-hidden">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800">
+                  <div className="text-[10px] font-mono text-zinc-400">{title}</div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void copyToClipboard(content);
+                    }}
+                    className="text-[10px] text-zinc-500 hover:text-zinc-300"
+                    title="Copy"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <pre className="text-[10px] text-zinc-300 p-3 overflow-x-hidden whitespace-pre-wrap break-words max-w-full">
+                  {content}
+                </pre>
+              </div>
+            );
+          }
+          // Regular text content - will be rendered after tool execution
+          return null;
+        })}
+
+        {/* Tool Execution Block - Rendered after thoughts, before response text */}
         {msg.toolCall ? (
           <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-3">
             <button
@@ -237,52 +284,15 @@ const MessageItemInner: React.FC<{
             </div>
             <div className="text-xs text-blue-200">⚡ Executing...</div>
           </div>
-        ) : (
-          parts.map((part, i) => {
-            if (part.type === 'think') {
-               return (
-                 <div key={i} className="mb-3 pl-3 border-l-2 border-indigo-500/30">
-                   <button 
-                     onClick={() => setThoughtsOpen(!thoughtsOpen)}
-                     className="text-xs font-medium text-indigo-400/70 hover:text-indigo-300 flex items-center gap-2 mb-1 transition-colors"
-                   >
-                     {thoughtsOpen ? 'Hide' : 'Show'} Thought Process
-                   </button>
-                   {thoughtsOpen && (
-                     <div className="text-zinc-500 text-sm italic whitespace-pre-wrap bg-zinc-900/50 p-3 rounded-lg border border-zinc-800/50">
-                       {part.content}
-                     </div>
-                   )}
-                 </div>
-               );
-            }
-            if (part.type === "system") {
-              const title = (part as any).title ?? "SYSTEM";
-              const content = part.content ?? "";
-              return (
-                <div key={i} className="my-3 rounded-lg border border-zinc-800 bg-zinc-950/50 overflow-hidden">
-                  <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800">
-                    <div className="text-[10px] font-mono text-zinc-400">{title}</div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void copyToClipboard(content);
-                      }}
-                      className="text-[10px] text-zinc-500 hover:text-zinc-300"
-                      title="Copy"
-                    >
-                      Copy
-                    </button>
-                  </div>
-                  <pre className="text-[10px] text-zinc-300 p-3 overflow-x-hidden whitespace-pre-wrap break-words max-w-full">
-                    {content}
-                  </pre>
-                </div>
-              );
-            }
-            return <FormattedContent key={i} text={part.content} />;
-          })
-        )}
+        ) : null}
+
+        {/* Response Text - Rendered after tool execution */}
+        {parts.map((part, i) => {
+          if (part.type === 'think' || part.type === 'system') {
+            return null; // Already rendered above
+          }
+          return <FormattedContent key={i} text={part.content} />;
+        })}
 
         {/* P6.2 T9: Execution Timeline */}
         {agentTrace && agentTrace.steps.length > 0 && (
