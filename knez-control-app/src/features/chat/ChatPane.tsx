@@ -3,7 +3,7 @@ import { ChatMessage } from "../../domain/DataContracts";
 import { knezClient } from "../../services/KnezClient";
 import { MessageItem } from "./MessageItem";
 import { getMemoryEventSourcingService } from "../../services/MemoryEventSourcingService";
-import { getStaticMemoryLoader, MemoryData } from "../../services/StaticMemoryLoader";
+import { MemoryData } from "../../services/StaticMemoryLoader";
 // import { exportChat } from "./ChatUtils";
 import { useToast } from "../../components/ui/Toast";
 // import { PerceptionPanel } from "../perception/PerceptionPanel";
@@ -60,7 +60,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [availableToolsOpen, setAvailableToolsOpen] = useState(false);
   const [inspectSessionId, setInspectSessionId] = useState<string | null>(null);
   const [memoryModalOpen, setMemoryModalOpen] = useState(false);
-  const [availableMemories, setAvailableMemories] = useState<MemoryData[]>([]);
   const [mode, setMode] = useState<"chat" | "terminal">("chat");
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [debugPanelOpen, setDebugPanelOpen] = useState(false);
@@ -653,17 +652,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                     type="button"
                     onClick={() => {
                       setHeaderMenuOpen(false);
-                      setAvailableToolsOpen(true);
-                    }}
-                    className="w-full text-left px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-900 flex items-center gap-2"
-                  >
-                    <Puzzle size={14} />
-                    Available Tools
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setHeaderMenuOpen(false);
                       window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "reflection" } }));
                     }}
                     className="w-full text-left px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-900 flex items-center gap-2"
@@ -770,6 +758,15 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                  title="Chat State Audit"
                >
                  <span>Audit</span>
+               </button>
+               <button
+                 type="button"
+                 onClick={() => setAvailableToolsOpen(true)}
+                 className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-transparent border border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300 transition-all"
+                 title="Available Tools"
+               >
+                 <Puzzle size={14} />
+                 <span>Tools</span>
                </button>
             </div>
             {features.logViews && (
