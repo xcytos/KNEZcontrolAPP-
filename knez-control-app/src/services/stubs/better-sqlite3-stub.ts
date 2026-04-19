@@ -121,10 +121,15 @@ export class PreparedStatement {
     const table = this.store.get(tableName) || [];
     
     if (upperSql.includes('INSERT')) {
-      const row = { id: this.lastInsertRowid++, ...params[0] };
-      table.push(row);
+      // Convert undefined values to null to avoid "undefined" string storage
+      const cleanedParams = params[0] || {};
+      const cleanedRow: any = { id: this.lastInsertRowid++ };
+      for (const key in cleanedParams) {
+        cleanedRow[key] = cleanedParams[key] === undefined ? null : cleanedParams[key];
+      }
+      table.push(cleanedRow);
       this.store.set(tableName, table);
-      return { changes: 1, lastInsertRowid: row.id };
+      return { changes: 1, lastInsertRowid: cleanedRow.id };
     } else if (upperSql.includes('UPDATE')) {
       const changes = table.length; // Simplified
       return { changes, lastInsertRowid: this.lastInsertRowid };
