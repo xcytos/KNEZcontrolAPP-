@@ -21,6 +21,7 @@ import { getTimeoutConfig, adaptiveTimeoutManager } from "./TimeoutConfig";
 import { agentLoopService } from "./agent/AgentLoopService";
 import { failureClassifier } from "./agent/FailureClassifier";
 import { agentOrchestrator } from "./agent/AgentOrchestrator";
+import { getMemoryEventSourcingService } from "./MemoryEventSourcingService";
 
 export type ChatPhase =
   | "idle"
@@ -897,7 +898,24 @@ export class ChatService {
     let finalOutput = "";
     let currentToolMessageId: string | null = null;
 
-    await agentOrchestrator.runAgent(sessionId, userInput, {
+    // Retrieve relevant memories from memory system
+    let memoryContext = "";
+    try {
+      const memoryService = getMemoryEventSourcingService();
+      const relevantMemories = memoryService.searchMemories(userInput);
+      if (relevantMemories.length > 0) {
+        memoryContext = "\n\n[RELEVANT MEMORIES]\n";
+        relevantMemories.forEach(mem => {
+          memoryContext += `- ${mem.title}: ${mem.content.slice(0, 200)}...\n`;
+        });
+        memoryContext += "\nUse these memories to inform your response if relevant.\n";
+        logger.info("memory_retrieval", "memories_found", { count: relevantMemories.length, sessionId });
+      }
+    } catch (error) {
+      logger.warn("memory_retrieval", "failed", { error: String(error) });
+    }
+
+    await agentOrchestrator.runAgent(sessionId, userInput + memoryContext, {
       onThinking: (isThinking) => {
         this.setPhase(isThinking ? "MODEL_CALL_START" : "TOOL_END");
       },
