@@ -5,6 +5,8 @@
 //     classification, remediation suggestions, effectiveness tracking.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { getFallbackChain } from "./FallbackStrategy";
+
 export type RetryStrategy = "same" | "modified_args" | "alternative_tool" | "fallback";
 
 // T2-Enhancement: Failure taxonomy
@@ -307,7 +309,6 @@ export function applyRetryStrategy(
 
     case "alternative_tool":
       // Use fallback chain to get alternative tool
-      const { getFallbackChain } = require("./FallbackStrategy");
       const chain = getFallbackChain(toolName);
       if (chain && chain.fallbacks.length > 0) {
         const fallback = chain.fallbacks[0];
@@ -320,8 +321,7 @@ export function applyRetryStrategy(
 
     case "fallback":
       // Use last fallback in chain
-      const { getFallbackChain: getChain } = require("./FallbackStrategy");
-      const fallbackChain = getChain(toolName);
+      const fallbackChain = getFallbackChain(toolName);
       if (fallbackChain && fallbackChain.fallbacks.length > 0) {
         const lastFallback = fallbackChain.fallbacks[fallbackChain.fallbacks.length - 1];
         nextTool = lastFallback.tool;

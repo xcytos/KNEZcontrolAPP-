@@ -260,32 +260,28 @@ export class AgentOrchestrator {
     const toolsForModel = toolExposureService.getToolsForModel();
     const contextSummary = agentLoopService.getContextSummary(sessionId);
 
+    const toolsStr = toolsForModel.length
+      ? toolsForModel
+          .map((t) => `- ${t.name}: ${t.description ?? "no description"}`)
+          .join("\n")
+      : "(no tools available)";
+
     const systemPrompt = `
-You are an intelligent agent that executes tools with self-correction capabilities.
+You are an intelligent agent with access to MCP tools. Use the tools below to complete tasks.
 
-CRITICAL RULES:
-1. When a tool fails, ANALYZE the error message to understand WHY it failed
-2. If the error indicates:
-   - Selector not found: Try alternative selectors (data-testid, aria-label, class)
-   - Navigation failed: Check URL validity, try different navigation method
-   - Timeout: Increase timeout, retry with same args
-   - Invalid arguments: Fix the argument format or values
-3. NEVER give up after a single failure
-4. If multiple attempts fail, explain what you tried and what the errors were
-5. Use the tool execution history to avoid repeating failed approaches
+AVAILABLE TOOLS (${toolsForModel.length}):
+${toolsStr}
 
-CRITICAL: If a task involves browsing, navigation, or extraction:
-- DO NOT answer directly
-- You MUST call a tool
-- NEVER simulate tool output
+TOOL CALL FORMAT — output ONLY this JSON when calling a tool:
+{"tool_call":{"name":"<exact_tool_name>","arguments":{<args>}}}
+
+RULES:
+1. For ANY task involving browsing, clicking, navigating, or external data: call a tool — NEVER simulate output
+2. For normal conversation or questions you can answer directly: reply in plain text
+3. When a tool fails: analyze the error and retry with corrected arguments
+4. You MUST use the exact tool names listed above — do not invent tool names
 
 ${contextSummary}
-
-TOOL CALL FORMAT:
-{"tool_call":{"name":"<tool_name>","arguments":{...}}}
-
-PLAIN TEXT FORMAT:
-For normal conversation, respond directly with natural language.
 `;
 
     const conversation = [
@@ -324,42 +320,64 @@ For normal conversation, respond directly with natural language.
     const text = String(modelOutput ?? "").trim();
     if (!text) return null;
 
-    // Try direct JSON first
-    if (text.includes('"tool_call"')) {
-      try {
-        const parsed = JSON.parse(text);
-        if (parsed.tool_call) {
-          return { name: parsed.tool_call.name, args: parsed.tool_call.arguments };
-        }
-      } catch {
-        // Invalid JSON, try other formats
+    // Helper: try to extract a tool call from a parsed JSON object
+    const extractFromParsed = (parsed: any): { name: string; args: any } | null => {
+      // Format 1: {"tool_call": {"name": "...", "arguments": {...}}}
+      if (parsed?.tool_call?.name) {
+        return { name: String(parsed.tool_call.name), args: parsed.tool_call.arguments ?? {} };
       }
-    }
+      // Format 2: {"function_call": {"name": "...", "arguments": "..."}} (OpenAI legacy)
+      if (parsed?.function_call?.name) {
+        const rawArgs = parsed.function_call.arguments;
+        const args = typeof rawArgs === "string" ? (JSON.parse(rawArgs) ?? {}) : (rawArgs ?? {});
+        return { name: String(parsed.function_call.name), args };
+      }
+      // Format 3: {"name": "...", "arguments": {...}} (bare format)
+      if (parsed?.name && typeof parsed.name === "string" && parsed.arguments !== undefined) {
+        return { name: parsed.name, args: parsed.arguments ?? {} };
+      }
+      return null;
+    };
 
-    // Try markdown code block extraction
-    const codeBlockMatch = text.match(/```(?:json)?\s*\n?(\{.*?\})\s*```/s);
+    // Helper: extract first complete JSON object from text
+    const extractJson = (src: string): any | null => {
+      const start = src.indexOf("{");
+      if (start === -1) return null;
+      let depth = 0;
+      for (let i = start; i < src.length; i++) {
+        if (src[i] === "{") depth++;
+        else if (src[i] === "}") {
+          depth--;
+          if (depth === 0) {
+            try { return JSON.parse(src.slice(start, i + 1)); } catch { return null; }
+          }
+        }
+      }
+      return null;
+    };
+
+    // 1. Try direct JSON parse of the whole text
+    try {
+      const parsed = JSON.parse(text);
+      const result = extractFromParsed(parsed);
+      if (result) return result;
+    } catch { /* not valid JSON */ }
+
+    // 2. Try markdown code blocks (```json ... ```)
+    const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\s*```/);
     if (codeBlockMatch) {
       try {
-        const parsed = JSON.parse(codeBlockMatch[1]);
-        if (parsed.tool_call) {
-          return { name: parsed.tool_call.name, args: parsed.tool_call.arguments };
-        }
-      } catch {
-        // Invalid JSON in code block
-      }
+        const parsed = JSON.parse(codeBlockMatch[1].trim());
+        const result = extractFromParsed(parsed);
+        if (result) return result;
+      } catch { /* invalid JSON in code block */ }
     }
 
-    // Try to find JSON object in mixed text
-    const jsonMatch = text.match(/\{[^{}]*"tool_call"[^{}]*\}/);
-    if (jsonMatch) {
-      try {
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (parsed.tool_call) {
-          return { name: parsed.tool_call.name, args: parsed.tool_call.arguments };
-        }
-      } catch {
-        // Invalid JSON
-      }
+    // 3. Try extracting first JSON object from mixed text
+    const parsed = extractJson(text);
+    if (parsed) {
+      const result = extractFromParsed(parsed);
+      if (result) return result;
     }
 
     return null;
