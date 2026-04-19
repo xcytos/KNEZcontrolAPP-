@@ -366,7 +366,7 @@ export class MemoryEventSourcingService {
       eventId: row.event_id,
       eventType: row.event_type as MemoryEventType,
       aggregateId: row.aggregate_id,
-      eventData: JSON.parse(row.event_data) as MemoryEventData,
+      eventData: row.event_data && row.event_data !== 'undefined' ? JSON.parse(row.event_data) as MemoryEventData : {},
       timestamp: row.timestamp,
       sequence: row.sequence,
       causationId: row.causation_id,
