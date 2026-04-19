@@ -250,9 +250,63 @@ Ensures traceability, enables reproducibility, provides audit trail
 
 ---
 
+## LEARNING-011: Node.js Modules Require Node.js Environment
+
+### Source Mistake
+MISTAKE-009: Native Node.js Modules in Browser/Tauri Environment
+
+### Learning
+Native Node.js modules (better-sqlite3, fs, crypto) do not work in browser/Tauri environment. Must use Tauri plugins (@tauri-apps/plugin-*) or browser APIs for native functionality. Database operations must move to Rust backend or use browser-compatible storage. Vite configuration must externalize Node.js modules for browser builds.
+
+### Rule
+- **RULE-033:** Native Node.js modules cannot be used in Tauri/browser environment
+- **RULE-034:** Use Tauri plugins (@tauri-apps/plugin-*) for native functionality
+- **RULE-035:** Database operations must be in Rust backend, not frontend
+- **RULE-036:** Externalize Node.js modules in Vite config for browser builds
+
+### Application
+- Check if module is native Node.js before using in Tauri app
+- Use @tauri-apps/plugin-fs for file system access
+- Use @tauri-apps/plugin-shell for shell commands
+- Move database operations to Rust backend
+- Configure Vite aliases for native modules to stubs
+- Use Web Crypto API instead of Node.js crypto
+
+### Impact
+Prevents runtime errors, enables browser compatibility, ensures proper use of Tauri APIs
+
+---
+
+## LEARNING-012: File System Access Requires Native APIs
+
+### Source Mistake
+MISTAKE-010: File System Module (fs) in Browser Environment
+
+### Learning
+Node.js fs module does not work in browser/Tauri environment. File watching requires native file system APIs or Tauri plugins. File-based memory injection not suitable for browser/Tauri environment. Memory injection should use API endpoints or Rust backend. Services must be designed for target environment (Node.js vs browser).
+
+### Rule
+- **RULE-037:** Node.js fs module cannot be used in Tauri/browser environment
+- **RULE-038:** File watching requires Tauri plugins or Rust backend
+- **RULE-039:** Memory injection should use API endpoints, not file watching
+- **RULE-040:** Services must be designed for target environment (Node.js vs browser)
+
+### Application
+- Design services for target environment (Node.js vs browser)
+- Use @tauri-apps/plugin-fs for file operations in Tauri
+- Implement file watching in Rust backend
+- Use API endpoints for memory injection
+- Separate Node.js-only services (tests) from browser services
+- Document environment compatibility for each service
+
+### Impact
+Prevents runtime errors, enables proper file access, ensures environment compatibility
+
+---
+
 ## SUMMARY
 
-### Total Learnings: 10
+### Total Learnings: 12
 
 ### Learning Categories:
 - Identity/Activation: 1
@@ -260,8 +314,9 @@ Ensures traceability, enables reproducibility, provides audit trail
 - Documentation/Implementation: 2
 - State Tracking: 2
 - Execution Process: 3
+- Environment Compatibility: 2
 
-### Rules Derived: 32
+### Rules Derived: 40
 
 ### Application Status
 - Pre-execution review: ENABLED

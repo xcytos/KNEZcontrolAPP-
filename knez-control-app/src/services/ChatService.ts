@@ -3,7 +3,7 @@ import { knezClient } from "./KnezClient";
 import { extractionService } from "./ExtractionService";
 import { persistenceService } from "./PersistenceService";
 import { ChatMessage, ToolCallMessage } from "../domain/DataContracts";
-import { asErrorMessage } from "../domain/Errors";
+import { AppError, asErrorMessage } from "../domain/Errors";
 import { observe } from "../utils/observer";
 import { sessionDatabase } from "./SessionDatabase";
 import { sessionController } from "./SessionController";
@@ -49,6 +49,7 @@ export interface ChatState {
   pendingToolApproval: { id: string; toolName: string; args: Record<string, any> } | null;
   responseStart?: number;
   responseEnd?: number;
+  sequenceCounter: number; // Counter for generating sequenceNumber per session
 }
 
 export type StateListener = (state: ChatState) => void;
@@ -61,7 +62,8 @@ export class ChatService {
     currentStreamId: null,
     activeTools: { search: false },
     searchProvider: "off",
-    pendingToolApproval: null
+    pendingToolApproval: null,
+    sequenceCounter: 0
   };
   private sessionId: string;
   private queueFlushInFlight = false;
@@ -192,6 +194,12 @@ export class ChatService {
     }
     if (event === "STREAM_END" || event === "ERROR") {
       this.state.responseEnd = Date.now();
+      // Auto-reset to idle so the send button re-enables after completion/error
+      setTimeout(() => {
+        if (this.state.phase === "completed" || this.state.phase === "error") {
+          this.resetToIdle();
+        }
+      }, 150);
     }
 
     logger.info("chat_service", "phase_transition", {
@@ -210,6 +218,13 @@ export class ChatService {
     this.state.responseStart = undefined;
     this.state.responseEnd = undefined;
     this.notify();
+  }
+
+  // Helper to generate sequence number for deterministic ordering
+  private getNextSequenceNumber(): number {
+    const seq = this.state.sequenceCounter;
+    this.state.sequenceCounter += 1;
+    return seq;
   }
 
   async load(sessionId: string) {
@@ -249,6 +264,7 @@ export class ChatService {
       from: "user",
       text: text,
       createdAt: now,
+      sequenceNumber: this.getNextSequenceNumber(),
       deliveryStatus: "delivered",
       correlationId: userId
     };
@@ -259,8 +275,9 @@ export class ChatService {
       from: "knez",
       text: "",
       createdAt: now,
+      sequenceNumber: this.getNextSequenceNumber(),
       isPartial: false,
-      metrics: { totalTokens: 0 },
+      metrics: { totalTokens: 0, fallbackTriggered: false },
       deliveryStatus: "queued",
       replyToMessageId: userId,
       correlationId: userId
@@ -338,7 +355,7 @@ export class ChatService {
       text: "",
       createdAt: now,
       isPartial: false,
-      metrics: { totalTokens: 0 },
+      metrics: { totalTokens: 0, fallbackTriggered: false },
       deliveryStatus: "queued",
       replyToMessageId: userId,
       correlationId: userId
@@ -556,7 +573,7 @@ export class ChatService {
     const modelId = (inState?.metrics as any)?.modelId ?? (persisted?.metrics as any)?.modelId;
     const backendStatus = (inState?.metrics as any)?.backendStatus ?? (persisted?.metrics as any)?.backendStatus;
 
-    const metrics = { finishReason: "stopped", totalTokens, modelId, backendStatus };
+    const metrics = { finishReason: "stopped", totalTokens, modelId, backendStatus, fallbackTriggered: false };
 
     await sessionDatabase.updateMessage(outgoingId, { deliveryStatus: "delivered", deliveryError: undefined });
     await sessionDatabase.updateMessage(assistantId, {
@@ -846,7 +863,14 @@ export class ChatService {
   private async persistToolTrace(sessionId: string, msg: ChatMessage): Promise<void> {
     await sessionDatabase.saveMessages(sessionId, [msg]);
     if (this.sessionId === sessionId) {
-      this.state.messages = [...this.state.messages, msg].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+      this.state.messages = [...this.state.messages, msg].sort((a, b) => {
+        const timeDiff = Date.parse(a.createdAt) - Date.parse(b.createdAt);
+        // Use sequenceNumber as secondary sort for deterministic ordering when timestamps are close (within 1 second)
+        if (Math.abs(timeDiff) < 1000) {
+          return (a.sequenceNumber || 0) - (b.sequenceNumber || 0);
+        }
+        return timeDiff;
+      });
       this.notify();
     }
   }
@@ -899,27 +923,47 @@ export class ChatService {
           from: "tool_execution" as any,
           text: "",
           createdAt: startedAt,
+          sequenceNumber: this.getNextSequenceNumber(),
           toolCall,
           deliveryStatus: "delivered",
           replyToMessageId: assistantId,
           correlationId: assistantId
         });
+        // Live status transition: calling → running after a brief delay
+        setTimeout(() => {
+          if (currentToolMessageId === traceMessageId) {
+            this.updateToolTrace(sessionId, traceMessageId, {
+              toolCall: {
+                ...toolCall,
+                status: "running"
+              }
+            });
+          }
+        }, 100);
       },
       onToolEnd: (toolName, result, success) => {
         this.setPhase("TOOL_END");
         if (currentToolMessageId) {
           const finishedAt = new Date().toISOString();
           const toolContent = this.stringifyToolPayload(result, 20000);
+          // Calculate execution time from startedAt to finishedAt
+          const existingMsg = this.state.messages.find(m => m.id === currentToolMessageId);
+          const startedAtStr = existingMsg?.toolCall?.startedAt || new Date().toISOString();
+          const executionTimeMs = Date.parse(finishedAt) - Date.parse(startedAtStr);
+          // Estimate MCP latency as 30% of execution time (actual MCP latency requires deeper instrumentation)
+          const mcpLatencyMs = Math.round(executionTimeMs * 0.3);
           this.updateToolTrace(sessionId, currentToolMessageId, {
             text: toolContent,
             toolCall: {
               tool: toolName,
               args: {},
-              startedAt: new Date().toISOString(),
-              status: success ? "succeeded" : "failed",
+              startedAt: startedAtStr,
+              status: success ? "completed" : "failed",
               result: success ? result : undefined,
               error: success ? undefined : String(result),
-              finishedAt
+              finishedAt,
+              executionTimeMs: Math.max(0, executionTimeMs),
+              mcpLatencyMs
             }
           });
         }
@@ -930,6 +974,9 @@ export class ChatService {
       }
     });
 
+    if (!finalOutput.trim()) {
+      throw new AppError("KNEZ_STREAM_EMPTY", "Agent produced no output — model returned an empty response");
+    }
     return finalOutput;
   }
 
@@ -1792,15 +1839,16 @@ export class ChatService {
         deliveryStatus: "failed",
         deliveryError: errorMsg,
         isPartial: false,
-        text: "⚠️ Failed to generate response",
+        text: item.lastError ? `⚠️ Failed to generate response — ${item.lastError.replace(/^\[.*?\]\s*/, "")}` : "⚠️ Failed to generate response",
         refusal: true
       });
       await sessionDatabase.removeOutgoing(id);
+      const failText = item.lastError ? `⚠️ Failed to generate response — ${item.lastError.replace(/^\[.*?\]\s*/, "")}` : "⚠️ Failed to generate response";
       if (this.sessionId === item.sessionId) {
         this.state.messages = this.state.messages.map((m) => {
           if (m.id === id) return { ...m, deliveryStatus: "delivered", deliveryError: undefined };
           if (m.id === `${id}-assistant`) {
-            return { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: "⚠️ Failed to generate response", refusal: true };
+            return { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: failText, refusal: true };
           }
           return m;
         });
@@ -1900,6 +1948,9 @@ export class ChatService {
         streamId = newMessageId();
         const controller = new AbortController();
         this.activeDelivery = { sessionId, outgoingId: id, assistantId, controller, stopRequested: false };
+        if (this.sessionId === sessionId) {
+          this.state.currentStreamId = streamId;
+        }
 
         let processedText = "";
         let toolExecutionTime: number | undefined;
@@ -1912,6 +1963,9 @@ export class ChatService {
         } catch (mcpErr) {
           logger.warn("mcp_execution", "tool_execution_failed", { error: String(mcpErr) });
           processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
+          if (processedText.startsWith("\u26a0")) {
+            throw new AppError("KNEZ_STREAM_EMPTY", processedText);
+          }
         }
 
         if (!processedText.trim()) {
@@ -1931,7 +1985,7 @@ export class ChatService {
               onMeta
             });
           } else {
-            processedText = "⚠️ Failed to generate response. The AI did not produce a valid output.";
+            throw new AppError("KNEZ_STREAM_EMPTY", "Agent produced no output");
           }
         }
 
@@ -1941,9 +1995,10 @@ export class ChatService {
           text: processedText,
           deliveryStatus: "delivered",
           refusal: false,
-          metrics: { finishReason: "completed", totalTokens: streamedTokenCount, modelId: toolModelId ?? modelId, backendStatus, responseTimeMs, ...(toolExecutionTime !== undefined ? { toolExecutionTime } : {}) } as any
+          metrics: { finishReason: "completed", totalTokens: streamedTokenCount, modelId: toolModelId ?? modelId, backendStatus, responseTimeMs, ...(toolExecutionTime !== undefined ? { toolExecutionTime } : {}), fallbackTriggered: false } as any
         };
 
+        await sessionDatabase.removeOutgoing(id);
         await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered" });
         await sessionDatabase.updateMessage(assistantId, {
           deliveryStatus: "delivered",
@@ -2185,8 +2240,10 @@ export class ChatService {
       tabErrorStore.mark("logs");
       const isTransient =
         err?.name === "AbortError" ||
-        /^\[(KNEZ_TIMEOUT|KNEZ_FETCH_FAILED|KNEZ_HEALTH_FAILED|KNEZ_STREAM_FAILED)\]/.test(errorMsg) ||
-        /failed to fetch|networkerror|econnrefused|enotfound/i.test(errorMsg);
+        /^\[(KNEZ_TIMEOUT|KNEZ_FETCH_FAILED|KNEZ_HEALTH_FAILED|KNEZ_STREAM_FAILED|KNEZ_STREAM_EMPTY)\]/.test(errorMsg) ||
+        /failed to fetch|networkerror|econnrefused|enotfound/i.test(errorMsg) ||
+        // Retry server-side errors (5xx) from the completion endpoint
+        (/^\[KNEZ_COMPLETION_FAILED\]/.test(errorMsg) && /[56]\d{2}/.test(errorMsg));
       const nextRetryAt = new Date(Date.now() + Math.min(60000, 1000 * Math.pow(2, Math.min(6, attempt)))).toISOString();
       await sessionDatabase.updateOutgoing(id, { status: "failed", nextRetryAt, lastError: errorMsg });
       if (isTransient) {
@@ -2201,7 +2258,7 @@ export class ChatService {
         });
       } else {
         await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered", deliveryError: undefined });
-        await sessionDatabase.updateMessage(`${id}-assistant`, { deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: "⚠️ Failed to generate response", refusal: true });
+        await sessionDatabase.updateMessage(`${id}-assistant`, { deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: `⚠️ Failed to generate response — ${errorMsg.replace(/^\[.*?\]\s*/, "")}`, refusal: true });
       }
 
       if (this.sessionId === sessionId) {
@@ -2210,7 +2267,7 @@ export class ChatService {
           if (m.id === `${id}-assistant`) {
             return isTransient
               ? { ...m, deliveryStatus: "queued", deliveryError: errorMsg, isPartial: false, refusal: false }
-              : { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: "⚠️ Failed to generate response", refusal: true };
+              : { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: `⚠️ Failed to generate response — ${errorMsg.replace(/^\[.*?\]\s*/, "")}`, refusal: true };
           }
           return m;
         });

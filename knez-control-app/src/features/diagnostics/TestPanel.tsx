@@ -1,9 +1,11 @@
-
 import React, { useEffect, useState } from 'react';
 import { testRunner, TestResult } from '../../services/TestRunner';
 import { useStatus } from '../../contexts/useStatus';
 import { useSystemOrchestrator } from '../system/useSystemOrchestrator';
 import { clearTestSessions, getRecommendedFixes } from '../../services/Troubleshooter';
+import { Button } from '../../components/ui/core/Button';
+import { Badge } from '../../components/ui/core/Badge';
+import { Card } from '../../components/ui/core/Card';
 
 export const TestPanel: React.FC = () => {
   const [results, setResults] = useState<TestResult[]>([]);
@@ -36,19 +38,22 @@ export const TestPanel: React.FC = () => {
            <h2 className="text-xl font-bold text-zinc-100">Diagnostics Suite</h2>
            <p className="text-xs text-zinc-500">Automated Integration Tests (CP10/11)</p>
         </div>
-        <button 
+        <Button 
           onClick={() => { void runAll(); }}
-          className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-sm font-medium transition-colors"
+          variant="primary"
         >
           Run All Tests
-        </button>
+        </Button>
       </div>
 
       <div className="space-y-4">
         {results.map((r) => {
           const errorCount = r.log.filter((l) => !l.startsWith("[STEP]")).length;
+          const statusBadge = r.status === 'pending' ? 'default' :
+                             r.status === 'running' ? 'warning' :
+                             r.status === 'passed' ? 'success' : 'error';
           return (
-            <div key={r.id} className="flex flex-col bg-zinc-900 border border-zinc-800 rounded overflow-hidden">
+            <Card key={r.id} className="overflow-hidden">
              <div 
                className="p-4 flex items-center justify-between cursor-pointer hover:bg-zinc-800/50 transition-colors"
                onClick={() => setExpandedIds((prev) => {
@@ -59,12 +64,7 @@ export const TestPanel: React.FC = () => {
                })}
              >
                  <div className="flex items-center gap-4">
-                    <div className={`w-3 h-3 rounded-full ${
-                       r.status === 'pending' ? 'bg-zinc-600' :
-                       r.status === 'running' ? 'bg-yellow-500 animate-pulse' :
-                       r.status === 'passed' ? 'bg-green-500' :
-                       'bg-red-500'
-                    }`} />
+                    <Badge variant={statusBadge} className="w-3 h-3 p-0"><span className="block w-3 h-3 rounded-full bg-current" /></Badge>
                     <div>
                        <div className="font-medium text-zinc-200">{r.name}</div>
                        <div className="text-[10px] text-zinc-500">
@@ -82,7 +82,7 @@ export const TestPanel: React.FC = () => {
                   <div className="flex items-center justify-between mb-3">
                     <div className="text-xs font-mono text-zinc-500">Logs</div>
                     <div className="flex items-center gap-2">
-                      <button
+                      <Button
                         onClick={() => { void (async () => {
                           if (!online) {
                             await launchAndConnect(true);
@@ -91,10 +91,11 @@ export const TestPanel: React.FC = () => {
                           }
                           await testRunner.runOne(r.id);
                         })(); }}
-                        className="px-3 py-1 rounded text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition-colors"
+                        variant="secondary"
+                        size="xs"
                       >
                         Retry
-                      </button>
+                      </Button>
                     </div>
                   </div>
 
@@ -124,7 +125,7 @@ export const TestPanel: React.FC = () => {
                           launchAndConnect,
                           clearTestSessions
                         }).map((fix) => (
-                          <button
+                          <Button
                             key={fix.id}
                             onClick={async () => {
                               setBusyFixId(fix.id);
@@ -135,17 +136,18 @@ export const TestPanel: React.FC = () => {
                               }
                             }}
                             disabled={busyFixId !== null}
-                            className="px-3 py-1 rounded text-xs bg-blue-900/30 hover:bg-blue-900/50 text-blue-200 border border-blue-800 disabled:opacity-50 transition-colors"
+                            variant="secondary"
+                            size="xs"
                           >
                             {busyFixId === fix.id ? "Applying..." : fix.label}
-                          </button>
+                          </Button>
                         ))}
                       </div>
                     </div>
                   )}
                </div>
              )}
-            </div>
+            </Card>
           );
         })}
       </div>

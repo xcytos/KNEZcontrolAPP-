@@ -11,6 +11,7 @@ export interface ChatMessage {
   from: "user" | "knez" | "assistant" | "tool_execution" | "tool_result" | "system";
   text: string;
   createdAt: string;
+  sequenceNumber?: number; // Per-session incrementing counter for deterministic ordering
   relativeTimeLabel?: string;
   hiddenLocally?: boolean;
   refusal?: boolean;

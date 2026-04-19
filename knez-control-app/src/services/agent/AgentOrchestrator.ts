@@ -65,6 +65,7 @@ export class AgentOrchestrator {
       // Main agent loop
       let step = 0;
       let totalRetries = 0;
+      let directAnswerProvided = false;
 
       while (step < this.config.maxSteps) {
         const elapsedTime = Date.now() - startTime;
@@ -104,6 +105,7 @@ export class AgentOrchestrator {
         const stepResult = await this.executeStep(sessionId, userInput, step, callbacks, context, totalRetries);
 
         if (stepResult.shouldStop) {
+          if (stepResult.directAnswerProvided) directAnswerProvided = true;
           break;
         }
 
@@ -114,9 +116,11 @@ export class AgentOrchestrator {
         step++;
       }
 
-      // Generate final answer
-      const finalAnswer = await this.generateFinalAnswer(sessionId, context);
-      callbacks.onFinal(finalAnswer);
+      // Only generate final answer when the model did not already provide one directly
+      if (!directAnswerProvided) {
+        const finalAnswer = await this.generateFinalAnswer(sessionId, context);
+        callbacks.onFinal(finalAnswer);
+      }
 
       // End trace
       agentTracer.endTrace(sessionId);
@@ -142,7 +146,7 @@ export class AgentOrchestrator {
     callbacks: AgentCallbacks,
     context: AgentContext,
     totalRetries: number
-  ): Promise<{ shouldStop: boolean; retryCount: number }> {
+  ): Promise<{ shouldStop: boolean; retryCount: number; directAnswerProvided?: boolean }> {
     let retryCount = 0;
 
     agentLoopService.incrementStep(sessionId);
@@ -154,9 +158,13 @@ export class AgentOrchestrator {
     const toolCall = this.parseToolCall(modelOutput);
 
     if (!toolCall) {
-      // Model returned final answer
-      callbacks.onFinal(modelOutput);
-      return { shouldStop: true, retryCount: 0 };
+      // Strip output classification prefix the model may emit (e.g. /plain_text)
+      const cleanOutput = modelOutput.replace(/^\/plain_text\s*/i, "").trim();
+      // Model returned final answer directly — flag so runAgent does not overwrite it
+      if (cleanOutput) {
+        callbacks.onFinal(cleanOutput);
+      }
+      return { shouldStop: true, retryCount: 0, directAnswerProvided: !!cleanOutput };
     }
 
     // Security gate
@@ -292,7 +300,21 @@ For normal conversation, respond directly with natural language.
     });
 
     const msg = res?.choices?.[0]?.message as any;
-    return String(msg?.content ?? "");
+    let content = String(msg?.content ?? "");
+
+    // Handle native tool_calls response format — model may use tool_calls instead of content
+    if (!content.trim() && Array.isArray(msg?.tool_calls) && msg.tool_calls.length > 0) {
+      const first = msg.tool_calls[0];
+      const fn = first?.function ?? first;
+      try {
+        const args = typeof fn?.arguments === "string" ? JSON.parse(fn.arguments) : (fn?.arguments ?? {});
+        content = JSON.stringify({ tool_call: { name: String(fn?.name ?? ""), arguments: args } });
+      } catch {
+        content = JSON.stringify({ tool_call: { name: String(fn?.name ?? ""), arguments: {} } });
+      }
+    }
+
+    return content;
   }
 
   /**
@@ -404,9 +426,59 @@ For normal conversation, respond directly with natural language.
   /**
    * Generate final answer
    */
-  private async generateFinalAnswer(sessionId: string, _context: AgentContext): Promise<string> {
-    const summary = agentLoopService.exportContext(sessionId);
-    return `Final answer based on ${summary.toolHistory.length} tool executions.`;
+  private async generateFinalAnswer(sessionId: string, context: AgentContext): Promise<string> {
+    const toolHistory = context.toolHistory ?? [];
+    if (toolHistory.length === 0) {
+      // No tools ran — model gave an empty response. Try a plain-text fallback call.
+      try {
+        const fallback = [
+          { role: "system", content: "You are a helpful assistant. Reply in plain text only, no JSON, no tool calls." },
+          { role: "user", content: context.currentGoal }
+        ];
+        const data = await knezClient.chatCompletionsNonStreamRaw(fallback as any, sessionId);
+        const fc = String(data?.choices?.[0]?.message?.content ?? "")
+          .replace(/^\/plain_text\s*/i, "")
+          .trim();
+        if (fc) return fc;
+      } catch {
+        // fall through
+      }
+      return ""; // empty string signals delivery failure
+    }
+
+    // Build a compact summary of tool results for the model to synthesize
+    const toolSummary = toolHistory
+      .map((h) => {
+        const result = h.result;
+        const resultStr = typeof result === "string"
+          ? result
+          : (result?.data != null
+            ? (typeof result.data === "string" ? result.data : JSON.stringify(result.data))
+            : JSON.stringify(result));
+        return `Tool: ${h.name}\nResult: ${resultStr}`;
+      })
+      .join("\n\n");
+
+    const messages = [
+      { role: "system", content: "Based on the tool execution results provided, give a clear and complete plain-text answer. Do not output JSON or tool calls." },
+      { role: "user", content: `Tool results:\n${toolSummary}` }
+    ];
+
+    try {
+      const data = await knezClient.chatCompletionsNonStreamRaw(messages as any, sessionId);
+      const content = String(data?.choices?.[0]?.message?.content ?? "").trim();
+      return content || "Task completed. See tool execution results above.";
+    } catch {
+      // If synthesis call fails, return a concise fallback using last result
+      const last = toolHistory[toolHistory.length - 1];
+      const lastResult = last?.result;
+      const fallback = typeof lastResult === "string"
+        ? lastResult
+        : (lastResult?.data != null
+          ? (typeof lastResult.data === "string" ? lastResult.data : JSON.stringify(lastResult.data))
+          : null);
+      return fallback || "Task completed. See tool execution results above.";
+    }
   }
 
   /**

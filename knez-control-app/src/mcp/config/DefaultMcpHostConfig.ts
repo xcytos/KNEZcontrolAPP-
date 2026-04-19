@@ -12,15 +12,6 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
       }
     ],
     mcpServers: {
-      taqwin: {
-        command: "python",
-        args: ["-u", "main.py", "mcp"],
-        working_directory: "..\\\\TAQWIN_V1",
-        env: { PYTHONUNBUFFERED: "1" },
-        enabled: true,
-        start_on_boot: true,
-        tags: ["taqwin", "mcp"]
-      },
       chrome_devtools: {
         command: "npx",
         args: ["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics"],
@@ -54,12 +45,13 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
         start_on_boot: true,
         tags: ["puppeteer", "browser", "mcp", "npx"]
       },
-      "tauri-ui": {
-        command: "__builtin__",
-        args: [],
+      playwright: {
+        command: "npx",
+        args: ["@playwright/mcp"],
         env: {},
         enabled: true,
-        tags: ["tauri", "ui", "automation", "builtin"]
+        start_on_boot: true,
+        tags: ["playwright", "browser", "mcp", "npx"]
       }
     }
   };
@@ -68,24 +60,13 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
     schema_version: "1",
     inputs: rawObj.inputs as any,
     servers: {
-      taqwin: {
-        id: "taqwin",
-        type: "stdio",
-        command: String(rawObj.mcpServers.taqwin.command),
-        args: rawObj.mcpServers.taqwin.args.slice(),
-        cwd: String(rawObj.mcpServers.taqwin.working_directory),
-        env: { ...rawObj.mcpServers.taqwin.env },
-        enabled: true,
-        start_on_boot: true,
-        tags: rawObj.mcpServers.taqwin.tags.slice()
-      },
       chrome_devtools: {
         id: "chrome_devtools",
         type: "stdio",
         command: String((rawObj.mcpServers as any).chrome_devtools.command),
         args: (rawObj.mcpServers as any).chrome_devtools.args.slice(),
         cwd: undefined,
-        env: { ...(rawObj.mcpServers as any).chrome_devtools.env },
+        env: {},
         enabled: false,
         tags: (rawObj.mcpServers as any).chrome_devtools.tags.slice()
       },
@@ -118,18 +99,16 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
         start_on_boot: true,
         tags: ["puppeteer", "browser", "mcp", "npx"]
       },
-      "tauri-ui": {
-        id: "tauri-ui",
+      playwright: {
+        id: "playwright",
         type: "stdio",
-        command: "__builtin__",
-        args: [],
+        command: "npx",
+        args: ["@playwright/mcp"],
         cwd: undefined,
         env: {},
         enabled: true,
         start_on_boot: true,
-        allowed_tools: [],
-        blocked_tools: [],
-        tags: ["tauri", "ui", "automation", "builtin"]
+        tags: ["playwright", "browser", "mcp", "npx"]
       }
     }
   };

@@ -37,6 +37,7 @@ export type ServerRuntime = {
   toolsHash: string | null;
   toolsCacheAt: number | null;
   toolsPending: boolean;
+  configSource?: "user" | "project" | "app_local" | "default";
 };
 
 export type McpOrchestratorSnapshot = {

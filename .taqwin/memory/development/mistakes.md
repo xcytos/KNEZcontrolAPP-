@@ -338,26 +338,119 @@ No INIT_STATE.md file existed. No baseline state documentation to measure system
 
 ---
 
+## MISTAKE-009: Native Node.js Modules in Browser/Tauri Environment
+
+### What Happened
+Memory services (MemoryEventSourcingService, MemoryVectorSearchService, etc.) used better-sqlite3 (native Node.js module) which caused "promisify is not a function" error when app started in browser/Tauri environment.
+
+### Why It Happened
+- better-sqlite3 is a native Node.js module requiring Node.js runtime
+- Tauri apps run in browser environment where Node.js modules are not available
+- No consideration for browser compatibility during memory service implementation
+- Assumed Node.js environment would be available
+
+### Impact
+- App failed to start with runtime error
+- Memory services completely non-functional in Tauri environment
+- Blocked entire memory system implementation
+- Required stub implementation for browser compatibility
+
+### Learning
+- Native Node.js modules (better-sqlite3, fs, crypto) do not work in browser/Tauri environment
+- Must use Tauri plugins (@tauri-apps/plugin-fs) or browser APIs for file system access
+- Database operations must move to Rust backend or use browser-compatible storage
+- Vite configuration must externalize Node.js modules for browser builds
+
+### Rule Derived
+- **RULE:** Native Node.js modules cannot be used in Tauri/browser environment
+- **RULE:** Use Tauri plugins (@tauri-apps/plugin-*) for native functionality
+- **RULE:** Database operations must be in Rust backend, not frontend
+- **RULE:** Externalize Node.js modules in Vite config for browser builds
+
+### Resolution
+- Created stub files (better-sqlite3-stub.ts, crypto-stub.ts) for browser compatibility
+- Updated vite.config.ts to alias native modules to stubs
+- Disabled MemoryLoaderService auto-start (uses Node.js fs module)
+- Documented that memory services require Rust backend implementation
+
+### Date Recorded
+2026-04-20
+
+### Linked Memory
+- knez-control-app/src/services/stubs/better-sqlite3-stub.ts (stub)
+- knez-control-app/src/services/stubs/crypto-stub.ts (stub)
+- knez-control-app/vite.config.ts (Vite aliases)
+- knez-control-app/src/main.tsx (disabled loader)
+
+---
+
+## MISTAKE-010: File System Module (fs) in Browser Environment
+
+### What Happened
+MemoryLoaderService used Node.js fs module (fs.existsSync, fs.watch, fs.readFileSync) which caused "fs.existsSync is not a function" error when app started in browser/Tauri environment.
+
+### Why It Happened
+- MemoryLoaderService designed for Node.js environment only
+- No consideration for Tauri/browser compatibility
+- File watching requires native file system access
+- Assumed Node.js fs module would be available
+
+### Impact
+- MemoryLoaderService non-functional in Tauri environment
+- Could not auto-load memories from files
+- Memory injection system blocked in browser
+- Required disabling of auto-start feature
+
+### Learning
+- Node.js fs module does not work in browser/Tauri environment
+- File watching requires native file system APIs or Tauri plugins
+- File-based memory injection not suitable for browser/Tauri environment
+- Memory injection should use API endpoints or Rust backend
+
+### Rule Derived
+- **RULE:** Node.js fs module cannot be used in Tauri/browser environment
+- **RULE:** File watching requires Tauri plugins or Rust backend
+- **RULE:** Memory injection should use API endpoints, not file watching
+- **RULE:** Services must be designed for target environment (Node.js vs browser)
+
+### Resolution
+- Disabled MemoryLoaderService auto-start in main.tsx
+- Documented that MemoryLoaderService is Node.js-only (for automated tests)
+- Added comment indicating need for Rust backend implementation
+- Memory injection now requires manual API calls or Rust backend
+
+### Date Recorded
+2026-04-20
+
+### Linked Memory
+- knez-control-app/src/services/MemoryLoaderService.ts (Node.js-only service)
+- knez-control-app/src/main.tsx (disabled auto-start)
+- knez-control-app/src/services/memory-injection.test.ts (Node.js tests)
+
+---
+
 ## SUMMARY
 
-### Total Mistakes Recorded: 8
+### Total Mistakes Recorded: 10
 
 ### Mistake Categories:
 - Identity/Activation: 1
 - Structure/Organization: 2
 - Documentation/Implementation: 3
 - State Tracking: 2
+- Environment Compatibility: 2
 
-### Rules Derived: 8
+### Rules Derived: 12
 
 ### Resolution Status:
 - Fully Resolved: 6
-- Partially Resolved: 2 (memory mesh graph logic, history diff tracking)
+- Partially Resolved: 4 (memory mesh graph logic, history diff tracking, better-sqlite3 browser compatibility, fs module browser compatibility)
 
 ### Prevention Status
 - Pre-execution mistake review: ENABLED (via TICKET-002)
 - Rule enforcement: ENABLED (via taqwin.md)
 - Learning extraction: ACTIVE
+- Environment compatibility checks: NEEDED
 
 ---
 

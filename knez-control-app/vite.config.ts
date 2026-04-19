@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import path from "path";
 
-// @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
@@ -91,5 +91,18 @@ export default defineConfig(async () => ({
         changeOrigin: true,
       },
     }
+  },
+
+  // Externalize Node.js modules that don't work in browser
+  resolve: {
+    alias: {
+      'better-sqlite3': path.resolve(__dirname, './src/services/stubs/better-sqlite3-stub.ts'),
+      'crypto': path.resolve(__dirname, './src/services/stubs/crypto-stub.ts'),
+    },
+  },
+
+  // Optimize dependencies - exclude better-sqlite3
+  optimizeDeps: {
+    exclude: ['better-sqlite3', 'crypto'],
   },
 }));
