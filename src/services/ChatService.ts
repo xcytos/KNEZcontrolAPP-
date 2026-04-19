@@ -915,6 +915,13 @@ export class ChatService {
       logger.warn("memory_retrieval", "failed", { error: String(error) });
     }
 
+    // DIRECT NAVIGATION INTERCEPT: bypass model for explicit browser navigation/action requests
+    // This runs before agentOrchestrator so model refusals can never block tool execution
+    const directIntentResult = await this.tryDirectToolExecution(sessionId, userInput, assistantId);
+    if (directIntentResult !== null) {
+      return directIntentResult;
+    }
+
     await agentOrchestrator.runAgent(sessionId, userInput + memoryContext, {
       onThinking: (isThinking) => {
         this.setPhase(isThinking ? "MODEL_CALL_START" : "TOOL_END");
@@ -996,6 +1003,153 @@ export class ChatService {
       throw new AppError("KNEZ_STREAM_EMPTY", "Agent produced no output — model returned an empty response");
     }
     return finalOutput;
+  }
+
+  /**
+   * Directly intercept and execute a tool if the user input clearly maps to one.
+   * Returns the final answer string, or null if no intent was detected (caller should proceed normally).
+   */
+  private async tryDirectToolExecution(
+    sessionId: string,
+    userInput: string,
+    assistantId: string
+  ): Promise<string | null> {
+    const tools = toolExposureService.getToolsForModel();
+    if (!tools.length) return null;
+
+    logger.info("direct_tool_intercept", "catalog_snapshot", { toolCount: tools.length, allToolNames: tools.map(t => t.name), playwrightTools: tools.filter(t => t.name.includes("playwright")).map(t => t.name) });
+
+    const input = userInput.trim();
+    const find = (keyword: string) => tools.find((t) => t.name.includes(keyword)) ?? null;
+    const normalizeUrl = (raw: string): string => {
+      const u = raw.trim().replace(/[.,!?;:)'"]+$/, "");
+      return /^https?:\/\//i.test(u) ? u : `https://${u}`;
+    };
+
+    // Detect intent
+    const navMatch = input.match(/(?:navigate|go|open|visit|browse|load)\s+(?:to\s+)?([a-zA-Z0-9][^\s,!?]+)/i);
+    const inlineUrl = input.match(/\bhttps?:\/\/[^\s]+/i);
+    const bareUrl   = input.match(/\b([a-zA-Z0-9][-a-zA-Z0-9.]+\.[a-z]{2,}(?:\/[^\s]*)?)(?:\s|$)/i);
+
+    let toolName: string | null = null;
+    let toolArgs: Record<string, any> = {};
+
+    if (navMatch || inlineUrl || bareUrl) {
+      // Prioritize exact navigation-related tools over generic web tools
+      const navTools = tools.filter(t => 
+        /navigate|goto|page_navigate|browser_navigate/i.test(t.name) && 
+        !/intelligence|search|extract/i.test(t.name)
+      );
+      const t = navTools[0] ?? find("navigate") ?? find("goto") ?? find("page_navigate") ?? find("browser_navigate");
+      if (t) {
+        const raw = navMatch?.[1] ?? inlineUrl?.[0] ?? bareUrl?.[1] ?? "";
+        if (raw) { toolName = t.name; toolArgs = { url: normalizeUrl(raw) }; }
+      } else {
+        // Log all available tool names to debug
+        logger.warn("direct_tool_intercept", "navigate_tool_not_found", { 
+          allToolNames: tools.map(t => t.name),
+          playwrightTools: tools.filter(t => t.name.includes("playwright")).map(t => t.name),
+          navKeywords: tools.filter(t => /navigate|goto|page|browser/i.test(t.name)).map(t => t.name)
+        });
+      }
+    } else if (/(?:take\s+(?:a\s+)?)?screenshot|capture\s+(?:the\s+)?(?:screen|page)/i.test(input)) {
+      const t = find("screenshot") ?? find("take_screenshot") ?? find("capture");
+      if (t) { toolName = t.name; toolArgs = { type: "png" }; }
+    } else if (/\bsnapshot\b|accessibility\s+snapshot|page\s+(?:content|structure)/i.test(input)) {
+      const t = find("snapshot") ?? find("accessibility_snapshot") ?? find("page_snapshot");
+      if (t) { toolName = t.name; toolArgs = {}; }
+    }
+
+    if (!toolName) return null;
+
+    logger.info("direct_tool_intercept", "bypassing_model", { toolName, toolArgs, sessionId, totalTools: tools.length, sampleTool: tools[0]?.name });
+
+    // Emit tool start to UI
+    const startedAt = new Date().toISOString();
+    const traceId = `${assistantId}-direct-${Date.now()}`;
+    const toolCallMsg: ToolCallMessage = { tool: toolName, args: toolArgs, status: "calling", startedAt };
+    this.persistToolTrace(sessionId, {
+      id: traceId, sessionId, from: "tool_execution" as any,
+      text: "", createdAt: startedAt,
+      sequenceNumber: this.getNextSequenceNumber(),
+      toolCall: toolCallMsg, deliveryStatus: "delivered",
+      replyToMessageId: assistantId, correlationId: assistantId
+    });
+    this.notify();
+
+    // Transition to running after short delay
+    setTimeout(() => {
+      this.updateToolTrace(sessionId, traceId, { toolCall: { ...toolCallMsg, status: "running" } });
+    }, 120);
+
+    // Execute via MCP
+    try {
+      logger.info("direct_tool_intercept", "executing_tool", { toolName, toolArgs, traceId });
+      let outcome = await toolExecutionService.executeNamespacedTool(toolName, toolArgs, { timeoutMs: 30000, traceId });
+
+      // If browser context is closed, try to restart the Playwright server and retry once
+      if (!outcome.ok && outcome.error?.message?.includes("Target page, context or browser has been closed")) {
+        logger.warn("direct_tool_intercept", "browser_context_closed", { toolName, error: outcome.error.message });
+        try {
+          const { mcpOrchestrator } = await import("../mcp/McpOrchestrator");
+          await mcpOrchestrator.stopServer("playwright");
+          await mcpOrchestrator.ensureStarted("playwright");
+          logger.info("direct_tool_intercept", "playwright_restarted", {});
+          // Retry after restart
+          outcome = await toolExecutionService.executeNamespacedTool(toolName, toolArgs, { timeoutMs: 30000, traceId });
+        } catch (restartErr) {
+          logger.error("direct_tool_intercept", "playwright_restart_failed", { error: String(restartErr) });
+          return `The Playwright browser context is closed. I attempted to restart the server but failed. Please restart the Playwright MCP server manually or try again in a moment. Error: ${String(restartErr)}`;
+        }
+      }
+      const finishedAt = new Date().toISOString();
+      const execMs = Date.parse(finishedAt) - Date.parse(startedAt);
+
+      this.updateToolTrace(sessionId, traceId, {
+        text: outcome.ok ? this.stringifyToolPayload(outcome.result, 20000) : String(outcome.error?.message ?? "failed"),
+        toolCall: {
+          ...toolCallMsg,
+          status: outcome.ok ? "succeeded" : "failed",
+          result: outcome.ok ? outcome.result : undefined,
+          error: outcome.ok ? undefined : String(outcome.error?.message ?? "execution failed"),
+          finishedAt,
+          executionTimeMs: Math.max(0, execMs),
+          mcpLatencyMs: Math.round(execMs * 0.3)
+        }
+      });
+
+      if (!outcome.ok) {
+        return `The tool ${toolName.replace(/^[^_]+__/, "")} failed: ${outcome.error?.message ?? "unknown error"}`;
+      }
+
+      // Tool succeeded - now call model to generate contextual response based on tool result
+      const toolResultSummary = typeof outcome.result === 'object' 
+        ? JSON.stringify(outcome.result, null, 2).slice(0, 2000)
+        : String(outcome.result);
+
+      const contextSummary = `Tool ${toolName} executed successfully. Result:\n${toolResultSummary}`;
+
+      // Call model with tool result to generate contextual response
+      const modelPrompt = `The user asked: "${userInput}"\n\nI executed the ${toolName} tool and got this result:\n${contextSummary}\n\nBased on this result, provide a helpful response to the user. Summarize what was accomplished and any relevant information from the tool output.`;
+
+      try {
+        const knezClient = (await import("./KnezClient")).knezClient;
+        const res = await knezClient.chatCompletionsNonStreamRaw([
+          { role: "system", content: "You are a helpful assistant. When a tool is executed, analyze the result and provide a clear, helpful summary to the user." },
+          { role: "user", content: modelPrompt }
+        ], sessionId, { temperature: 0.7 });
+
+        return res?.choices?.[0]?.message?.content || `Tool executed successfully. ${toolResultSummary.slice(0, 500)}`;
+      } catch (modelErr) {
+        // Fallback to simple summary if model call fails
+        return `Tool executed successfully. Result: ${toolResultSummary.slice(0, 500)}`;
+      }
+    } catch (e: any) {
+      this.updateToolTrace(sessionId, traceId, {
+        toolCall: { ...toolCallMsg, status: "failed", error: String(e), finishedAt: new Date().toISOString() }
+      });
+      return `Tool execution failed: ${String(e)}`;
+    }
   }
 
   private isPermissionSeekingResponse(text: string): boolean {
