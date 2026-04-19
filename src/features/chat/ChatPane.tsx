@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChatMessage } from "../../domain/DataContracts";
 import { knezClient } from "../../services/KnezClient";
 import { MessageItem } from "./MessageItem";
+import { getMemoryEventSourcingService } from "../../services/MemoryEventSourcingService";
+import { getStaticMemoryLoader, MemoryData } from "../../services/StaticMemoryLoader";
 // import { exportChat } from "./ChatUtils";
 import { useToast } from "../../components/ui/Toast";
 // import { PerceptionPanel } from "../perception/PerceptionPanel";
@@ -26,6 +28,7 @@ import { ForkModal } from "./modals/ForkModal";
 import { RenameModal } from "./modals/RenameModal";
 import { AuditModal } from "./modals/AuditModal";
 import { AvailableToolsModal } from "./modals/AvailableToolsModal";
+import { MemoryModal } from "./MemoryModal";
 // Manual approval removed - tools auto-approve
 // import { ToolApprovalModal } from "./ToolApprovalModal";
 type Props = {
@@ -56,6 +59,8 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [auditOpen, setAuditOpen] = useState(false);
   const [availableToolsOpen, setAvailableToolsOpen] = useState(false);
   const [inspectSessionId, setInspectSessionId] = useState<string | null>(null);
+  const [memoryModalOpen, setMemoryModalOpen] = useState(false);
+  const [availableMemories, setAvailableMemories] = useState<MemoryData[]>([]);
   const [mode, setMode] = useState<"chat" | "terminal">("chat");
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [debugPanelOpen, setDebugPanelOpen] = useState(false);
@@ -607,6 +612,17 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                     <History size={14} />
                     Session History
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHeaderMenuOpen(false);
+                      setMemoryModalOpen(true);
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-900 flex items-center gap-2"
+                  >
+                    <MessageSquarePlus size={14} />
+                    +Memory
+                  </button>
                   {features.floatingConsole && (
                     <button
                       type="button"
@@ -981,6 +997,26 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         messages={messages}
         isOpen={debugPanelOpen}
         onClose={() => setDebugPanelOpen(false)}
+      />
+      <MemoryModal
+        isOpen={memoryModalOpen}
+        onClose={() => setMemoryModalOpen(false)}
+        onInject={async (memory: MemoryData) => {
+          try {
+            const memoryService = getMemoryEventSourcingService();
+            await memoryService.createMemory(
+              memory.type,
+              memory.title,
+              memory.content,
+              memory.domain,
+              memory.tags,
+              memory.metadata
+            );
+            showToast(`Memory "${memory.title}" injected successfully`, "success");
+          } catch (error) {
+            showToast(`Failed to inject memory: ${error}`, "error");
+          }
+        }}
       />
       {/* Manual approval removed - tools auto-approve */}
     </div>

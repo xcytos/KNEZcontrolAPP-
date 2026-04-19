@@ -116,8 +116,29 @@ export class AgentOrchestrator {
         step++;
       }
 
-      // Only generate final answer when the model did not already provide one directly
+      // T14: after navigation, auto-snapshot so generateFinalAnswer has page content
       if (!directAnswerProvided) {
+        const toolHistory = context.toolHistory ?? [];
+        const lastTool = toolHistory[toolHistory.length - 1];
+        const isNavResult = lastTool && /browser_navigate$/.test(lastTool.name) && lastTool.success;
+        if (isNavResult) {
+          const snapTool = toolExposureService.getToolsForModel().find((t) => /browser_snapshot$/.test(t.name));
+          if (snapTool) {
+            try {
+              callbacks.onToolStart(snapTool.name, {});
+              const snapResult = await this.executeTool(sessionId, snapTool.name, {});
+              callbacks.onToolEnd(snapTool.name, snapResult, true);
+              agentContextManager.addToolToHistory(sessionId, {
+                name: snapTool.name,
+                args: {},
+                result: snapResult,
+                success: true,
+                timestamp: Date.now()
+              });
+            } catch { /* snapshot is best-effort */ }
+          }
+        }
+
         const finalAnswer = await this.generateFinalAnswer(sessionId, context);
         callbacks.onFinal(finalAnswer);
       }
@@ -151,20 +172,33 @@ export class AgentOrchestrator {
 
     agentLoopService.incrementStep(sessionId);
 
-    // Call model to get decision
-    const modelOutput = await this.callModel(sessionId, userInput, context);
-
-    // Check if model wants to execute a tool
-    const toolCall = this.parseToolCall(modelOutput);
+    // PRE-MODEL: step 0 — detect tool intent directly from user text, bypass model for clear actions
+    let toolCall: { name: string; args: any } | null = step === 0
+      ? this.detectToolIntent(userInput)
+      : null;
 
     if (!toolCall) {
-      // Strip output classification prefix the model may emit (e.g. /plain_text)
-      const cleanOutput = modelOutput.replace(/^\/plain_text\s*/i, "").trim();
-      // Model returned final answer directly — flag so runAgent does not overwrite it
-      if (cleanOutput) {
-        callbacks.onFinal(cleanOutput);
+      // Call model to get decision
+      const modelOutput = await this.callModel(sessionId, userInput, context);
+
+      toolCall = this.parseToolCall(modelOutput);
+
+      if (!toolCall) {
+        // POST-MODEL: if model refused, try intent detection as fallback
+        if (this.isRefusal(modelOutput)) {
+          toolCall = this.detectToolIntent(userInput);
+        }
+
+        if (!toolCall) {
+          const cleanOutput = modelOutput.replace(/^\/plain_text\s*/i, "").trim();
+          // Don't surface refusal text — let generateFinalAnswer handle empty case instead
+          if (cleanOutput && !this.isRefusal(modelOutput)) {
+            callbacks.onFinal(cleanOutput);
+            return { shouldStop: true, retryCount: 0, directAnswerProvided: true };
+          }
+          return { shouldStop: true, retryCount: 0, directAnswerProvided: false };
+        }
       }
-      return { shouldStop: true, retryCount: 0, directAnswerProvided: !!cleanOutput };
     }
 
     // Security gate
@@ -267,32 +301,59 @@ export class AgentOrchestrator {
       : "(no tools available)";
 
     const systemPrompt = `
-You are an intelligent agent with access to MCP tools. Use the tools below to complete tasks.
+You are a tool-calling agent. You have these tools:
 
-AVAILABLE TOOLS (${toolsForModel.length}):
 ${toolsStr}
 
-TOOL CALL FORMAT — output ONLY this JSON when calling a tool:
-{"tool_call":{"name":"<exact_tool_name>","arguments":{<args>}}}
+OUTPUT FORMAT:
+- To call a tool: output ONLY this JSON (no other text):
+{"tool_call":{"name":"<tool_name>","arguments":{...}}}
+- To reply in text: write plain text only.
 
-RULES:
-1. For ANY task involving browsing, clicking, navigating, or external data: call a tool — NEVER simulate output
-2. For normal conversation or questions you can answer directly: reply in plain text
-3. When a tool fails: analyze the error and retry with corrected arguments
-4. You MUST use the exact tool names listed above — do not invent tool names
+WHEN TO CALL A TOOL:
+- Navigation, browsing, clicking, typing, screenshots → call the matching playwright tool
+- Web search or research → call web_intelligence
+- Status checks → call get_server_status
 
 ${contextSummary}
 `;
 
+    // Few-shot examples built from actual available tools — small models need patterns, not just instructions
+    const fewShot: Array<{ role: string; content: string }> = [];
+    const navTool = toolsForModel.find((t) => /browser_navigate$/.test(t.name));
+    const clickTool = toolsForModel.find((t) => /browser_click$/.test(t.name));
+    const screenshotTool = toolsForModel.find((t) => /browser_take_screenshot$/.test(t.name));
+
+    if (navTool) {
+      fewShot.push(
+        { role: "user", content: "navigate to https://example.com" },
+        { role: "assistant", content: JSON.stringify({ tool_call: { name: navTool.name, arguments: { url: "https://example.com" } } }) }
+      );
+    }
+    if (clickTool) {
+      fewShot.push(
+        { role: "user", content: "click the submit button" },
+        { role: "assistant", content: JSON.stringify({ tool_call: { name: clickTool.name, arguments: { selector: "button[type=submit]", element: "submit button" } } }) }
+      );
+    }
+    if (screenshotTool) {
+      fewShot.push(
+        { role: "user", content: "take a screenshot of the page" },
+        { role: "assistant", content: JSON.stringify({ tool_call: { name: screenshotTool.name, arguments: { type: "png" } } }) }
+      );
+    }
+
     const conversation = [
       { role: "system", content: systemPrompt },
+      ...fewShot,
       { role: "user", content: userInput }
     ];
 
-    // Call KNEZ client
+    // Call KNEZ client — temperature=0 for deterministic JSON tool call output
     const res = await knezClient.chatCompletionsNonStreamRaw(conversation as any, sessionId, {
       tools: toolsForModel,
-      toolChoice: toolsForModel.length ? "auto" : "none"
+      toolChoice: toolsForModel.length ? "auto" : "none",
+      temperature: 0
     });
 
     const msg = res?.choices?.[0]?.message as any;
@@ -378,6 +439,112 @@ ${contextSummary}
     if (parsed) {
       const result = extractFromParsed(parsed);
       if (result) return result;
+    }
+
+    return null;
+  }
+
+  /**
+   * T06 — Detect model refusal phrases so we can fall back to intent detection
+   */
+  private isRefusal(output: string): boolean {
+    const REFUSALS = [
+      /\bi(?:'m| am)\s+unable\s+to\b/i,
+      /\bi\s+(?:cannot|can't)\s+(?:directly\s+)?(?:run|execute|use|access|browse|navigate|visit|open|perform)\b/i,
+      /\bi\s+don't\s+have\s+(?:the\s+)?(?:ability|access|capability|tools?)\s+to\b/i,
+      /\bi\s+(?:cannot|can't|am\s+not\s+able\s+to)\s+(?:access|browse|open|visit|navigate|use)\b/i,
+      /(?:directly|actually)\s+(?:run|execute|access|use)\s+(?:tools|MCP|browser|playwright)/i,
+      /\bnot\s+(?:able|capable)\s+to\s+(?:run|execute|browse|navigate|use)\b/i,
+    ];
+    return REFUSALS.some((r) => r.test(output));
+  }
+
+  /**
+   * T01-T04, T08, T12 — Detect tool intent from user message without relying on model
+   * Maps natural language patterns directly to tool+args
+   */
+  private detectToolIntent(userInput: string): { name: string; args: any } | null {
+    const tools = toolExposureService.getToolsForModel();
+    if (!tools.length) return null;
+
+    const input = userInput.trim();
+
+    // Helper: find tool by name-suffix pattern
+    const find = (pat: RegExp) => tools.find((t) => pat.test(t.name)) ?? null;
+
+    // Helper: normalise URL — prepend https:// when scheme is missing
+    const normalizeUrl = (raw: string): string => {
+      const u = raw.trim().replace(/[.,!?;:)'"]+$/, "");
+      return /^https?:\/\//i.test(u) ? u : `https://${u}`;
+    };
+
+    // ── NAVIGATION (navigate/go/open/visit/browse/load + URL or domain) ──────
+    const navVerb = /(?:navigate|go|open|visit|browse|load)\s+(?:to\s+)?/i;
+    const navMatch = input.match(new RegExp(navVerb.source + "([a-zA-Z0-9][^\\s,!?]+)", "i"));
+    const inlineUrl = input.match(/\bhttps?:\/\/[^\s]+/i);
+    const bareUrl   = input.match(/\b([a-zA-Z0-9][-a-zA-Z0-9.]+\.[a-z]{2,}(?:\/[^\s]*)?)\b/i);
+
+    if (navMatch || inlineUrl || bareUrl) {
+      const navTool = find(/browser_navigate$/);
+      if (navTool) {
+        const raw = navMatch?.[1] ?? inlineUrl?.[0] ?? bareUrl?.[1] ?? "";
+        if (raw) return { name: navTool.name, args: { url: normalizeUrl(raw) } };
+      }
+    }
+
+    // ── SCREENSHOT ────────────────────────────────────────────────────────────
+    if (/(?:take\s+(?:a\s+)?)?screenshot|capture\s+(?:the\s+)?(?:screen|page)/i.test(input)) {
+      const t = find(/browser_take_screenshot$/);
+      if (t) return { name: t.name, args: { type: "png" } };
+    }
+
+    // ── SNAPSHOT / accessibility ──────────────────────────────────────────────
+    if (/\bsnapshot\b|accessibility\s+snapshot|page\s+(?:content|structure)/i.test(input)) {
+      const t = find(/browser_snapshot$/);
+      if (t) return { name: t.name, args: {} };
+    }
+
+    // ── CLICK ─────────────────────────────────────────────────────────────────
+    const clickMatch = input.match(/(?:click|press|tap)\s+(?:on\s+)?(?:the\s+)?(.{2,60?}?)(?:\s+button|\s+link|\s+icon|\s+tab)?(?:\s*$|[.,!?])/i);
+    if (clickMatch) {
+      const t = find(/browser_click$/);
+      if (t) return { name: t.name, args: { selector: clickMatch[1].trim(), element: clickMatch[1].trim() } };
+    }
+
+    // ── TYPE / FILL ───────────────────────────────────────────────────────────
+    const typeMatch = input.match(/(?:type|enter|input)\s+["']?(.+?)["']?\s+in(?:to)?\s+(?:the\s+)?(.+)/i);
+    if (typeMatch) {
+      const t = find(/browser_type$/);
+      if (t) return { name: t.name, args: { ref: typeMatch[2].trim(), text: typeMatch[1].trim() } };
+    }
+
+    // ── GO BACK ───────────────────────────────────────────────────────────────
+    if (/\bgo\s+back\b/i.test(input)) {
+      const t = find(/browser_navigate_back$/);
+      if (t) return { name: t.name, args: {} };
+    }
+
+    // ── CLOSE ─────────────────────────────────────────────────────────────────
+    if (/close\s+(?:the\s+)?(?:browser|page|tab)/i.test(input)) {
+      const t = find(/browser_close$/);
+      if (t) return { name: t.name, args: {} };
+    }
+
+    // ── TAQWIN tool patterns (T12) ────────────────────────────────────────────
+    if (/(?:taqwin\s+)?(?:server\s+)?status|get\s+status/i.test(input)) {
+      const t = find(/get_server_status$/);
+      if (t) return { name: t.name, args: {} };
+    }
+    if (/(?:taqwin\s+)?(?:session|create\s+session|list\s+sessions?)/i.test(input) && !/screenshot/.test(input)) {
+      const t = find(/session$/);
+      if (t) return { name: t.name, args: { action: "list" } };
+    }
+    if (/(?:web\s+(?:search|intelligence|research)|search\s+(?:the\s+)?web)/i.test(input)) {
+      const t = find(/web_intelligence$/);
+      if (t) {
+        const q = input.replace(/(?:web\s+(?:search|intelligence|research)|search\s+(?:the\s+)?web)\s+(?:for\s+)?/i, "").trim();
+        return { name: t.name, args: { query: q || input } };
+      }
     }
 
     return null;
