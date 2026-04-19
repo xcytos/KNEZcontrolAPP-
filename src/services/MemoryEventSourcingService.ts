@@ -599,8 +599,8 @@ export class MemoryEventSourcingService {
     const eventCount = this.db.prepare('SELECT COUNT(*) as count FROM events').get() as { count: number };
     const aggregateCount = this.db.prepare('SELECT COUNT(*) as count FROM aggregate_metadata').get() as { count: number };
     
-    const fs = require('fs');
-    const dbSize = fs.existsSync(this.dbPath) ? fs.statSync(this.dbPath).size : 0;
+    // dbSize calculation removed - fs.statSync not available in browser/Tauri environment
+    const dbSize = 0;
 
     return {
       totalEvents: eventCount.count,

@@ -3,6 +3,7 @@ import { knezClient } from "../../services/KnezClient";
 import { KnowledgeBaseView } from "./KnowledgeBaseView";
 import { useStatus } from "../../contexts/useStatus";
 import { EventSourcedMemoryView } from "./EventSourcedMemoryView";
+import { getMemoryEventSourcingService, MemoryState } from "../../services/MemoryEventSourcingService";
 
 const MemoryDetailModal: React.FC<{ 
   memoryId: string | null;
@@ -87,6 +88,9 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [gateEvents, setGateEvents] = useState<any[]>([]);
   const [since, setSince] = useState<string | null>(null);
+  const [eventSourcedMemories, setEventSourcedMemories] = useState<MemoryState[]>([]);
+  const [showMemoryForm, setShowMemoryForm] = useState(false);
+  const memoryService = getMemoryEventSourcingService();
 
   useEffect(() => {
     let interval: any;
@@ -148,6 +152,16 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
     persistenceService.listSessions().then(setSessions)
   }, [])
 
+  useEffect(() => {
+    // Load event-sourced memories from MemoryEventSourcingService
+    try {
+      const allMemories = memoryService.getAllMemories();
+      setEventSourcedMemories(allMemories);
+    } catch (error) {
+      console.error("Failed to load event-sourced memories:", error);
+    }
+  }, [])
+
   const loadGate = async () => {
     try {
       const evs = await knezClient.listEvents(sessionId || "", 200);
@@ -198,6 +212,12 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
               </span>
            )}
         </div>
+        <button
+          onClick={() => setShowMemoryForm(true)}
+          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs"
+        >
+          Add Memory
+        </button>
         
         <div className="flex items-center gap-2">
            <button
@@ -281,6 +301,39 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
       
       {activeTab === 'memories' ? (
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {/* Event Sourced Memories */}
+          {eventSourcedMemories.length > 0 && (
+            <div className="mb-4">
+              <div className="text-xs text-zinc-500 uppercase mb-2">Event Sourced Memories</div>
+              {eventSourcedMemories.map((m) => (
+                <div 
+                  key={m.id} 
+                  onClick={() => setSelectedId(m.id)}
+                  className="p-3 border rounded hover:bg-zinc-800 cursor-pointer transition-colors group bg-blue-900/10 border-blue-900/50 mb-2"
+                >
+                  <div className="text-sm text-zinc-300 group-hover:text-white flex justify-between">
+                    <span>{m.title}</span>
+                    <span className="text-[9px] text-blue-400 bg-blue-900/30 px-1 rounded">
+                      {m.type}
+                    </span>
+                  </div>
+                  <div className="text-xs text-zinc-500 mt-1 line-clamp-2">{m.content.slice(0, 100)}...</div>
+                  <div className="mt-2 flex items-center justify-between">
+                    <span className="text-[10px] text-zinc-500">{new Date(m.updatedAt).toLocaleString()}</span>
+                    <div className="flex items-center gap-2">
+                      {m.tags.map(tag => (
+                        <span key={tag} className="text-[9px] text-zinc-400 bg-zinc-800 px-1 rounded">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          
+          {/* KNEZ Memories */}
           {(searchQuery ? searchResults : memories).map((m) => (
             <div 
               key={m.id} 
@@ -305,12 +358,12 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
               </div>
             </div>
           ))}
-          {searchQuery && searchResults.length === 0 && (
+          {searchQuery && searchResults.length === 0 && eventSourcedMemories.length === 0 && (
              <div className="text-center text-zinc-500 text-xs py-8">
                 No memories found matching "{searchQuery}"
              </div>
           )}
-          {!searchQuery && memories.length === 0 && (
+          {!searchQuery && memories.length === 0 && eventSourcedMemories.length === 0 && (
              <div className="text-center text-zinc-500 text-xs py-8">
                 No memories yet. Memory promotion requires running the Gate check and backend support.
              </div>
@@ -409,41 +462,159 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
                  {/* Edges */}
                  {memories.map((_, i) => {
                     if (i === 0) return null;
-                    // Simple linear chain for now
                     return (
                        <line 
                          key={`edge-${i}`}
                          x1={50 + (i-1) * 100} y1={150 + ((i-1)%2)*50}
                          x2={50 + i * 100} y2={150 + (i%2)*50}
-                         stroke="#333" strokeWidth="2"
+                         stroke="#3f3f46"
+                         strokeWidth="2"
                        />
                     );
                  })}
-                 
                  {/* Nodes */}
                  {memories.map((m, i) => (
-                    <g 
-                      key={m.id} 
-                      transform={`translate(${50 + i * 100}, ${150 + (i%2)*50})`}
-                      onClick={() => setSelectedId(m.id)}
-                      className="cursor-pointer hover:opacity-80"
-                    >
-                       <circle r="20" fill={m.importance > 0.8 ? "#2563eb" : "#3f3f46"} />
-                       <text y="35" textAnchor="middle" fill="#71717a" fontSize="10">{m.summary.substring(0, 10)}...</text>
-                    </g>
+                    <circle
+                      key={m.id}
+                      cx={50 + i * 100}
+                      cy={150 + (i%2)*50}
+                      r="20"
+                      fill="#3b82f6"
+                      className="cursor-pointer hover:fill-blue-400"
+                    />
                  ))}
               </svg>
-              <div className="absolute top-2 right-2 text-[10px] text-zinc-500 bg-black/50 p-1 rounded">
-                 Interactive Session Graph
-              </div>
            </div>
         </div>
       )}
-      
-      <MemoryDetailModal  
-        memoryId={selectedId}
-        onClose={() => setSelectedId(null)}
-      />
+
+      {/* Memory Form Modal */}
+      {showMemoryForm && (
+        <MemoryFormModal
+          onClose={() => setShowMemoryForm(false)}
+          onSubmit={async (memoryData) => {
+            try {
+              await memoryService.createMemory(
+                memoryData.type,
+                memoryData.title,
+                memoryData.content,
+                memoryData.domain,
+                memoryData.tags
+              );
+              // Reload memories
+              const allMemories = memoryService.getAllMemories();
+              setEventSourcedMemories(allMemories);
+              setShowMemoryForm(false);
+            } catch (error) {
+              console.error("Failed to create memory:", error);
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+const MemoryFormModal: React.FC<{
+  onClose: () => void;
+  onSubmit: (data: {
+    type: 'learning' | 'mistake' | 'decision' | 'pattern';
+    title: string;
+    content: string;
+    domain: string;
+    tags: string[];
+  }) => void;
+}> = ({ onClose, onSubmit }) => {
+  const [type, setType] = useState<'learning' | 'mistake' | 'decision' | 'pattern'>('learning');
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const [domain, setDomain] = useState('controlapp');
+  const [tags, setTags] = useState('');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSubmit({
+      type,
+      title,
+      content,
+      domain,
+      tags: tags.split(',').map(t => t.trim()).filter(t => t)
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+      <div className="bg-zinc-900 border border-zinc-700 p-6 rounded-lg max-w-lg w-full max-h-[80vh] overflow-y-auto">
+        <h3 className="text-lg font-bold text-white mb-4">Add Memory</h3>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="text-xs text-zinc-500 uppercase">Type</label>
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value as any)}
+              className="w-full mt-1 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded text-white text-sm"
+            >
+              <option value="learning">Learning</option>
+              <option value="mistake">Mistake</option>
+              <option value="decision">Decision</option>
+              <option value="pattern">Pattern</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-zinc-500 uppercase">Title</label>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full mt-1 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded text-white text-sm"
+              required
+            />
+          </div>
+          <div>
+            <label className="text-xs text-zinc-500 uppercase">Content</label>
+            <textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              className="w-full mt-1 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded text-white text-sm h-32"
+              required
+            />
+          </div>
+          <div>
+            <label className="text-xs text-zinc-500 uppercase">Domain</label>
+            <input
+              type="text"
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              className="w-full mt-1 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded text-white text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-zinc-500 uppercase">Tags (comma-separated)</label>
+            <input
+              type="text"
+              value={tags}
+              onChange={(e) => setTags(e.target.value)}
+              className="w-full mt-1 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded text-white text-sm"
+              placeholder="tag1, tag2, tag3"
+            />
+          </div>
+          <div className="flex justify-end gap-2 mt-6">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded"
+            >
+              Save Memory
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 };
