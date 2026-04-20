@@ -207,95 +207,178 @@ const MessageItemInner: React.FC<{
         {/* Tool Execution Block - Rendered after thoughts, before response text */}
         {msg.toolCall ? (
           <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-3">
-            <button
-              onClick={() => setToolDetailsOpen(!toolDetailsOpen)}
-              className="w-full flex items-center justify-between mb-2 text-left"
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-mono text-zinc-200 break-all min-w-0">
-                  MCP: {msg.toolCall.tool}
-                </span>
-                {msg.toolCall.phase && (
-                  <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
-                    msg.toolCall.phase === "execution"
-                      ? "bg-purple-900/20 text-purple-300 border-purple-900/40"
-                      : msg.toolCall.phase === "planning"
-                        ? "bg-cyan-900/20 text-cyan-300 border-cyan-900/40"
-                        : msg.toolCall.phase === "post_execution"
-                          ? "bg-orange-900/20 text-orange-300 border-orange-900/40"
-                          : "bg-zinc-900/20 text-zinc-400 border-zinc-900/40"
-                  }`}>
-                    {msg.toolCall.phase.toUpperCase()}
-                  </span>
-                )}
-                <span className="text-[10px] text-zinc-500">
-                  {toolDetailsOpen ? '▼' : '▶'}
-                </span>
-              </div>
-              <div className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
-                msg.toolCall.status === "pending"
-                  ? "bg-yellow-900/20 text-yellow-300 border-yellow-900/40"
-                  : msg.toolCall.status === "running"
-                    ? "bg-blue-900/20 text-blue-200 border-blue-900/40 animate-pulse"
-                    : msg.toolCall.status === "calling"
-                      ? "bg-blue-900/20 text-blue-200 border-blue-900/40"
-                      : msg.toolCall.status === "succeeded" || msg.toolCall.status === "completed"
-                        ? "bg-green-900/20 text-green-300 border-green-900/40"
-                        : msg.toolCall.status === "failed"
-                          ? "bg-red-900/20 text-red-300 border-red-900/40"
-                          : "bg-zinc-900/20 text-zinc-300 border-zinc-900/40"
-              }`}>
-                {msg.toolCall.status === "pending" ? "pending" :
-                 msg.toolCall.status === "running" ? "running" :
-                 msg.toolCall.status === "calling" ? "executing" :
-                 msg.toolCall.status === "completed" ? "completed" :
-                 msg.toolCall.status}
-              </div>
-            </button>
-            {toolDetailsOpen && (
-              <div className="mt-3 space-y-3">
-                {msg.toolCall.executionTimeMs && (
-                  <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500">
-                    <span>Execution Time</span>
-                    <span className="text-zinc-300">{msg.toolCall.executionTimeMs}ms</span>
-                  </div>
-                )}
-                {msg.toolCall.mcpLatencyMs && (
-                  <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500">
-                    <span>MCP Latency</span>
-                    <span className="text-zinc-300">{msg.toolCall.mcpLatencyMs}ms</span>
-                  </div>
-                )}
-                <div>
-                  <div className="text-[10px] font-mono text-zinc-500 mb-1">REQUEST</div>
-                  <div className="max-w-full overflow-x-auto">
-                    <pre className="text-[10px] text-zinc-300 bg-zinc-900/50 p-2 rounded border border-zinc-800 whitespace-pre-wrap break-all word-break-all">
-                      {JSON.stringify(msg.toolCall.args, null, 2)}
-                    </pre>
-                  </div>
-                </div>
-                {msg.toolCall.status === "succeeded" && msg.toolCall.result !== undefined && (
-                  <div>
-                    <div className="text-[10px] font-mono text-zinc-500 mb-1">OUTPUT</div>
-                    <div className="max-w-full overflow-x-auto">
-                      <pre className="text-[10px] text-zinc-300 bg-zinc-900/50 p-2 rounded border border-zinc-800 whitespace-pre-wrap break-all word-break-all">
-                        {typeof msg.toolCall.result === 'string' ? msg.toolCall.result : JSON.stringify(msg.toolCall.result, null, 2)}
-                      </pre>
+            {/* Check if this is a browser_navigate with parsed result */}
+            {(() => {
+              const isBrowserNavigate = /browser_navigate$/.test(msg.toolCall.tool);
+              const parsedResult = msg.toolCall.result && typeof msg.toolCall.result === 'object' && (msg.toolCall.result.page_url || msg.toolCall.result.title);
+              
+              if (isBrowserNavigate && parsedResult) {
+                // Structured UI for browser_navigate
+                return (
+                  <>
+                    <button
+                      onClick={() => setToolDetailsOpen(!toolDetailsOpen)}
+                      className="w-full flex items-center justify-between mb-2 text-left"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono text-zinc-200">
+                          {msg.toolCall.tool.replace(/^[^_]+__/, '')}
+                        </span>
+                        <span className="text-[10px] text-green-400">
+                          → {msg.toolCall.status === "succeeded" || msg.toolCall.status === "completed" ? "success" : msg.toolCall.status}
+                        </span>
+                        {parsedResult.page_url && (
+                          <span className="text-[10px] text-zinc-400 truncate max-w-[300px]">
+                            Loaded {parsedResult.page_url}
+                          </span>
+                        )}
+                        <span className="text-[10px] text-zinc-500">
+                          {toolDetailsOpen ? '▼' : '▶'}
+                        </span>
+                      </div>
+                    </button>
+                    {toolDetailsOpen && (
+                      <div className="mt-3 space-y-3">
+                        <div className="text-xs font-medium text-green-300 mb-2">Page Loaded</div>
+                        {parsedResult.page_url && (
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <span className="text-zinc-500">URL:</span>
+                            <span className="text-zinc-300 font-mono break-all">{parsedResult.page_url}</span>
+                          </div>
+                        )}
+                        {parsedResult.title && (
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <span className="text-zinc-500">Title:</span>
+                            <span className="text-zinc-300">{parsedResult.title}</span>
+                          </div>
+                        )}
+                        {msg.toolCall.executionTimeMs && (
+                          <div className="flex items-center gap-2 text-[10px] font-mono text-zinc-500">
+                            <span>Execution Time</span>
+                            <span className="text-zinc-300">{msg.toolCall.executionTimeMs}ms</span>
+                          </div>
+                        )}
+                        {parsedResult.snapshot && (
+                          <div>
+                            <div className="text-[10px] font-mono text-zinc-500 mb-1">SNAPSHOT</div>
+                            <div className="max-w-full overflow-x-auto">
+                              <pre className="text-[10px] text-zinc-300 bg-zinc-900/50 p-2 rounded border border-zinc-800 whitespace-pre-wrap break-all word-break-all">
+                                {typeof parsedResult.snapshot === 'string' ? parsedResult.snapshot : JSON.stringify(parsedResult.snapshot, null, 2)}
+                              </pre>
+                            </div>
+                          </div>
+                        )}
+                        {parsedResult.logs && (
+                          <div>
+                            <div className="text-[10px] font-mono text-zinc-500 mb-1">LOGS</div>
+                            <div className="max-w-full overflow-x-auto">
+                              <pre className="text-[10px] text-zinc-300 bg-zinc-900/50 p-2 rounded border border-zinc-800 whitespace-pre-wrap break-all word-break-all">
+                                {typeof parsedResult.logs === 'string' ? parsedResult.logs : JSON.stringify(parsedResult.logs, null, 2)}
+                              </pre>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                );
+              }
+              
+              // Default UI for other tools
+              return (
+                <>
+                  <button
+                    onClick={() => setToolDetailsOpen(!toolDetailsOpen)}
+                    className="w-full flex items-center justify-between mb-2 text-left"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono text-zinc-200 break-all min-w-0">
+                        MCP: {msg.toolCall.tool}
+                      </span>
+                      {msg.toolCall.phase && (
+                        <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+                          msg.toolCall.phase === "execution"
+                            ? "bg-purple-900/20 text-purple-300 border-purple-900/40"
+                            : msg.toolCall.phase === "planning"
+                              ? "bg-cyan-900/20 text-cyan-300 border-cyan-900/40"
+                              : msg.toolCall.phase === "post_execution"
+                                ? "bg-orange-900/20 text-orange-300 border-orange-900/40"
+                                : "bg-zinc-900/20 text-zinc-400 border-zinc-900/40"
+                        }`}>
+                          {msg.toolCall.phase.toUpperCase()}
+                        </span>
+                      )}
+                      <span className="text-[10px] text-zinc-500">
+                        {toolDetailsOpen ? '▼' : '▶'}
+                      </span>
                     </div>
-                  </div>
-                )}
-                {msg.toolCall.status === "failed" && msg.toolCall.error && (
-                  <div>
-                    <div className="text-[10px] font-mono text-red-400 mb-1">ERROR</div>
-                    <div className="max-w-full overflow-x-auto">
-                      <pre className="text-[10px] text-red-300 bg-red-900/10 p-2 rounded border border-red-900/30 whitespace-pre-wrap break-all word-break-all">
-                        {msg.toolCall.error}
-                      </pre>
+                    <div className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                      msg.toolCall.status === "pending"
+                        ? "bg-yellow-900/20 text-yellow-300 border-yellow-900/40"
+                        : msg.toolCall.status === "running"
+                          ? "bg-blue-900/20 text-blue-200 border-blue-900/40 animate-pulse"
+                          : msg.toolCall.status === "calling"
+                            ? "bg-blue-900/20 text-blue-200 border-blue-900/40"
+                            : msg.toolCall.status === "succeeded" || msg.toolCall.status === "completed"
+                              ? "bg-green-900/20 text-green-300 border-green-900/40"
+                              : msg.toolCall.status === "failed"
+                                ? "bg-red-900/20 text-red-300 border-red-900/40"
+                                : "bg-zinc-900/20 text-zinc-300 border-zinc-900/40"
+                    }`}>
+                      {msg.toolCall.status === "pending" ? "pending" :
+                       msg.toolCall.status === "running" ? "running" :
+                       msg.toolCall.status === "calling" ? "executing" :
+                       msg.toolCall.status === "completed" ? "completed" :
+                       msg.toolCall.status}
                     </div>
-                  </div>
-                )}
-              </div>
-            )}
+                  </button>
+                  {toolDetailsOpen && (
+                    <div className="mt-3 space-y-3">
+                      {msg.toolCall.executionTimeMs && (
+                        <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500">
+                          <span>Execution Time</span>
+                          <span className="text-zinc-300">{msg.toolCall.executionTimeMs}ms</span>
+                        </div>
+                      )}
+                      {msg.toolCall.mcpLatencyMs && (
+                        <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500">
+                          <span>MCP Latency</span>
+                          <span className="text-zinc-300">{msg.toolCall.mcpLatencyMs}ms</span>
+                        </div>
+                      )}
+                      <div>
+                        <div className="text-[10px] font-mono text-zinc-500 mb-1">REQUEST</div>
+                        <div className="max-w-full overflow-x-auto">
+                          <pre className="text-[10px] text-zinc-300 bg-zinc-900/50 p-2 rounded border border-zinc-800 whitespace-pre-wrap break-all word-break-all">
+                            {JSON.stringify(msg.toolCall.args, null, 2)}
+                          </pre>
+                        </div>
+                      </div>
+                      {msg.toolCall.status === "succeeded" && msg.toolCall.result !== undefined && (
+                        <div>
+                          <div className="text-[10px] font-mono text-zinc-500 mb-1">OUTPUT</div>
+                          <div className="max-w-full overflow-x-auto">
+                            <pre className="text-[10px] text-zinc-300 bg-zinc-900/50 p-2 rounded border border-zinc-800 whitespace-pre-wrap break-all word-break-all">
+                              {typeof msg.toolCall.result === 'string' ? msg.toolCall.result : JSON.stringify(msg.toolCall.result, null, 2)}
+                            </pre>
+                          </div>
+                        </div>
+                      )}
+                      {msg.toolCall.status === "failed" && msg.toolCall.error && (
+                        <div>
+                          <div className="text-[10px] font-mono text-red-400 mb-1">ERROR</div>
+                          <div className="max-w-full overflow-x-auto">
+                            <pre className="text-[10px] text-red-300 bg-red-900/10 p-2 rounded border border-red-900/30 whitespace-pre-wrap break-all word-break-all">
+                              {msg.toolCall.error}
+                            </pre>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         ) : isRawToolCallJson ? (
           // [FIX D1/D2] — Raw tool call JSON leaked through; show execution state, not JSON
