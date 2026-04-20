@@ -6,15 +6,8 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { 
-  getMemoryEventSourcingService, 
-  MemoryState, 
-  MemoryEventType 
-} from '../../services/MemoryEventSourcingService';
-import { 
-  getMemoryVectorSearchService, 
-  MemorySearchResult 
-} from '../../services/MemoryVectorSearchService';
+import { getMemoryEventSourcingService } from '../../services/MemoryEventSourcingService';
+import { MemoryState } from '../../services/MemoryEventSourcingService';
 import { MemoryGraphVisualization } from './MemoryGraphVisualization';
 
 export const EventSourcedMemoryView: React.FC = () => {
@@ -29,7 +22,6 @@ export const EventSourcedMemoryView: React.FC = () => {
   const [view, setView] = useState<'list' | 'graph'>('list');
 
   const memoryService = getMemoryEventSourcingService();
-  const vectorSearchService = getMemoryVectorSearchService();
 
   useEffect(() => {
     loadMemories();
@@ -45,13 +37,8 @@ export const EventSourcedMemoryView: React.FC = () => {
   }, [searchQuery, useSemanticSearch]);
 
   const performSearch = async () => {
-    if (useSemanticSearch) {
-      const results = await vectorSearchService.searchMemories(searchQuery, { limit: 20 });
-      setSearchResults(results.map(r => r.memory));
-    } else {
-      const results = memoryService.searchMemories(searchQuery);
-      setSearchResults(results);
-    }
+    const results = memoryService.searchMemories(searchQuery);
+    setSearchResults(results);
   };
 
   const loadMemories = () => {
@@ -88,30 +75,12 @@ export const EventSourcedMemoryView: React.FC = () => {
     loadMemories();
   };
 
-  const handleRemoveTag = async (memoryId: string, tag: string) => {
-    await memoryService.removeTag(memoryId, tag);
-    loadMemories();
-  };
-
   const handleAddRelation = async (
     memoryId: string,
     relatedMemoryId: string,
     relationship: 'relates_to' | 'caused' | 'resolved' | 'similar_to' | 'depends_on'
   ) => {
     await memoryService.addRelation(memoryId, relatedMemoryId, relationship);
-    loadMemories();
-  };
-
-  const handleUpdateMemory = async (
-    memoryId: string,
-    updates: Partial<{
-      title: string;
-      content: string;
-      domain: string;
-      tags: string[];
-    }>
-  ) => {
-    await memoryService.updateMemory(memoryId, updates);
     loadMemories();
   };
 
@@ -215,9 +184,7 @@ export const EventSourcedMemoryView: React.FC = () => {
               memory={memory}
               onSelect={() => setSelectedMemory(memory)}
               onAddTag={(tag) => handleAddTag(memory.id, tag)}
-              onRemoveTag={(tag) => handleRemoveTag(memory.id, tag)}
               onAddRelation={(relatedId, rel) => handleAddRelation(memory.id, relatedId, rel)}
-              onUpdate={(updates) => handleUpdateMemory(memory.id, updates)}
             />
           ))}
           {(searchQuery ? searchResults : filteredMemories).length === 0 && (
@@ -389,10 +356,8 @@ const MemoryCard: React.FC<{
   memory: MemoryState;
   onSelect: () => void;
   onAddTag: (tag: string) => void;
-  onRemoveTag: (tag: string) => void;
   onAddRelation: (relatedId: string, relationship: any) => void;
-  onUpdate: (updates: any) => void;
-}> = ({ memory, onSelect, onAddTag, onRemoveTag, onAddRelation, onUpdate }) => {
+}> = ({ memory, onSelect, onAddTag, onAddRelation }) => {
   const [showTagInput, setShowTagInput] = useState(false);
   const [tagInput, setTagInput] = useState('');
   const [showRelationForm, setShowRelationForm] = useState(false);

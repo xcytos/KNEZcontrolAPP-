@@ -55,10 +55,10 @@ export const LearningMistakesVisualization: React.FC = () => {
       monthlyMistakes.set(month, (monthlyMistakes.get(month) || 0) + 1);
     });
 
-    return { monthlyLearnings, monthlyMistakes };
+    return { monthlyLearnings };
   };
 
-  const { monthlyLearnings, monthlyMistakes } = calculateGrowthMetrics();
+  const { monthlyLearnings } = calculateGrowthMetrics();
 
   // Calculate mistake patterns
   const calculateMistakePatterns = () => {
@@ -163,7 +163,7 @@ export const LearningMistakesVisualization: React.FC = () => {
           <div className="space-y-4">
             {/* Timeline visualization */}
             <div className="relative">
-              {filteredLearnings.slice(0, 10).map((learning, i) => (
+              {filteredLearnings.slice(0, 10).map((learning) => (
                 <div key={learning.id} className="relative pl-8 pb-4">
                   <div className="absolute left-0 top-0 w-3 h-3 bg-green-500 rounded-full" />
                   <div className="absolute left-1.5 top-3 w-0.5 h-full bg-zinc-800" />

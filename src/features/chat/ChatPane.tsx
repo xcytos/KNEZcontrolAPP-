@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChatMessage } from "../../domain/DataContracts";
+import { ChatMessage, AssistantMessage } from "../../domain/DataContracts";
 import { knezClient } from "../../services/KnezClient";
 import { MessageItem } from "./MessageItem";
 import { getMemoryEventSourcingService } from "../../services/MemoryEventSourcingService";
@@ -12,7 +12,7 @@ import { VoiceInput } from "../voice/VoiceInput";
 import { chatService } from "../../services/ChatService";
 import { sessionDatabase } from "../../services/SessionDatabase";
 import { sessionController } from "../../services/SessionController";
-import { FolderOpen, History, Loader2, MessageSquarePlus, MoreVertical, Play, Search, Square, TerminalSquare, Puzzle, Sparkles, Zap, Bug } from "lucide-react";
+import { FolderOpen, History, Loader2, MessageSquarePlus, MoreVertical, Play, Search, Square, TerminalSquare, Puzzle, Sparkles, Zap, Bug, Database } from "lucide-react";
 import { SessionInspectorModal } from "./SessionInspectorModal";
 import { DebugPanel } from "./DebugPanel";
 import { useStatus } from "../../contexts/useStatus";
@@ -29,6 +29,7 @@ import { RenameModal } from "./modals/RenameModal";
 import { AuditModal } from "./modals/AuditModal";
 import { AvailableToolsModal } from "./modals/AvailableToolsModal";
 import { MemoryModal } from "./MemoryModal";
+import { ChatMemorySyncModal } from "./ChatMemorySyncModal";
 // Manual approval removed - tools auto-approve
 // import { ToolApprovalModal } from "./ToolApprovalModal";
 type Props = {
@@ -41,6 +42,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   // const [showPerception, setShowPerception] = useState(false);
   // Use ChatService state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [assistantMessages, setAssistantMessages] = useState<AssistantMessage[]>([]);
   const [phase, setPhase] = useState<"idle" | "request_sent" | "model_thinking" | "tool_execution" | "streaming" | "completed" | "error">("idle");
   const [activeTools, setActiveTools] = useState<{ search: boolean }>({ search: false });
   const [searchProvider, setSearchProvider] = useState<"off" | "taqwin" | "proxy">("off");
@@ -60,6 +62,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [availableToolsOpen, setAvailableToolsOpen] = useState(false);
   const [inspectSessionId, setInspectSessionId] = useState<string | null>(null);
   const [memoryModalOpen, setMemoryModalOpen] = useState(false);
+  const [chatMemorySyncOpen, setChatMemorySyncOpen] = useState(false);
   const [mode, setMode] = useState<"chat" | "terminal">("chat");
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [debugPanelOpen, setDebugPanelOpen] = useState(false);
@@ -142,6 +145,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   useEffect(() => {
     const unsub = chatService.subscribe((state) => {
        setMessages(state.messages);
+       setAssistantMessages(state.assistantMessages);
        setPhase(state.phase);
        setActiveTools(state.activeTools);
        setSearchProvider(state.searchProvider);
@@ -622,6 +626,17 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                     <MessageSquarePlus size={14} />
                     +Memory
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHeaderMenuOpen(false);
+                      setChatMemorySyncOpen(true);
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-900 flex items-center gap-2"
+                  >
+                    <Database size={14} />
+                    Sync Chat to Memory
+                  </button>
                   {features.floatingConsole && (
                     <button
                       type="button"
@@ -717,16 +732,24 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
               </button>
             )}
             
-            {visibleMessages.map((msg, idx) => (
-              <MessageItem
-                key={msg.id || idx}
-                msg={msg}
-                onEdit={handleEdit}
-                onStop={handleStop}
-                onRetry={handleRetry}
-                readOnly={readOnly}
-              />
-            ))}
+            {visibleMessages.map((msg, idx) => {
+              // Find corresponding assistant message if this is a user message
+              const assistantMsg = msg.from === "user" && msg.id
+                ? assistantMessages.find(am => am.sessionId === msg.sessionId)
+                : undefined;
+
+              return (
+                <MessageItem
+                  key={msg.id || idx}
+                  msg={msg}
+                  assistantMessage={assistantMsg}
+                  onEdit={handleEdit}
+                  onStop={handleStop}
+                  onRetry={handleRetry}
+                  readOnly={readOnly}
+                />
+              );
+            })}
             <div ref={messagesEndRef} className="h-4" />
           </div>
 
@@ -994,6 +1017,13 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         messages={messages}
         isOpen={debugPanelOpen}
         onClose={() => setDebugPanelOpen(false)}
+      />
+      <ChatMemorySyncModal
+        isOpen={chatMemorySyncOpen}
+        onClose={() => setChatMemorySyncOpen(false)}
+        onInjected={(count) => {
+          showToast(`Synced ${count} memories to database`, "success");
+        }}
       />
       <MemoryModal
         isOpen={memoryModalOpen}

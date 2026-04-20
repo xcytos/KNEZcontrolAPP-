@@ -149,7 +149,7 @@ export class MemoryTimeSeriesTrackingService {
    */
   queryAggregatedMetrics(query: TimeSeriesQuery): Array<{ timestamp: number; value: number }> {
     const interval = query.interval || 60 * 1000; // 1 minute default
-    const bucketSize = Math.floor((query.endTime - query.startTime) / interval) || 1;
+    Math.floor((query.endTime - query.startTime) / interval) || 1;
 
     const bucketStart = Math.floor(query.startTime / interval) * interval;
 

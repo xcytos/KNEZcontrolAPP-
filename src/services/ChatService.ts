@@ -2,7 +2,7 @@
 import { knezClient } from "./KnezClient";
 import { extractionService } from "./ExtractionService";
 import { persistenceService } from "./PersistenceService";
-import { ChatMessage, ToolCallMessage } from "../domain/DataContracts";
+import { ChatMessage, ToolCallMessage, AssistantMessage, Block } from "../domain/DataContracts";
 import { AppError, asErrorMessage } from "../domain/Errors";
 import { observe } from "../utils/observer";
 import { sessionDatabase } from "./SessionDatabase";
@@ -43,6 +43,7 @@ export type EventType =
 
 export interface ChatState {
   messages: ChatMessage[];
+  assistantMessages: AssistantMessage[]; // New block-based assistant messages
   phase: ChatPhase;
   currentStreamId: string | null;
   activeTools: { search: boolean };
@@ -59,6 +60,7 @@ export class ChatService {
   private listeners: StateListener[] = [];
   private state: ChatState = {
     messages: [],
+    assistantMessages: [],
     phase: "idle",
     currentStreamId: null,
     activeTools: { search: false },
@@ -221,6 +223,49 @@ export class ChatService {
     this.notify();
   }
 
+  // Block-based assistant message methods
+  private createAssistantMessage(sessionId: string, initialBlocks: Block[] = []): AssistantMessage {
+    return {
+      id: newMessageId(),
+      sessionId,
+      role: "assistant",
+      blocks: initialBlocks,
+      createdAt: new Date().toISOString(),
+      sequenceNumber: this.getNextSequenceNumber()
+    };
+  }
+
+  private appendBlockToAssistantMessage(assistantId: string, block: Block): void {
+    const assistantMsg = this.state.assistantMessages.find(m => m.id === assistantId);
+    if (assistantMsg) {
+      assistantMsg.blocks.push(block);
+      this.notify();
+      // Persist to database
+      void sessionDatabase.updateAssistantMessage(assistantId, { blocks: assistantMsg.blocks });
+    }
+  }
+
+  private updateBlockInAssistantMessage(assistantId: string, blockIndex: number, updatedBlock: Block): void {
+    const assistantMsg = this.state.assistantMessages.find(m => m.id === assistantId);
+    if (assistantMsg && assistantMsg.blocks[blockIndex]) {
+      assistantMsg.blocks[blockIndex] = updatedBlock;
+      this.notify();
+      // Persist to database
+      void sessionDatabase.updateAssistantMessage(assistantId, { blocks: assistantMsg.blocks });
+    }
+  }
+
+  private findLastMcpCallBlockIndex(assistantId: string): number | null {
+    const assistantMsg = this.state.assistantMessages.find(m => m.id === assistantId);
+    if (!assistantMsg) return null;
+    for (let i = assistantMsg.blocks.length - 1; i >= 0; i--) {
+      if (assistantMsg.blocks[i].type === 'mcp_call') {
+        return i;
+      }
+    }
+    return null;
+  }
+
   // Helper to generate sequence number for deterministic ordering
   private getNextSequenceNumber(): number {
     const seq = this.state.sequenceCounter;
@@ -230,12 +275,13 @@ export class ChatService {
 
   async load(sessionId: string) {
     const loaded = await persistenceService.loadChat(sessionId);
+    const loadedAssistantMessages = await sessionDatabase.loadAssistantMessages(sessionId);
     if (loaded && loaded.length > 0) {
       this.state.messages = loaded;
-    } else {
-      this.state.messages = [];
+      this.state.assistantMessages = loadedAssistantMessages;
+      this.state.sequenceCounter = Math.max(...loaded.map(m => m.sequenceNumber ?? 0), ...loadedAssistantMessages.map(m => m.sequenceNumber ?? 0)) + 1;
+      this.notify();
     }
-    this.notify();
   }
 
   setActiveTools(tools: { search: boolean }) {
@@ -270,25 +316,18 @@ export class ChatService {
       correlationId: userId
     };
 
-    const assistantMsg: ChatMessage = {
-      id: assistantId,
-      sessionId: this.sessionId,
-      from: "knez",
-      text: "",
-      createdAt: now,
-      sequenceNumber: this.getNextSequenceNumber(),
-      isPartial: false,
-      metrics: { totalTokens: 0, fallbackTriggered: false },
-      deliveryStatus: "queued",
-      replyToMessageId: userId,
-      correlationId: userId
-    };
+    // Create AssistantMessage with blocks instead of regular ChatMessage
+    const assistantMsg = this.createAssistantMessage(this.sessionId, [
+      { type: "text", content: "" } // Initial empty text block
+    ]);
 
-    this.state.messages = [...this.state.messages, userMsg, assistantMsg];
+    this.state.messages = [...this.state.messages, userMsg];
+    this.state.assistantMessages = [...this.state.assistantMessages, assistantMsg];
     this.notify();
     observe("chat_send_attempt", { sessionId: this.sessionId, message: text });
     await this.ensureSessionExists(this.sessionId);
-    await sessionDatabase.saveMessages(this.sessionId, [userMsg, assistantMsg]);
+    await sessionDatabase.saveMessages(this.sessionId, [userMsg]);
+    await sessionDatabase.saveAssistantMessage(this.sessionId, assistantMsg);
     void this.tryEmit(
       "chat_user_message",
       { message_id: userId, from: "user", correlation_id: userId },
@@ -300,9 +339,8 @@ export class ChatService {
       logger.warn("chat", "Queue limit reached", { sessionId: this.sessionId });
       tabErrorStore.mark("chat");
       tabErrorStore.mark("logs");
-      await sessionDatabase.updateMessage(assistantId, { deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, refusal: true, text: "⚠️ Failed to generate response" });
-      this.state.messages = this.state.messages.map((m) => m.id === assistantId ? { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, refusal: true, text: "⚠️ Failed to generate response" } : m);
-      this.notify();
+      // Update assistant message with error block
+      this.appendBlockToAssistantMessage(assistantId, { type: "final", content: `⚠️ ${errorMsg}` });
       return;
     }
     await sessionDatabase.enqueueOutgoing({
@@ -977,12 +1015,11 @@ export class ChatService {
       return directIntentResult;
     }
 
-    await agentOrchestrator.runAgent(sessionId, userInput + memoryContext, {
-      onThinking: (isThinking) => {
-        this.setPhase(isThinking ? "MODEL_CALL_START" : "TOOL_END");
+    await agentOrchestrator.runAgent(sessionId, userInput, {
+      onThinking: () => {
+        // Phase is set by other callbacks (MODEL_CALL_START, FIRST_TOKEN, etc.)
       },
       onStreamingChunk: (chunk) => {
-        // Streaming contract: ONLY stream final human text
         // Filter out tool_call JSON, reasoning, logs
         if (chunk && !chunk.includes('"tool_call"') && !chunk.startsWith('{')) {
           this.state.messages = this.state.messages.map((m) =>
@@ -993,83 +1030,47 @@ export class ChatService {
       },
       onToolStart: (toolName, args) => {
         this.setPhase("TOOL_START");
-        const startedAt = new Date().toISOString();
         const traceMessageId = `${assistantId}-tool-${Date.now()}`;
         currentToolMessageId = traceMessageId;
 
-        // Detect phase and pattern
-        const existingToolMessages = this.state.messages.filter(m => m.from === "tool_execution" && m.correlationId === assistantId);
-        const toolIndex = existingToolMessages.length;
-        const phase: "execution" | "post_execution" = toolIndex === 0 ? "execution" : "post_execution";
-        const pattern: "direct" | "multi_step" = toolIndex === 0 ? "direct" : "multi_step";
-
-        const toolCall: ToolCallMessage = { 
-          tool: toolName, 
-          args, 
-          status: "calling", 
-          startedAt,
-          phase,
-          pattern,
-          groupingId: assistantId,
-          sequenceOrder: toolIndex
-        };
-        this.persistToolTrace(sessionId, {
-          id: traceMessageId,
-          sessionId,
-          from: "tool_execution" as any,
-          text: "",
-          createdAt: startedAt,
-          sequenceNumber: this.getNextSequenceNumber(),
-          toolCall,
-          deliveryStatus: "delivered",
-          replyToMessageId: assistantId,
-          correlationId: assistantId
+        // Append mcp_call block to assistant message instead of creating separate tool execution message
+        this.appendBlockToAssistantMessage(assistantId, {
+          type: "mcp_call",
+          tool: toolName,
+          args,
+          status: "running"
         });
-        // Live status transition: calling → running after a brief delay
-        setTimeout(() => {
-          if (currentToolMessageId === traceMessageId) {
-            this.updateToolTrace(sessionId, traceMessageId, {
-              toolCall: {
-                ...toolCall,
-                status: "running"
-              }
-            });
-          }
-        }, 100);
       },
       onToolEnd: (toolName, result, success) => {
         this.setPhase("TOOL_END");
         if (currentToolMessageId) {
           const finishedAt = new Date().toISOString();
-          // Parse browser_navigate results for structured display
-          const isBrowserNavigate = /browser_navigate$/.test(toolName);
-          const parsedData = isBrowserNavigate && success ? this.parseBrowserNavigateResult(result) : null;
-          const toolContent = parsedData ? JSON.stringify(parsedData) : this.stringifyToolPayload(result, 20000);
-          // Calculate execution time from startedAt to finishedAt
-          const existingMsg = this.state.messages.find(m => m.id === currentToolMessageId);
-          const startedAtStr = existingMsg?.toolCall?.startedAt || new Date().toISOString();
-          const executionTimeMs = Date.parse(finishedAt) - Date.parse(startedAtStr);
+          // Calculate execution time
+          const executionTimeMs = Math.max(0, Date.parse(finishedAt) - Date.parse(new Date().toISOString()));
           // Estimate MCP latency as 30% of execution time (actual MCP latency requires deeper instrumentation)
           const mcpLatencyMs = Math.round(executionTimeMs * 0.3);
-          this.updateToolTrace(sessionId, currentToolMessageId, {
-            text: toolContent,
-            toolCall: {
+
+          // Update the last mcp_call block with result and final status
+          const blockIndex = this.findLastMcpCallBlockIndex(assistantId);
+          if (blockIndex !== null) {
+            this.updateBlockInAssistantMessage(assistantId, blockIndex, {
+              type: "mcp_call",
               tool: toolName,
-              args: {},
-              startedAt: startedAtStr,
-              status: success ? "completed" : "failed",
-              result: parsedData || (success ? result : undefined),
+              args: {}, // Args already set in onToolStart
+              status: success ? "success" : "failed",
+              result: success ? result : undefined,
               error: success ? undefined : String(result),
-              finishedAt,
-              executionTimeMs: Math.max(0, executionTimeMs),
+              executionTimeMs,
               mcpLatencyMs
-            }
-          });
+            });
+          }
         }
       },
       onFinal: (output) => {
         finalOutput = output;
         this.setPhase("STREAM_END");
+        // Add final block with assistant's answer
+        this.appendBlockToAssistantMessage(assistantId, { type: "final", content: output });
       }
     });
 

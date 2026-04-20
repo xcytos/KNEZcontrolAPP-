@@ -5,6 +5,7 @@ import { SystemPanel } from "../system/SystemPanel";
 import { HealthProbeStatus, SystemStatus } from "../system/useSystemOrchestrator";
 import { PerformancePanel } from "../performance/PerformancePanel";
 import { backendHasLiveMetrics, isBackendHealthyStatus } from "../../utils/health";
+import { InfrastructureVisualizer } from "./InfrastructureVisualizer";
 
 type Props = {
   isConnected: boolean;
@@ -24,6 +25,7 @@ export const InfrastructurePanel: React.FC<Props> = ({
   onStopSystem,
 }) => {
   const [audits, setAudits] = useState<AuditResult[]>([]);
+  const [view, setView] = useState<'dashboard' | 'visualizer'>('dashboard');
   
   // Use status.backends or empty
   const backends = status?.backends ?? [];
@@ -39,6 +41,28 @@ export const InfrastructurePanel: React.FC<Props> = ({
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-xl font-bold text-zinc-100">Observatory (Infrastructure)</h2>
         <div className="flex items-center gap-4">
+          <div className="flex bg-zinc-950 border border-zinc-800 rounded-lg p-1">
+            <button
+              onClick={() => setView('dashboard')}
+              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                view === 'dashboard'
+                  ? 'bg-zinc-800 text-zinc-200'
+                  : 'text-zinc-500 hover:text-zinc-400'
+              }`}
+            >
+              Dashboard
+            </button>
+            <button
+              onClick={() => setView('visualizer')}
+              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                view === 'visualizer'
+                  ? 'bg-zinc-800 text-zinc-200'
+                  : 'text-zinc-500 hover:text-zinc-400'
+              }`}
+            >
+              Visual Architecture
+            </button>
+          </div>
            {status && (
              <span className="text-xs text-zinc-500">
                Status: {status.status}
@@ -46,7 +70,13 @@ export const InfrastructurePanel: React.FC<Props> = ({
            )}
         </div>
       </div>
-      
+
+      {view === 'visualizer' ? (
+        <div className="h-[calc(100vh-200px)] rounded-lg border border-zinc-800 overflow-hidden">
+          <InfrastructureVisualizer />
+        </div>
+      ) : (
+        <>
       {/* System Control Panel (Orchestration) */}
       <SystemPanel status={systemStatus} output={systemOutput} healthProbe={systemHealthProbe} onStop={onStopSystem} />
       
@@ -128,6 +158,8 @@ export const InfrastructurePanel: React.FC<Props> = ({
           )}
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 };

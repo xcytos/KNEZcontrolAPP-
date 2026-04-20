@@ -11,7 +11,7 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { getMemoryKnowledgeGraphService, GraphNode, GraphEdge, GraphCluster } from '../../services/MemoryKnowledgeGraphService';
-import { getMemoryEventSourcingService, MemoryState } from '../../services/MemoryEventSourcingService';
+import { getMemoryEventSourcingService } from '../../services/MemoryEventSourcingService';
 
 interface MemoryGraphVisualizationProps {
   onNodeClick?: (nodeId: string) => void;
