@@ -5,6 +5,16 @@ export type TraceId = string;
 export type CorrelationId = string;
 export type ToolCallId = string;
 
+// ADD 1: Message State Contract
+export enum MessageState {
+  CREATED = "created",
+  STREAMING = "streaming",
+  TOOL_RUNNING = "tool_running",
+  FINAL = "final",
+  ERROR = "error",
+  LOCKED = "locked"
+}
+
 // Block types for inline execution UI
 export type Block =
   | { type: "text"; content: string }
@@ -16,8 +26,10 @@ export interface AssistantMessage {
   id: string;
   sessionId: SessionId;
   role: "assistant";
+  state: MessageState;
   blocks: Block[];
-  createdAt: string;
+  createdAt: number;
+  finalizedAt?: number;
   sequenceNumber?: number;
 }
 

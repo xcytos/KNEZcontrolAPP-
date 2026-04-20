@@ -1,8 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { ChatMessage, AssistantMessage } from '../../domain/DataContracts';
+import { ChatMessage } from '../../domain/DataContracts';
 import { AgentTrace } from '../../services/agent/AgentTracer';
 import { parseMessageContent, formatMarkdown, copyToClipboard } from './ChatUtils';
-import { AssistantMessageRenderer } from './blocks/AssistantMessageRenderer';
 
 const CodeBlock: React.FC<{ language: string; content: string }> = ({ language, content }) => {
   const [copied, setCopied] = useState(false);
@@ -73,13 +72,12 @@ const FormattedContent: React.FC<{ text: string }> = ({ text }) => {
 
 const MessageItemInner: React.FC<{
   msg: ChatMessage;
-  assistantMessage?: AssistantMessage;
   readOnly: boolean;
   onStop?: (id: string) => void;
   onRetry?: (id: string) => void;
   onEdit?: (id: string) => void;
   agentTrace?: AgentTrace;
-}> = ({ msg, assistantMessage, readOnly, onStop, onRetry, onEdit, agentTrace }) => {
+}> = ({ msg, readOnly, onStop, onRetry, onEdit, agentTrace }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [copied, setCopied] = useState(false);
   const [thoughtsOpen, setThoughtsOpen] = useState(false);
@@ -209,11 +207,20 @@ const MessageItemInner: React.FC<{
         {/* Tool Execution Block - Rendered after thoughts, before response text */}
         {msg.toolCall ? (
           <div className="border border-zinc-800 bg-zinc-950/60 rounded-lg p-3">
+            {/* Sequence number and arrow for multi-step tools */}
+            {msg.toolCall?.pattern === "multi_step" && (
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-[10px] font-mono text-indigo-400 bg-indigo-900/20 px-2 py-0.5 rounded border border-indigo-900/40">
+                  Tool {msg.toolCall.sequenceOrder !== undefined ? msg.toolCall.sequenceOrder + 1 : 1}
+                </span>
+                <span className="text-[10px] text-zinc-500">→</span>
+              </div>
+            )}
             {/* Check if this is a browser_navigate with parsed result */}
             {(() => {
               const isBrowserNavigate = /browser_navigate$/.test(msg.toolCall.tool);
               const parsedResult = msg.toolCall.result && typeof msg.toolCall.result === 'object' && (msg.toolCall.result.page_url || msg.toolCall.result.title);
-              
+
               if (isBrowserNavigate && parsedResult) {
                 // Structured UI for browser_navigate
                 return (
@@ -395,17 +402,8 @@ const MessageItemInner: React.FC<{
           </div>
         ) : null}
 
-        {/* Block-based rendering for new AssistantMessage structure */}
-        {assistantMessage && (
-          <AssistantMessageRenderer
-            blocks={assistantMessage.blocks}
-            onApprovalApprove={() => {}}
-            onApprovalReject={() => {}}
-          />
-        )}
-
         {/* Legacy rendering for backward compatibility */}
-        {!assistantMessage && parts.map((part, i) => {
+        {parts.map((part, i) => {
           if (part.type === 'think' || part.type === 'system') {
             return null; // Already rendered above
           }

@@ -13,7 +13,12 @@ export const ChatMemorySyncModal: React.FC<Props> = ({ isOpen, onClose, onInject
   const [loading, setLoading] = useState(false);
   const [selectedCandidates, setSelectedCandidates] = useState<Set<string>>(new Set());
   const [filterType, setFilterType] = useState<'all' | 'learning' | 'mistake' | 'decision' | 'pattern'>('all');
+  const [filterDomain, setFilterDomain] = useState<string>('all');
+  const [filterSession, setFilterSession] = useState<string>('all');
+  const [confidenceThreshold, setConfidenceThreshold] = useState<number>(0.5);
   const [injecting, setInjecting] = useState(false);
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [editingCandidates, setEditingCandidates] = useState<MemoryCandidate[]>([]);
 
   useEffect(() => {
     if (isOpen && !analysisResult) {
@@ -62,26 +67,42 @@ export const ChatMemorySyncModal: React.FC<Props> = ({ isOpen, onClose, onInject
 
   const getFilteredCandidates = (): MemoryCandidate[] => {
     if (!analysisResult) return [];
-    
-    if (filterType === 'all') {
-      return analysisResult.candidates;
+
+    let candidates = analysisResult.candidates;
+
+    // Filter by type
+    if (filterType !== 'all') {
+      candidates = candidates.filter(c => c.type === filterType);
     }
-    
-    return analysisResult.candidates.filter(c => c.type === filterType);
+
+    // Filter by domain
+    if (filterDomain !== 'all') {
+      candidates = candidates.filter(c => c.domain === filterDomain);
+    }
+
+    // Filter by session
+    if (filterSession !== 'all') {
+      candidates = candidates.filter(c => c.sourceSessionId === filterSession);
+    }
+
+    // Filter by confidence threshold
+    candidates = candidates.filter(c => c.confidence >= confidenceThreshold);
+
+    return candidates;
   };
 
   const injectSelected = async () => {
     if (!analysisResult || selectedCandidates.size === 0) return;
-    
+
     setInjecting(true);
     try {
       const syncService = getChatMemorySyncService();
       const candidatesToInject = analysisResult.candidates.filter(c => selectedCandidates.has(c.id));
       const injectedIds = await syncService.injectCandidates(candidatesToInject);
-      
+
       // Re-analyze to update the list
       await analyzeChats();
-      
+
       if (onInjected) {
         onInjected(injectedIds.length);
       }
@@ -90,6 +111,25 @@ export const ChatMemorySyncModal: React.FC<Props> = ({ isOpen, onClose, onInject
     } finally {
       setInjecting(false);
     }
+  };
+
+  const openBulkEdit = () => {
+    if (!analysisResult || selectedCandidates.size === 0) return;
+    const candidates = analysisResult.candidates.filter(c => selectedCandidates.has(c.id));
+    setEditingCandidates(candidates);
+    setBulkEditOpen(true);
+  };
+
+  const saveBulkEdit = (updates: Partial<MemoryCandidate>) => {
+    if (!analysisResult) return;
+    const updatedCandidates = analysisResult.candidates.map(c => {
+      if (selectedCandidates.has(c.id)) {
+        return { ...c, ...updates };
+      }
+      return c;
+    });
+    setAnalysisResult({ ...analysisResult, candidates: updatedCandidates });
+    setBulkEditOpen(false);
   };
 
   const getTypeColor = (type: string): string => {
@@ -187,6 +227,41 @@ export const ChatMemorySyncModal: React.FC<Props> = ({ isOpen, onClose, onInject
                   <option value="decision">Decisions</option>
                   <option value="pattern">Patterns</option>
                 </select>
+                <select
+                  value={filterDomain}
+                  onChange={(e) => setFilterDomain(e.target.value)}
+                  className="bg-zinc-800 border border-zinc-700 text-white text-xs rounded px-2 py-1"
+                >
+                  <option value="all">All Domains</option>
+                  <option value="conversational">Conversational</option>
+                  <option value="technical">Technical</option>
+                  <option value="workflow">Workflow</option>
+                </select>
+                <select
+                  value={filterSession}
+                  onChange={(e) => setFilterSession(e.target.value)}
+                  className="bg-zinc-800 border border-zinc-700 text-white text-xs rounded px-2 py-1"
+                >
+                  <option value="all">All Sessions</option>
+                  {analysisResult && Array.from(new Set(analysisResult.candidates.map(c => c.sourceSessionId))).map(sessionId => (
+                    <option key={sessionId} value={sessionId}>{analysisResult.candidates.find(c => c.sourceSessionId === sessionId)?.sourceSessionName || sessionId}</option>
+                  ))}
+                </select>
+                <div className="flex items-center gap-2 ml-4">
+                  <label className="text-xs text-zinc-400">Confidence:</label>
+                  <select
+                    value={confidenceThreshold}
+                    onChange={(e) => setConfidenceThreshold(Number(e.target.value))}
+                    className="bg-zinc-800 border border-zinc-700 text-white text-xs rounded px-2 py-1"
+                  >
+                    <option value="0.0">All</option>
+                    <option value="0.5">0.5+</option>
+                    <option value="0.6">0.6+</option>
+                    <option value="0.7">0.7+</option>
+                    <option value="0.8">0.8+</option>
+                    <option value="0.9">0.9+</option>
+                  </select>
+                </div>
                 <span className="text-xs text-zinc-500">
                   ({getFilteredCandidatesCount()} candidates)
                 </span>
@@ -198,6 +273,13 @@ export const ChatMemorySyncModal: React.FC<Props> = ({ isOpen, onClose, onInject
                   className="px-3 py-1 bg-zinc-800 hover:bg-zinc-700 text-white text-xs rounded disabled:opacity-50"
                 >
                   {allSelected() ? 'Deselect All' : 'Select All'}
+                </button>
+                <button
+                  onClick={openBulkEdit}
+                  disabled={selectedCandidates.size === 0}
+                  className="px-3 py-1 bg-zinc-800 hover:bg-zinc-700 text-white text-xs rounded disabled:opacity-50"
+                >
+                  Bulk Edit
                 </button>
                 <button
                   onClick={analyzeChats}
@@ -298,6 +380,65 @@ export const ChatMemorySyncModal: React.FC<Props> = ({ isOpen, onClose, onInject
           </div>
         )}
       </div>
+
+      {/* Bulk Edit Modal */}
+      {bulkEditOpen && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+          <div className="bg-zinc-900 border border-zinc-700 p-6 rounded-lg max-w-md w-full">
+            <h3 className="text-lg font-bold text-white mb-4">Bulk Edit {editingCandidates.length} Candidates</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm text-zinc-400 block mb-1">Change Type</label>
+                <select
+                  id="bulk-edit-type"
+                  className="w-full bg-zinc-800 border border-zinc-700 text-white text-sm rounded px-3 py-2"
+                >
+                  <option value="">Keep original</option>
+                  <option value="learning">Learning</option>
+                  <option value="mistake">Mistake</option>
+                  <option value="decision">Decision</option>
+                  <option value="pattern">Pattern</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-sm text-zinc-400 block mb-1">Change Confidence</label>
+                <select
+                  id="bulk-edit-confidence"
+                  className="w-full bg-zinc-800 border border-zinc-700 text-white text-sm rounded px-3 py-2"
+                >
+                  <option value="">Keep original</option>
+                  <option value="0.9">0.9 (High)</option>
+                  <option value="0.8">0.8</option>
+                  <option value="0.7">0.7</option>
+                  <option value="0.6">0.6</option>
+                  <option value="0.5">0.5 (Low)</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-6">
+              <button
+                onClick={() => setBulkEditOpen(false)}
+                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const type = (document.getElementById('bulk-edit-type') as HTMLSelectElement)?.value;
+                  const confidence = (document.getElementById('bulk-edit-confidence') as HTMLSelectElement)?.value;
+                  const updates: Partial<MemoryCandidate> = {};
+                  if (type) updates.type = type as any;
+                  if (confidence) updates.confidence = Number(confidence);
+                  saveBulkEdit(updates);
+                }}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm"
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

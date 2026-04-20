@@ -28,49 +28,6 @@ export const MCPBlock: React.FC<MCPBlockProps> = ({ block }) => {
     }
   };
 
-  const parseBrowserNavigateResult = (result: any) => {
-    if (!result?.content || !Array.isArray(result.content) || !result.content[0]?.text) {
-      return null;
-    }
-
-    const text = result.content[0].text;
-    const sections = new Map<string, string>();
-    const sectionHeaders = text.split(/^### /m).slice(1);
-    
-    for (const section of sectionHeaders) {
-      const firstNewlineIndex = section.indexOf('\n');
-      if (firstNewlineIndex === -1) continue;
-      const sectionName = section.substring(0, firstNewlineIndex);
-      const sectionContent = section.substring(firstNewlineIndex + 1).trim();
-      sections.set(sectionName, sectionContent);
-    }
-
-    const snapshot = sections.get('Snapshot') || sections.get('snapshot');
-    const code = sections.get('Ran Playwright code');
-    const error = sections.get('Error');
-    const resultSection = sections.get('Result');
-
-    let page_url: string | undefined;
-    if (code) {
-      const urlMatch = code.match(/page\.goto\(['"`](.*?)['"`]\)/);
-      if (urlMatch) page_url = urlMatch[1];
-    }
-
-    let title: string | undefined;
-    if (snapshot) {
-      const titleMatch = snapshot.match(/title\s+(.*?)(?:\n|\[)/i);
-      if (titleMatch) title = titleMatch[1].trim();
-    }
-
-    return {
-      page_url,
-      title,
-      snapshot: snapshot ? 'Snapshot available' : null,
-      logs: error || resultSection
-    };
-  };
-
-  const parsedResult = block.result ? parseBrowserNavigateResult(block.result) : null;
 
   return (
     <div className="my-2 border border-gray-200 rounded-lg overflow-hidden">
@@ -80,8 +37,13 @@ export const MCPBlock: React.FC<MCPBlockProps> = ({ block }) => {
       >
         <span className={getStatusColor()}>{getStatusIcon()}</span>
         <span className="font-medium text-sm text-gray-700">
-          MCP Tool: {block.tool}
+          {block.tool}
         </span>
+        {block.status === 'success' && (
+          <span className="text-xs text-gray-500">
+            → success
+          </span>
+        )}
         {block.executionTimeMs && (
           <span className="text-xs text-gray-500 ml-auto">
             {block.executionTimeMs}ms
@@ -94,55 +56,26 @@ export const MCPBlock: React.FC<MCPBlockProps> = ({ block }) => {
 
       {isExpanded && (
         <div className="p-3 bg-white border-t border-gray-200">
-          {/* Arguments */}
+          {/* Request */}
           <div className="mb-3">
-            <div className="text-xs font-semibold text-gray-500 mb-1">Arguments:</div>
+            <div className="text-xs font-semibold text-gray-500 mb-1">request:</div>
             <pre className="text-xs bg-gray-50 p-2 rounded overflow-x-auto">
               {JSON.stringify(block.args, null, 2)}
             </pre>
           </div>
 
-          {/* Parsed Output (structured, not raw) */}
-          {parsedResult && (
-            <div className="mb-3">
-              <div className="text-xs font-semibold text-gray-500 mb-1">Result:</div>
-              {parsedResult.page_url && (
-                <div className="text-xs mb-1">
-                  <span className="font-medium">Page URL:</span> {parsedResult.page_url}
-                </div>
-              )}
-              {parsedResult.title && (
-                <div className="text-xs mb-1">
-                  <span className="font-medium">Title:</span> {parsedResult.title}
-                </div>
-              )}
-              {parsedResult.snapshot && (
-                <div className="text-xs mb-1">
-                  <span className="font-medium">Snapshot:</span> {parsedResult.snapshot}
-                </div>
-              )}
-              {parsedResult.logs && (
-                <div className="text-xs">
-                  <span className="font-medium">Logs:</span> {parsedResult.logs}
-                </div>
-              )}
-            </div>
-          )}
+          {/* Response */}
+          <div className="mb-3">
+            <div className="text-xs font-semibold text-gray-500 mb-1">response:</div>
+            <pre className="text-xs bg-gray-50 p-2 rounded overflow-x-auto whitespace-pre-wrap break-all">
+              {typeof block.result === 'string' ? block.result : JSON.stringify(block.result, null, 2)}
+            </pre>
+          </div>
 
           {/* Error */}
           {block.error && (
-            <div className="text-xs text-red-600 bg-red-50 p-2 rounded">
+            <div className="text-xs text-red-600 bg-red-50 p-2 rounded mb-3">
               <span className="font-semibold">Error:</span> {block.error}
-            </div>
-          )}
-
-          {/* Raw result fallback if parsing fails */}
-          {!parsedResult && block.result && (
-            <div className="mb-3">
-              <div className="text-xs font-semibold text-gray-500 mb-1">Raw Output:</div>
-              <pre className="text-xs bg-gray-50 p-2 rounded overflow-x-auto">
-                {JSON.stringify(block.result, null, 2)}
-              </pre>
             </div>
           )}
 

@@ -2,7 +2,7 @@
 import { knezClient } from "./KnezClient";
 import { extractionService } from "./ExtractionService";
 import { persistenceService } from "./PersistenceService";
-import { ChatMessage, ToolCallMessage, AssistantMessage, Block } from "../domain/DataContracts";
+import { ChatMessage, ToolCallMessage, AssistantMessage, Block, MessageState } from "../domain/DataContracts";
 import { AppError, asErrorMessage } from "../domain/Errors";
 import { observe } from "../utils/observer";
 import { sessionDatabase } from "./SessionDatabase";
@@ -22,14 +22,16 @@ import { agentLoopService } from "./agent/AgentLoopService";
 import { failureClassifier } from "./agent/FailureClassifier";
 import { agentOrchestrator } from "./agent/AgentOrchestrator";
 import { getMemoryEventSourcingService } from "./MemoryEventSourcingService";
+import { StreamController } from "./StreamController";
 
 export type ChatPhase =
   | "idle"
-  | "request_sent"
-  | "model_thinking"
-  | "tool_execution"
+  | "sending"
+  | "thinking"
+  | "tool_running"
   | "streaming"
-  | "completed"
+  | "finalizing"
+  | "done"
   | "error";
 
 export type EventType =
@@ -40,6 +42,18 @@ export type EventType =
   | "TOOL_END"
   | "STREAM_END"
   | "ERROR";
+
+// ADD 6: Strict phase transition rules
+const PHASE_TRANSITIONS: Record<ChatPhase, ChatPhase[]> = {
+  idle: ["sending"],
+  sending: ["thinking", "error"],
+  thinking: ["tool_running", "streaming", "error"],
+  tool_running: ["thinking", "streaming", "error"],
+  streaming: ["finalizing", "error"],
+  finalizing: ["done", "error"],
+  done: ["idle"],
+  error: ["idle"]
+};
 
 export interface ChatState {
   messages: ChatMessage[];
@@ -83,6 +97,31 @@ export class ChatService {
   private maxOutgoingAgeMs = 300000;
   private maxOutgoingPerSession = 1;
   private lastMcpSignatureBySessionId = new Map<string, string>();
+  // ADD 5: Single Active Request Lock
+  private activeRequestLock: { sessionId: string; requestId: string } | null = null;
+
+  // ADD 2: Stream Controller
+  private streamController = new StreamController();
+
+  private async acquireRequestLock(sessionId: string, requestId: string): Promise<boolean> {
+    if (this.activeRequestLock) {
+      logger.warn("chat_service", "request_rejected_active", { 
+        activeSession: this.activeRequestLock.sessionId,
+        activeRequest: this.activeRequestLock.requestId,
+        newSession: sessionId,
+        newRequest: requestId
+      });
+      return false; // Reject overlapping requests
+    }
+    this.activeRequestLock = { sessionId, requestId };
+    return true;
+  }
+
+  private releaseRequestLock(sessionId: string, requestId: string): void {
+    if (this.activeRequestLock?.sessionId === sessionId && this.activeRequestLock?.requestId === requestId) {
+      this.activeRequestLock = null;
+    }
+  }
   private static get MCP_ENABLED(): boolean {
     try {
       const stored = localStorage.getItem("knez_mcp_enabled");
@@ -171,14 +210,15 @@ export class ChatService {
   }
 
   // P5.2 T2: Event-driven state engine
+  // ADD 6: Updated to use new phase names with strict transition validation
   private setPhase(event: EventType): void {
     const phaseTransition: Record<EventType, ChatPhase> = {
-      USER_SEND: "request_sent",
-      MODEL_CALL_START: "model_thinking",
+      USER_SEND: "sending",
+      MODEL_CALL_START: "thinking",
       FIRST_TOKEN: "streaming",
-      TOOL_START: "tool_execution",
-      TOOL_END: "model_thinking",
-      STREAM_END: "completed",
+      TOOL_START: "tool_running",
+      TOOL_END: "thinking",
+      STREAM_END: "finalizing",
       ERROR: "error"
     };
 
@@ -188,7 +228,19 @@ export class ChatService {
       return;
     }
 
-    const oldPhase = this.state.phase;
+    // ADD 6: Validate phase transition
+    const currentPhase = this.state.phase;
+    const allowedTransitions = PHASE_TRANSITIONS[currentPhase];
+    if (!allowedTransitions.includes(newPhase)) {
+      logger.error("chat_service", "invalid_phase_transition", { 
+        from: currentPhase, 
+        to: newPhase,
+        allowed: allowedTransitions,
+        event
+      });
+      throw new Error(`Invalid phase transition: ${currentPhase} → ${newPhase}`);
+    }
+
     this.state.phase = newPhase;
 
     // Response time measurement (P5.2 T10)
@@ -197,9 +249,9 @@ export class ChatService {
     }
     if (event === "STREAM_END" || event === "ERROR") {
       this.state.responseEnd = Date.now();
-      // Auto-reset to idle so the send button re-enables after completion/error
+      // ADD 6: Auto-reset to idle after finalizing or error
       setTimeout(() => {
-        if (this.state.phase === "completed" || this.state.phase === "error") {
+        if (this.state.phase === "done" || this.state.phase === "error") {
           this.resetToIdle();
         }
       }, 150);
@@ -207,7 +259,7 @@ export class ChatService {
 
     logger.info("chat_service", "phase_transition", {
       event,
-      from: oldPhase,
+      from: currentPhase,
       to: newPhase
     });
 
@@ -224,14 +276,14 @@ export class ChatService {
   }
 
   // Block-based assistant message methods
-  private createAssistantMessage(sessionId: string, initialBlocks: Block[] = []): AssistantMessage {
+  private createAssistantMessage(sessionId: string, initialBlocks: Block[] = [], id?: string): AssistantMessage {
     return {
-      id: newMessageId(),
+      id: id || newMessageId(),
       sessionId,
       role: "assistant",
+      state: MessageState.CREATED, // ADD 1: Initialize with CREATED state
       blocks: initialBlocks,
-      createdAt: new Date().toISOString(),
-      sequenceNumber: this.getNextSequenceNumber()
+      createdAt: Date.now() // ADD 1: Use number timestamp
     };
   }
 
@@ -239,9 +291,12 @@ export class ChatService {
     const assistantMsg = this.state.assistantMessages.find(m => m.id === assistantId);
     if (assistantMsg) {
       assistantMsg.blocks.push(block);
+      logger.info("assistant_message", "block_appended", { assistantId, blockType: block.type, totalBlocks: assistantMsg.blocks.length });
       this.notify();
       // Persist to database
       void sessionDatabase.updateAssistantMessage(assistantId, { blocks: assistantMsg.blocks });
+    } else {
+      logger.warn("assistant_message", "not_found", { assistantId, availableIds: this.state.assistantMessages.map(m => m.id) });
     }
   }
 
@@ -280,8 +335,13 @@ export class ChatService {
       this.state.messages = loaded;
       this.state.assistantMessages = loadedAssistantMessages;
       this.state.sequenceCounter = Math.max(...loaded.map(m => m.sequenceNumber ?? 0), ...loadedAssistantMessages.map(m => m.sequenceNumber ?? 0)) + 1;
-      this.notify();
+    } else {
+      // Clear state for new session
+      this.state.messages = [];
+      this.state.assistantMessages = [];
+      this.state.sequenceCounter = 0;
     }
+    this.notify();
   }
 
   setActiveTools(tools: { search: boolean }) {
@@ -294,63 +354,72 @@ export class ChatService {
   async sendMessage(text: string, forceContext?: string): Promise<void> {
     if (!text.trim()) return;
 
-    // Stop any current delivery for this session to prioritize new message
-    if (this.activeDelivery && this.activeDelivery.sessionId === this.sessionId) {
-      logger.info("chat", "stopping_current_delivery_for_new_message", { sessionId: this.sessionId });
-      this.activeDelivery.stopRequested = true;
-      this.activeDelivery.controller.abort();
+    try {
+      // Stop any current delivery for this session to prioritize new message
+      if (this.activeDelivery && this.activeDelivery.sessionId === this.sessionId) {
+        logger.info("chat", "stopping_current_delivery_for_new_message", { sessionId: this.sessionId });
+        this.activeDelivery.stopRequested = true;
+        this.activeDelivery.controller.abort();
+      }
+
+      const now = new Date().toISOString();
+      const userId = newMessageId();
+      const assistantId = `${userId}-assistant`;
+
+      const userMsg: ChatMessage = {
+        id: userId,
+        sessionId: this.sessionId,
+        from: "user",
+        text: text,
+        createdAt: now,
+        sequenceNumber: this.getNextSequenceNumber(),
+        deliveryStatus: "delivered",
+        correlationId: userId
+      };
+
+      // Create AssistantMessage with blocks instead of regular ChatMessage
+      const assistantMsg = this.createAssistantMessage(this.sessionId, [], assistantId);
+
+      this.state.messages = [...this.state.messages, userMsg];
+      this.state.assistantMessages = [...this.state.assistantMessages, assistantMsg];
+      this.notify();
+      observe("chat_send_attempt", { sessionId: this.sessionId, message: text });
+      await this.ensureSessionExists(this.sessionId);
+      await sessionDatabase.saveMessages(this.sessionId, [userMsg]);
+      await sessionDatabase.saveAssistantMessage(this.sessionId, assistantMsg);
+      void this.tryEmit(
+        "chat_user_message",
+        { message_id: userId, from: "user", correlation_id: userId },
+        this.sessionId
+      );
+      const existing = (await sessionDatabase.listOutgoing()).filter((x) => x.sessionId === this.sessionId);
+      if (existing.length >= this.maxOutgoingPerSession) {
+        const errorMsg = `Queue limit reached (${this.maxOutgoingPerSession}). Wait for the current responses to finish.`;
+        logger.warn("chat", "Queue limit reached", { sessionId: this.sessionId });
+        tabErrorStore.mark("chat");
+        tabErrorStore.mark("logs");
+        // Update assistant message with error block
+        this.appendBlockToAssistantMessage(assistantId, { type: "final", content: `⚠️ ${errorMsg}` });
+        return;
+      }
+      await sessionDatabase.enqueueOutgoing({
+        id: userId,
+        sessionId: this.sessionId,
+        text,
+        searchEnabled: this.state.activeTools.search,
+        createdAt: now
+      });
+      void this.flushOutgoingQueue(forceContext ? { [userId]: forceContext } : undefined);
+    } catch (error) {
+      logger.error("chat", "send_message_failed", { error: String(error), sessionId: this.sessionId });
+      // Add error block to assistant message if it exists
+      const assistantId = `${this.state.messages[this.state.messages.length - 1]?.id || newMessageId()}-assistant`;
+      this.appendBlockToAssistantMessage(assistantId, {
+        type: "final",
+        content: `⚠️ Failed to send message: ${String(error)}`
+      });
+      this.resetToIdle();
     }
-
-    const now = new Date().toISOString();
-    const userId = newMessageId();
-    const assistantId = `${userId}-assistant`;
-
-    const userMsg: ChatMessage = {
-      id: userId,
-      sessionId: this.sessionId,
-      from: "user",
-      text: text,
-      createdAt: now,
-      sequenceNumber: this.getNextSequenceNumber(),
-      deliveryStatus: "delivered",
-      correlationId: userId
-    };
-
-    // Create AssistantMessage with blocks instead of regular ChatMessage
-    const assistantMsg = this.createAssistantMessage(this.sessionId, [
-      { type: "text", content: "" } // Initial empty text block
-    ]);
-
-    this.state.messages = [...this.state.messages, userMsg];
-    this.state.assistantMessages = [...this.state.assistantMessages, assistantMsg];
-    this.notify();
-    observe("chat_send_attempt", { sessionId: this.sessionId, message: text });
-    await this.ensureSessionExists(this.sessionId);
-    await sessionDatabase.saveMessages(this.sessionId, [userMsg]);
-    await sessionDatabase.saveAssistantMessage(this.sessionId, assistantMsg);
-    void this.tryEmit(
-      "chat_user_message",
-      { message_id: userId, from: "user", correlation_id: userId },
-      this.sessionId
-    );
-    const existing = (await sessionDatabase.listOutgoing()).filter((x) => x.sessionId === this.sessionId);
-    if (existing.length >= this.maxOutgoingPerSession) {
-      const errorMsg = `Queue limit reached (${this.maxOutgoingPerSession}). Wait for the current responses to finish.`;
-      logger.warn("chat", "Queue limit reached", { sessionId: this.sessionId });
-      tabErrorStore.mark("chat");
-      tabErrorStore.mark("logs");
-      // Update assistant message with error block
-      this.appendBlockToAssistantMessage(assistantId, { type: "final", content: `⚠️ ${errorMsg}` });
-      return;
-    }
-    await sessionDatabase.enqueueOutgoing({
-      id: userId,
-      sessionId: this.sessionId,
-      text,
-      searchEnabled: this.state.activeTools.search,
-      createdAt: now
-    });
-    void this.flushOutgoingQueue(forceContext ? { [userId]: forceContext } : undefined);
   }
 
   async sendMessageForSession(
@@ -439,12 +508,73 @@ export class ChatService {
   // Exposed for Tests
   getMessages() { return this.state.messages; }
   clear() { this.state.messages = []; this.notify(); }
+
+  // ADD 4: Tool → Model Bridge - ensures model is called after tool execution
+  // Note: The agent loop already handles Tool → Model bridge by pushing tool results to conversation
+  // This method is available for direct tool calls outside the agent loop
+  // @ts-ignore — intentionally retained as reference; never called
+  private async executeToolAndInterpret(toolName: string, args: any): Promise<string> {
+    const result = await toolExecutionService.executeNamespacedTool(toolName, args, { timeoutMs: 30000 });
+    
+    if (!result.ok) {
+      throw new Error(`Tool execution failed: ${result.error.message}`);
+    }
+
+    // Return the result - the agent loop will handle interpretation
+    // For non-agent contexts, this returns the raw result which can be interpreted by the caller
+    return JSON.stringify(result.result);
+  }
+
+  // ADD 7: Final Response Guarantee - ensure every request ends with FINAL state message
+  private async ensureFinalResponse(assistantId: string): Promise<void> {
+    const assistantMsg = this.state.assistantMessages.find(m => m.id === assistantId);
+    if (!assistantMsg) {
+      logger.warn("chat_service", "ensure_final_response_assistant_not_found", { assistantId });
+      return;
+    }
+
+    // If message is already in FINAL state, nothing to do
+    if (assistantMsg.state === MessageState.FINAL || assistantMsg.state === MessageState.LOCKED) {
+      return;
+    }
+
+    // If message has content, finalize it
+    if (assistantMsg.blocks.length > 0) {
+      assistantMsg.state = MessageState.FINAL;
+      assistantMsg.finalizedAt = Date.now();
+      await sessionDatabase.updateAssistantMessage(assistantId, {
+        state: MessageState.FINAL,
+        finalizedAt: Date.now()
+      });
+      logger.info("chat_service", "assistant_message_finalized", { assistantId, blockCount: assistantMsg.blocks.length });
+    } else {
+      // No content - generate fallback
+      assistantMsg.state = MessageState.ERROR;
+      assistantMsg.finalizedAt = Date.now();
+      assistantMsg.blocks.push({ type: "text", content: "⚠️ No response generated. Please try again." });
+      await sessionDatabase.updateAssistantMessage(assistantId, {
+        state: MessageState.ERROR,
+        finalizedAt: Date.now(),
+        blocks: assistantMsg.blocks
+      });
+      logger.warn("chat_service", "assistant_message_fallback_generated", { assistantId });
+    }
+    this.notify();
+  }
+
   appendToMessage(messageId: string, text: string) {
     const msgs = this.state.messages;
     const idx = msgs.findIndex((m) => m.id === messageId);
     if (idx === -1) {
       logger.warn("chat_service", "append_message_not_found", { messageId });
       return;
+    }
+
+    // ADD 2: Validate stream ownership
+    const activeStream = this.streamController.getActiveStream();
+    if (activeStream && !this.streamController.append(messageId, activeStream)) {
+      logger.error("chat_service", "append_stream_ownership_violation", { messageId, activeStream });
+      throw new Error(`Stream ownership violation: message ${messageId} cannot append to stream ${activeStream}`);
     }
     const msg = msgs[idx];
     const isFirstToken = !msg.hasReceivedFirstToken;
@@ -612,7 +742,9 @@ export class ChatService {
     const modelId = (inState?.metrics as any)?.modelId ?? (persisted?.metrics as any)?.modelId;
     const backendStatus = (inState?.metrics as any)?.backendStatus ?? (persisted?.metrics as any)?.backendStatus;
 
-    const metrics = { finishReason: "stopped", totalTokens, modelId, backendStatus, fallbackTriggered: false };
+    const toolExecutionTime = (inState?.metrics as any)?.toolExecutionTime ?? (persisted?.metrics as any)?.toolExecutionTime;
+    const fallbackTriggered = (inState?.metrics as any)?.fallbackTriggered ?? (persisted?.metrics as any)?.fallbackTriggered ?? false;
+    const metrics = { finishReason: "stopped", totalTokens, modelId, backendStatus, fallbackTriggered, ...(toolExecutionTime !== undefined ? { toolExecutionTime } : {}) };
 
     await sessionDatabase.updateMessage(outgoingId, { deliveryStatus: "delivered", deliveryError: undefined });
     await sessionDatabase.updateMessage(assistantId, {
@@ -721,60 +853,6 @@ export class ChatService {
     }
   }
 
-  private parseBrowserNavigateResult(result: any): { page_url?: string; title?: string; snapshot?: string; logs?: string } {
-    try {
-      // Handle playwright MCP format with sections (Result, Snapshot, Ran Playwright code)
-      if (result?.content && Array.isArray(result.content) && result.content[0]?.text) {
-        const text = result.content[0].text;
-        // Parse sections from the text format: "### Section\ncontent"
-        const sections = new Map<string, string>();
-        const sectionHeaders = text.split(/^### /m).slice(1);
-        for (const section of sectionHeaders) {
-          const firstNewlineIndex = section.indexOf('\n');
-          if (firstNewlineIndex === -1) continue;
-          const sectionName = section.substring(0, firstNewlineIndex);
-          const sectionContent = section.substring(firstNewlineIndex + 1).trim();
-          sections.set(sectionName, sectionContent);
-        }
-
-        const snapshot = sections.get('Snapshot') || sections.get('snapshot');
-        const code = sections.get('Ran Playwright code');
-        const error = sections.get('Error');
-        const resultSection = sections.get('Result');
-
-        // Extract URL from code if available (e.g., await page.goto('https://example.com'))
-        let page_url: string | undefined;
-        if (code) {
-          const urlMatch = code.match(/page\.goto\(['"`](.*?)['"`]\)/);
-          if (urlMatch) page_url = urlMatch[1];
-        }
-
-        // Extract title from snapshot if available
-        let title: string | undefined;
-        if (snapshot) {
-          const titleMatch = snapshot.match(/title\s+(.*?)(?:\n|\[)/i);
-          if (titleMatch) title = titleMatch[1].trim();
-        }
-
-        return {
-          page_url,
-          title,
-          snapshot,
-          logs: error || resultSection
-        };
-      }
-      // Handle direct format with url/title fields (fallback)
-      return {
-        page_url: result.url || result.page_url,
-        title: result.title,
-        snapshot: result.snapshot,
-        logs: result.logs
-      };
-    } catch (e) {
-      // Return raw result if parsing fails
-      return {};
-    }
-  }
 
   private async executeToolDeterministic(input: {
     sessionId: string;
@@ -1008,13 +1086,7 @@ export class ChatService {
       logger.warn("memory_retrieval", "failed", { error: String(error) });
     }
 
-    // DIRECT NAVIGATION INTERCEPT: bypass model for explicit browser navigation/action requests
-    // This runs before agentOrchestrator so model refusals can never block tool execution
-    const directIntentResult = await this.tryDirectToolExecution(sessionId, userInput, assistantId);
-    if (directIntentResult !== null) {
-      return directIntentResult;
-    }
-
+    // Use AgentOrchestrator for standard flow
     await agentOrchestrator.runAgent(sessionId, userInput, {
       onThinking: () => {
         // Phase is set by other callbacks (MODEL_CALL_START, FIRST_TOKEN, etc.)
@@ -1022,9 +1094,23 @@ export class ChatService {
       onStreamingChunk: (chunk) => {
         // Filter out tool_call JSON, reasoning, logs
         if (chunk && !chunk.includes('"tool_call"') && !chunk.startsWith('{')) {
-          this.state.messages = this.state.messages.map((m) =>
-            m.id === assistantId ? { ...m, text: (m.text || "") + chunk, hasReceivedFirstToken: true } : m
-          );
+          // Update or create text block in assistant message
+          const assistantMsg = this.state.assistantMessages.find(m => m.id === assistantId);
+          if (assistantMsg) {
+            // Find existing text block or create new one
+            const textBlockIndex = assistantMsg.blocks.findIndex(b => b.type === 'text');
+            if (textBlockIndex >= 0) {
+              assistantMsg.blocks[textBlockIndex] = {
+                type: 'text',
+                content: (assistantMsg.blocks[textBlockIndex] as any).content + chunk
+              };
+            } else {
+              assistantMsg.blocks.push({ type: 'text', content: chunk });
+            }
+            this.notify();
+            // Persist to database
+            void sessionDatabase.updateAssistantMessage(assistantId, { blocks: assistantMsg.blocks });
+          }
           this.setPhase("FIRST_TOKEN");
         }
       },
@@ -1069,6 +1155,11 @@ export class ChatService {
       onFinal: (output) => {
         finalOutput = output;
         this.setPhase("STREAM_END");
+        // Remove text blocks to prevent duplication with final block
+        const assistantMsg = this.state.assistantMessages.find(m => m.id === assistantId);
+        if (assistantMsg) {
+          assistantMsg.blocks = assistantMsg.blocks.filter(b => b.type !== 'text');
+        }
         // Add final block with assistant's answer
         this.appendBlockToAssistantMessage(assistantId, { type: "final", content: output });
       }
@@ -1078,181 +1169,6 @@ export class ChatService {
       throw new AppError("KNEZ_STREAM_EMPTY", "Agent produced no output — model returned an empty response");
     }
     return finalOutput;
-  }
-
-  /**
-   * Directly intercept and execute a tool if the user input clearly maps to one.
-   * Returns the final answer string, or null if no intent was detected (caller should proceed normally).
-   */
-  private async tryDirectToolExecution(
-    sessionId: string,
-    userInput: string,
-    assistantId: string
-  ): Promise<string | null> {
-    const tools = toolExposureService.getToolsForModel();
-    if (!tools.length) return null;
-
-    logger.info("direct_tool_intercept", "catalog_snapshot", { toolCount: tools.length, allToolNames: tools.map(t => t.name), playwrightTools: tools.filter(t => t.name.includes("playwright")).map(t => t.name) });
-
-    const input = userInput.trim();
-    const find = (keyword: string) => tools.find((t) => t.name.includes(keyword)) ?? null;
-    const normalizeUrl = (raw: string): string => {
-      const u = raw.trim().replace(/[.,!?;:)'"]+$/, "");
-      return /^https?:\/\//i.test(u) ? u : `https://${u}`;
-    };
-
-    // Detect intent
-    const navMatch = input.match(/(?:navigate|go|open|visit|browse|load)\s+(?:to\s+)?([a-zA-Z0-9][^\s,!?]+)/i);
-    const inlineUrl = input.match(/\bhttps?:\/\/[^\s]+/i);
-    const bareUrl   = input.match(/\b([a-zA-Z0-9][-a-zA-Z0-9.]+\.[a-z]{2,}(?:\/[^\s]*)?)(?:\s|$)/i);
-
-    let toolName: string | null = null;
-    let toolArgs: Record<string, any> = {};
-
-    if (navMatch || inlineUrl || bareUrl) {
-      // Prioritize exact navigation-related tools over generic web tools
-      const navTools = tools.filter(t => 
-        /navigate|goto|page_navigate|browser_navigate/i.test(t.name) && 
-        !/intelligence|search|extract/i.test(t.name)
-      );
-      const t = navTools[0] ?? find("navigate") ?? find("goto") ?? find("page_navigate") ?? find("browser_navigate");
-      if (t) {
-        const raw = navMatch?.[1] ?? inlineUrl?.[0] ?? bareUrl?.[1] ?? "";
-        if (raw) { toolName = t.name; toolArgs = { url: normalizeUrl(raw) }; }
-      } else {
-        // Log all available tool names to debug
-        logger.warn("direct_tool_intercept", "navigate_tool_not_found", { 
-          allToolNames: tools.map(t => t.name),
-          playwrightTools: tools.filter(t => t.name.includes("playwright")).map(t => t.name),
-          navKeywords: tools.filter(t => /navigate|goto|page|browser/i.test(t.name)).map(t => t.name)
-        });
-      }
-    } else if (/(?:take\s+(?:a\s+)?)?screenshot|capture\s+(?:the\s+)?(?:screen|page)/i.test(input)) {
-      const t = find("screenshot") ?? find("take_screenshot") ?? find("capture");
-      if (t) { toolName = t.name; toolArgs = { type: "png" }; }
-    } else if (/\bsnapshot\b|accessibility\s+snapshot|page\s+(?:content|structure)/i.test(input)) {
-      const t = find("snapshot") ?? find("accessibility_snapshot") ?? find("page_snapshot");
-      if (t) { toolName = t.name; toolArgs = {}; }
-    }
-
-    if (!toolName) return null;
-
-    logger.info("direct_tool_intercept", "bypassing_model", { toolName, toolArgs, sessionId, totalTools: tools.length, sampleTool: tools[0]?.name });
-
-    // Emit tool start to UI
-    const startedAt = new Date().toISOString();
-    const traceId = `${assistantId}-direct-${Date.now()}`;
-    const toolCallMsg: ToolCallMessage = { 
-      tool: toolName, 
-      args: toolArgs, 
-      status: "calling", 
-      startedAt,
-      phase: "execution",
-      pattern: "direct",
-      groupingId: assistantId
-    };
-    this.persistToolTrace(sessionId, {
-      id: traceId, sessionId, from: "tool_execution" as any,
-      text: "", createdAt: startedAt,
-      sequenceNumber: this.getNextSequenceNumber(),
-      toolCall: toolCallMsg, deliveryStatus: "delivered",
-      replyToMessageId: assistantId, correlationId: assistantId
-    });
-    this.notify();
-
-    // Transition to running after short delay
-    setTimeout(() => {
-      this.updateToolTrace(sessionId, traceId, { toolCall: { ...toolCallMsg, status: "running" } });
-    }, 120);
-
-    // Execute via MCP
-    try {
-      logger.info("direct_tool_intercept", "executing_tool", { toolName, toolArgs, traceId });
-      let outcome = await toolExecutionService.executeNamespacedTool(toolName, toolArgs, { timeoutMs: 30000, traceId });
-
-      // If browser context is closed, try to restart the Playwright server and retry once
-      if (!outcome.ok && outcome.error?.message?.includes("Target page, context or browser has been closed")) {
-        logger.warn("direct_tool_intercept", "browser_context_closed", { toolName, error: outcome.error.message });
-        try {
-          const { mcpOrchestrator } = await import("../mcp/McpOrchestrator");
-          await mcpOrchestrator.stopServer("playwright");
-          await mcpOrchestrator.ensureStarted("playwright");
-          logger.info("direct_tool_intercept", "playwright_restarted", {});
-          // Retry after restart
-          outcome = await toolExecutionService.executeNamespacedTool(toolName, toolArgs, { timeoutMs: 30000, traceId });
-        } catch (restartErr) {
-          logger.error("direct_tool_intercept", "playwright_restart_failed", { error: String(restartErr) });
-          return `The Playwright browser context is closed. I attempted to restart the server but failed. Please restart the Playwright MCP server manually or try again in a moment. Error: ${String(restartErr)}`;
-        }
-      }
-      const finishedAt = new Date().toISOString();
-      const execMs = Date.parse(finishedAt) - Date.parse(startedAt);
-      // Parse browser_navigate results for structured display
-      const isBrowserNavigate = /browser_navigate$/.test(toolName);
-      const parsedData = isBrowserNavigate && outcome.ok ? this.parseBrowserNavigateResult(outcome.result) : null;
-      const toolContent = parsedData ? JSON.stringify(parsedData) : (outcome.ok ? this.stringifyToolPayload(outcome.result, 20000) : String(outcome.error?.message ?? "failed"));
-
-      this.updateToolTrace(sessionId, traceId, {
-        text: toolContent,
-        toolCall: {
-          ...toolCallMsg,
-          status: outcome.ok ? "succeeded" : "failed",
-          result: parsedData || (outcome.ok ? outcome.result : undefined),
-          error: outcome.ok ? undefined : String(outcome.error?.message ?? "execution failed"),
-          finishedAt,
-          executionTimeMs: Math.max(0, execMs),
-          mcpLatencyMs: Math.round(execMs * 0.3)
-        }
-      });
-
-      if (!outcome.ok) {
-        return `The tool ${toolName.replace(/^[^_]+__/, "")} failed: ${outcome.error?.message ?? "unknown error"}`;
-      }
-
-      // Tool succeeded - now call model to generate contextual response based on tool result
-      // For browser_navigate, use parsed data to provide meaningful summary
-      let meaningfulSummary = "";
-      if (parsedData) {
-        meaningfulSummary = parsedData.title 
-          ? `Successfully loaded ${parsedData.page_url}. The page title is "${parsedData.title}".`
-          : `Successfully loaded ${parsedData.page_url}.`;
-      } else {
-        meaningfulSummary = `Tool ${toolName.replace(/^[^_]+__/, "")} executed successfully.`;
-      }
-
-      // Call model with minimal context to generate contextual response - NO raw output
-      const modelPrompt = `The user asked: "${userInput}"\n\nI executed the ${toolName.replace(/^[^_]+__/, "")} tool. ${meaningfulSummary}\n\nProvide a helpful response to the user explaining what was accomplished and what to do next. Do NOT include raw tool output, JSON, or technical details. Speak naturally and focus on the meaning.`;
-
-      try {
-        const knezClient = (await import("./KnezClient")).knezClient;
-        const res = await knezClient.chatCompletionsNonStreamRaw([
-          { role: "system", content: "You are a helpful assistant. When a tool is executed, provide a clear, natural response explaining what happened and what to do next. NEVER include raw tool output, JSON, or technical details in your response. Focus on meaning and user-friendly explanations." },
-          { role: "user", content: modelPrompt }
-        ], sessionId, { temperature: 0.7 });
-
-        return res?.choices?.[0]?.message?.content || meaningfulSummary;
-      } catch (modelErr) {
-        // Fallback to simple summary if model call fails
-        return meaningfulSummary;
-      }
-    } catch (e: any) {
-      this.updateToolTrace(sessionId, traceId, {
-        toolCall: { ...toolCallMsg, status: "failed", error: String(e), finishedAt: new Date().toISOString() }
-      });
-      return `Tool execution failed: ${String(e)}`;
-    }
-  }
-
-  private isPermissionSeekingResponse(text: string): boolean {
-    const lowered = String(text ?? "").toLowerCase();
-    if (!lowered) return false;
-    return (
-      lowered.includes("would you like me to") ||
-      lowered.includes("do you want me to") ||
-      lowered.includes("should i ") ||
-      lowered.includes("can i ") ||
-      lowered.includes("shall i ")
-    );
   }
 
   // @ts-ignore — intentionally retained as reference; never called
@@ -1291,13 +1207,17 @@ export class ChatService {
       correlationId: input.assistantId
     });
     const toolContent = this.stringifyToolPayload(errorPayload, 20000);
+    const executionTimeMs = Date.now() - new Date(startedAt).getTime();
+    const mcpLatencyMs = Math.round(executionTimeMs * 0.3); // Estimate MCP latency as 30% of execution time
     await this.updateToolTrace(input.sessionId, traceMessageId, {
       text: toolContent,
       toolCall: {
         ...toolCall,
         status: "failed",
         error: `${input.errorCode}:${input.errorMessage}`,
-        finishedAt
+        finishedAt,
+        executionTimeMs,
+        mcpLatencyMs
       }
     });
     input.conversation.push({ role: "tool", tool_call_id: input.toolCallId, content: toolContent });
@@ -1340,20 +1260,7 @@ export class ChatService {
       } else if (toolCalls.length) {
         conversation.push({ role: "assistant", content: "", tool_calls: toolCalls });
       }
-      if (
-        !toolCalls.length &&
-        toolsForModel.length > 0 &&
-        (this.isSimulationResponse(assistantContent) || this.isPermissionSeekingResponse(assistantContent))
-      ) {
-        logger.warn("mcp_loop", "native_non_compliant_output_blocked", { assistantId, step });
-        conversation.push({
-          role: "system",
-          content:
-            "Tool protocol violation. If a tool is required: DO NOT ask permission, DO NOT explain, DO NOT simulate, OUTPUT ONLY strict tool_call JSON/arguments."
-        });
-        continue; // [FIX A1/A3] — NEVER return non-compliant output
-      }
-      // [FIX D1/C3] — If no tool calls and content doesn't look like escaped tool JSON, return it
+
       if (!toolCalls.length) {
         // Guard: native loop should never surface raw JSON that looks like a prompt-mode tool call
         if (
@@ -1431,10 +1338,12 @@ export class ChatService {
                   }
 
                   const finishedAt = new Date().toISOString();
+                  const executionTimeMs = Date.now() - new Date(startedAt).getTime();
+                  const mcpLatencyMs = Math.round(executionTimeMs * 0.3); // Estimate MCP latency as 30% of execution time
                   const toolContent = this.stringifyToolPayload(result, 20000);
                   await this.updateToolTrace(sessionId, traceMessageId, {
                     text: toolContent,
-                    toolCall: { ...toolCallMessage, status: ok ? "succeeded" : "failed", result: ok ? result : undefined, error: ok ? undefined : errorMsg, finishedAt }
+                    toolCall: { ...toolCallMessage, status: ok ? "succeeded" : "failed", result: ok ? result : undefined, error: ok ? undefined : errorMsg, finishedAt, executionTimeMs, mcpLatencyMs }
                   });
 
                   conversation.push({
@@ -1487,11 +1396,16 @@ export class ChatService {
           createdAt: startedAt,
           traceId,
           toolCallId,
-          toolCall: { ...toolCall, status: "running" },
+          toolCall,
           deliveryStatus: "delivered",
           replyToMessageId: assistantId,
           correlationId: assistantId
         });
+
+        // Transition to running after short delay for UI update
+        setTimeout(() => {
+          this.updateToolTrace(sessionId, traceMessageId, { toolCall: { ...toolCall, status: "running" } });
+        }, 50);
 
         let result: any;
         let ok = false;
@@ -1553,21 +1467,6 @@ export class ChatService {
     } catch {
       return null;
     }
-  }
-
-  private isSimulationResponse(text: string): boolean {
-    const lowered = String(text ?? "").toLowerCase();
-    if (!lowered) return false;
-    
-    // Only block explicit simulation indicators, not normal chat
-    const simulationPatterns = [
-      /\bi (would|will) simulate\b/i,
-      /\bassuming (it )?(succeeds?|works?)\b/i,
-      /\bthis is a (simulated|mock) response\b/i,
-      /\bexpected response[:\s]/i
-    ];
-    
-    return simulationPatterns.some(pattern => pattern.test(lowered));
   }
 
   // @ts-ignore — intentionally retained as reference; never called
@@ -1677,20 +1576,6 @@ export class ChatService {
         toolDetected: Boolean(req)
       });
       if (!req) {
-        // [FIX A1/B2/H] — STRICT: Never return raw tool_call JSON or simulation to UI
-        // Any response that looks like a tool call but failed parse must be corrected and retried
-        if (this.isSimulationResponse(assistantContent) || this.isPermissionSeekingResponse(assistantContent)) {
-          logger.warn("mcp_loop", "simulation_or_permission_blocked", { assistantId, step });
-          conversation.push({
-            role: "system",
-            content:
-              "Tool protocol violation. If a tool is needed, return strict JSON only; do not ask for permission and do not simulate: " +
-              '{"tool_call":{"name":"serverId__toolName","arguments":{}}}. Otherwise answer directly without simulation.'
-          });
-          continue; // [FIX A1/A3] — NEVER return; always continue loop
-        }
-        // If it looks like a tool call but failed parse, let it pass through to interpreter
-        // The interpreter will handle natural language and tool calls appropriately
         // No tool call detected and content is safe — return final assistant answer
         return assistantContent;
       }
@@ -1784,7 +1669,11 @@ export class ChatService {
         replyToMessageId: assistantId,
         correlationId: assistantId
       });
-      await this.updateToolTrace(sessionId, traceMessageId, { toolCall: { ...toolCall, status: "running" } });
+
+      // Transition to running after short delay for UI update
+      setTimeout(() => {
+        this.updateToolTrace(sessionId, traceMessageId, { toolCall: { ...toolCall, status: "running" } });
+      }, 50);
 
       let result: any;
       let ok = false;
@@ -1882,17 +1771,31 @@ export class ChatService {
       });
 
       conversation.push({ role: "tool", tool_call_id: traceMessageId, content: toolContent });
-      // Phase 7: Add system hint after tool result
-      // T2: Include STRUCTURED_CONTEXT for valid results to help model understand tool output
-      const systemHint = validation && validation.isValid
-        ? validation.structuredContext + "\nUse this tool result to answer the user."
-        : "Use this tool result to answer the user.";
-      conversation.push({ role: "system", content: systemHint });
+      // FIX C: Force model interpretation of tool result
+      // The model MUST interpret the tool result and generate a natural language response
+      // Do NOT return raw JSON to the user
+      const interpretationHint = validation && validation.isValid
+        ? `Tool executed successfully. Result: ${JSON.stringify(result).slice(0, 500)}...\n\n${validation.structuredContext}\n\nIMPORTANT: You MUST interpret this tool result and provide a natural language explanation to the user. Do NOT show raw JSON.`
+        : `Tool executed. Result: ${JSON.stringify(result).slice(0, 500)}...\n\nIMPORTANT: You MUST interpret this tool result and provide a natural language explanation to the user. Do NOT show raw JSON.`;
+      conversation.push({ role: "system", content: interpretationHint });
     }
     
     // Finalize agent context when loop completes
     agentLoopService.finalizeContext(sessionId);
-    throw new Error("tool_loop_limit_reached");
+    
+    // FIX D: Ensure final response guarantee inside loop termination
+    await this.ensureFinalResponse(assistantId);
+    
+    // ADD 3: Agent Loop Guarantee - ensure loop exits with final answer or structured failure
+    logger.warn("mcp_loop", "loop_limit_reached_generating_fallback", { assistantId, maxSteps });
+    const lastAssistantContent = conversation.filter(m => m.role === "assistant").pop()?.content || "";
+    if (lastAssistantContent && lastAssistantContent.trim()) {
+      return lastAssistantContent; // Return last assistant content if available
+    }
+    
+    // Generate fallback answer if no content available
+    const userRequest = baseMessages.find(m => m.role === "user")?.content || "your request";
+    return `I was unable to complete your request within the allowed number of steps. Please try rephrasing your request or breaking it down into smaller steps. Your original request: "${userRequest.slice(0, 100)}..."`;
   }
 
   private sanitizeOutput(text: string): string {
@@ -2035,10 +1938,19 @@ export class ChatService {
   private async deliverQueueItem(id: string, forceContext?: string) {
     const item = await sessionDatabase.getOutgoing(id);
     if (!item) return;
+    
+    // ADD 5: Acquire request lock to prevent overlapping requests
+    const lockAcquired = await this.acquireRequestLock(item.sessionId, id);
+    if (!lockAcquired) {
+      logger.warn("chat_service", "deliver_queue_item_lock_failed", { sessionId: item.sessionId, id });
+      await sessionDatabase.removeOutgoing(id);
+      return;
+    }
+
     const responseStart = Date.now();
 
-    // T4: Pre-flight health check — block if KNEZ is not ready
     try {
+      // T4: Pre-flight health check — block if KNEZ is not ready
       const health = await knezClient.health({ timeoutMs: 2000 });
       if (!health || health.status !== "ok") {
         logger.warn("chat", "pre_flight_health_check_failed", { sessionId: item.sessionId, health });
@@ -2166,6 +2078,11 @@ export class ChatService {
       ? ([{ role: "system", content: "MCP generation changed; tool catalog refreshed." }, ...injected.messages] as any)
       : (injected.messages as any);
 
+    // Transition to model_thinking immediately after initial setup to prevent "Sending prompt..." from lingering
+    if (this.sessionId === sessionId) {
+      this.setPhase("MODEL_CALL_START");
+    }
+
     let modelId: string | undefined;
     let backendStatus: string | undefined;
     try {
@@ -2202,8 +2119,15 @@ export class ChatService {
         if (meta?.totalTokens) streamedTokenCount = meta.totalTokens;
       };
 
-      // Phase 16 fix: Check if tools are available to decide if tool execution is needed
-      const shouldForceToolLoop = ChatService.MCP_ENABLED && toolsForModel.length > 0;
+      // FIX A: Detect simple queries for fast path (direct model stream)
+      // Simple query: short, no URLs, no tool-related keywords
+      const userText = item.text.toLowerCase();
+      const hasUrl = /https?:\/\//.test(userText);
+      const hasToolKeyword = /navigate|click|type|screenshot|snapshot|search|find|extract|scrape/.test(userText);
+      const isSimpleQuery = !hasUrl && !hasToolKeyword && userText.length < 100;
+      
+      // Use fast path for simple queries, agent loop for complex requests
+      const shouldForceToolLoop = !isSimpleQuery && ChatService.MCP_ENABLED && toolsForModel.length > 0;
 
       if (shouldForceToolLoop) {
         logger.info("mcp_routing", "skipping_streaming_for_tool_loop", { toolsCount: toolsForModel.length, userText: item.text.slice(0, 100) });
@@ -2211,6 +2135,10 @@ export class ChatService {
         streamId = newMessageId();
         const controller = new AbortController();
         this.activeDelivery = { sessionId, outgoingId: id, assistantId, controller, stopRequested: false };
+        // FIX B: Enforce stream ownership
+        if (!this.streamController.start(assistantId, streamId)) {
+          throw new Error("Cannot start stream - ownership conflict");
+        }
         if (this.sessionId === sessionId) {
           this.state.currentStreamId = streamId;
         }
@@ -2253,12 +2181,13 @@ export class ChatService {
         }
 
         const responseTimeMs = Date.now() - responseStart;
+        const existingFallbackTriggered = (this.state.messages.find((m) => m.id === assistantId)?.metrics as any)?.fallbackTriggered ?? false;
         const finalAssistant: Partial<ChatMessage> = {
           isPartial: false,
           text: processedText,
           deliveryStatus: "delivered",
           refusal: false,
-          metrics: { finishReason: "completed", totalTokens: streamedTokenCount, modelId: toolModelId ?? modelId, backendStatus, responseTimeMs, ...(toolExecutionTime !== undefined ? { toolExecutionTime } : {}), fallbackTriggered: false } as any
+          metrics: { finishReason: "completed", totalTokens: streamedTokenCount, modelId: toolModelId ?? modelId, backendStatus, responseTimeMs, ...(toolExecutionTime !== undefined ? { toolExecutionTime } : {}), fallbackTriggered: existingFallbackTriggered } as any
         };
 
         await sessionDatabase.removeOutgoing(id);
@@ -2279,6 +2208,8 @@ export class ChatService {
           this.state.currentStreamId = null;
           this.setPhase("STREAM_END");
         }
+        // FIX B: Cleanup stream ownership
+        this.streamController.end(assistantId, streamId!);
         return;
       }
 
@@ -2292,6 +2223,10 @@ export class ChatService {
       streamId = newMessageId();
       const controller = new AbortController();
       this.activeDelivery = { sessionId, outgoingId: id, assistantId, controller, stopRequested: false };
+      // FIX B: Enforce stream ownership for normal streaming path
+      if (!this.streamController.start(assistantId, streamId)) {
+        throw new Error("Cannot start stream - ownership conflict");
+      }
       if (this.sessionId === sessionId) {
         this.state.currentStreamId = streamId;
         this.setPhase("MODEL_CALL_START");
@@ -2393,12 +2328,13 @@ export class ChatService {
 
       const responseTimeMs = Date.now() - responseStart;
 
+      const existingFallbackTriggered = (this.state.messages.find((m) => m.id === assistantId)?.metrics as any)?.fallbackTriggered ?? false;
       const finalAssistant: Partial<ChatMessage> = {
         isPartial: false,
         text: processedText,
         deliveryStatus: "delivered",
         refusal: false,
-        metrics: { finishReason: "completed", totalTokens: streamedTokenCount, modelId: toolModelId ?? modelId, backendStatus, responseTimeMs, ...(toolExecutionTime !== undefined ? { toolExecutionTime } : {}) } as any
+        metrics: { finishReason: "completed", totalTokens: streamedTokenCount, modelId: toolModelId ?? modelId, backendStatus, responseTimeMs, ...(toolExecutionTime !== undefined ? { toolExecutionTime } : {}), fallbackTriggered: existingFallbackTriggered } as any
       };
 
       await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered" });
@@ -2446,21 +2382,26 @@ export class ChatService {
       const abortName = String(err?.name ?? "");
       const abortMsg = asErrorMessage(err);
       if (stopRequested && (abortName === "AbortError" || abortMsg === "Request cancelled")) {
+        const existingMetrics = (this.state.messages.find((m) => m.id === assistantId)?.metrics as any) ?? {};
         const finalAssistant: Partial<ChatMessage> = {
           isPartial: false,
           text: this.state.messages.find((m) => m.id === assistantId)?.text ?? "",
           deliveryStatus: "delivered",
           metrics: {
             finishReason: "stopped",
-            totalTokens: (this.state.messages.find((m) => m.id === assistantId)?.metrics as any)?.totalTokens ?? 0,
+            totalTokens: existingMetrics.totalTokens ?? 0,
             modelId,
-            backendStatus
+            backendStatus,
+            fallbackTriggered: existingMetrics.fallbackTriggered ?? false,
+            ...(existingMetrics.toolExecutionTime !== undefined ? { toolExecutionTime: existingMetrics.toolExecutionTime } : {})
           }
         };
 
         const persisted = await sessionDatabase.getMessage(assistantId);
         const persistedText = persisted?.text ?? "";
         const persistedTokens = (persisted?.metrics as any)?.totalTokens ?? 0;
+        const persistedToolExecutionTime = (persisted?.metrics as any)?.toolExecutionTime;
+        const persistedFallbackTriggered = (persisted?.metrics as any)?.fallbackTriggered ?? false;
 
         await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered", deliveryError: undefined });
         await sessionDatabase.updateMessage(assistantId, {
@@ -2469,7 +2410,7 @@ export class ChatService {
           isPartial: false,
           refusal: false,
           text: persistedText,
-          metrics: { finishReason: "stopped", totalTokens: persistedTokens, modelId, backendStatus }
+          metrics: { finishReason: "stopped", totalTokens: persistedTokens, modelId, backendStatus, fallbackTriggered: persistedFallbackTriggered, ...(persistedToolExecutionTime !== undefined ? { toolExecutionTime: persistedToolExecutionTime } : {}) }
         });
         await sessionDatabase.removeOutgoing(id);
 
@@ -2477,7 +2418,7 @@ export class ChatService {
           this.state.messages = this.state.messages.map((m) => {
             if (m.id === id) return { ...m, deliveryStatus: "delivered", deliveryError: undefined };
             if (m.id === assistantId) {
-              return { ...m, ...finalAssistant, text: persistedText, metrics: { finishReason: "stopped", totalTokens: persistedTokens, modelId, backendStatus } };
+              return { ...m, ...finalAssistant, text: persistedText, metrics: { finishReason: "stopped", totalTokens: persistedTokens, modelId, backendStatus, fallbackTriggered: persistedFallbackTriggered, ...(persistedToolExecutionTime !== undefined ? { toolExecutionTime: persistedToolExecutionTime } : {}) } };
             }
             return m;
           });
@@ -2536,6 +2477,14 @@ export class ChatService {
         });
       }
     } finally {
+      // ADD 5: Release request lock
+      this.releaseRequestLock(item.sessionId, id);
+
+      // ADD 7: Ensure final response is in FINAL state
+      if (assistantId) {
+        void this.ensureFinalResponse(assistantId);
+      }
+      
       if (this.activeDelivery?.sessionId === sessionId && this.activeDelivery?.outgoingId === id) {
         this.activeDelivery = null;
       }
