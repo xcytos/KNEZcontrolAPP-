@@ -683,6 +683,33 @@ export class ChatService {
     }
   }
 
+  private parseBrowserNavigateResult(result: any): { page_url?: string; title?: string; snapshot?: string; logs?: string } {
+    try {
+      // Handle format: {"content":[{"text":"..."}]}
+      if (result?.content && Array.isArray(result.content) && result.content[0]?.text) {
+        const text = result.content[0].text;
+        // Try to parse the text as JSON if it's a string
+        const parsed = typeof text === "string" ? JSON.parse(text) : text;
+        return {
+          page_url: parsed.url || parsed.page_url,
+          title: parsed.title,
+          snapshot: parsed.snapshot,
+          logs: parsed.logs
+        };
+      }
+      // Handle direct format with url/title fields
+      return {
+        page_url: result.url || result.page_url,
+        title: result.title,
+        snapshot: result.snapshot,
+        logs: result.logs
+      };
+    } catch (e) {
+      // Return raw result if parsing fails
+      return {};
+    }
+  }
+
   private async executeToolDeterministic(input: {
     sessionId: string;
     assistantId: string;
@@ -986,7 +1013,10 @@ export class ChatService {
         this.setPhase("TOOL_END");
         if (currentToolMessageId) {
           const finishedAt = new Date().toISOString();
-          const toolContent = this.stringifyToolPayload(result, 20000);
+          // Parse browser_navigate results for structured display
+          const isBrowserNavigate = /browser_navigate$/.test(toolName);
+          const parsedData = isBrowserNavigate && success ? this.parseBrowserNavigateResult(result) : null;
+          const toolContent = parsedData ? JSON.stringify(parsedData) : this.stringifyToolPayload(result, 20000);
           // Calculate execution time from startedAt to finishedAt
           const existingMsg = this.state.messages.find(m => m.id === currentToolMessageId);
           const startedAtStr = existingMsg?.toolCall?.startedAt || new Date().toISOString();
@@ -1000,7 +1030,7 @@ export class ChatService {
               args: {},
               startedAt: startedAtStr,
               status: success ? "completed" : "failed",
-              result: success ? result : undefined,
+              result: parsedData || (success ? result : undefined),
               error: success ? undefined : String(result),
               finishedAt,
               executionTimeMs: Math.max(0, executionTimeMs),
@@ -1128,13 +1158,17 @@ export class ChatService {
       }
       const finishedAt = new Date().toISOString();
       const execMs = Date.parse(finishedAt) - Date.parse(startedAt);
+      // Parse browser_navigate results for structured display
+      const isBrowserNavigate = /browser_navigate$/.test(toolName);
+      const parsedData = isBrowserNavigate && outcome.ok ? this.parseBrowserNavigateResult(outcome.result) : null;
+      const toolContent = parsedData ? JSON.stringify(parsedData) : (outcome.ok ? this.stringifyToolPayload(outcome.result, 20000) : String(outcome.error?.message ?? "failed"));
 
       this.updateToolTrace(sessionId, traceId, {
-        text: outcome.ok ? this.stringifyToolPayload(outcome.result, 20000) : String(outcome.error?.message ?? "failed"),
+        text: toolContent,
         toolCall: {
           ...toolCallMsg,
           status: outcome.ok ? "succeeded" : "failed",
-          result: outcome.ok ? outcome.result : undefined,
+          result: parsedData || (outcome.ok ? outcome.result : undefined),
           error: outcome.ok ? undefined : String(outcome.error?.message ?? "execution failed"),
           finishedAt,
           executionTimeMs: Math.max(0, execMs),
@@ -1147,26 +1181,30 @@ export class ChatService {
       }
 
       // Tool succeeded - now call model to generate contextual response based on tool result
-      const toolResultSummary = typeof outcome.result === 'object' 
-        ? JSON.stringify(outcome.result, null, 2).slice(0, 2000)
-        : String(outcome.result);
+      // For browser_navigate, use parsed data to provide meaningful summary
+      let meaningfulSummary = "";
+      if (parsedData) {
+        meaningfulSummary = parsedData.title 
+          ? `Successfully loaded ${parsedData.page_url}. The page title is "${parsedData.title}".`
+          : `Successfully loaded ${parsedData.page_url}.`;
+      } else {
+        meaningfulSummary = `Tool ${toolName.replace(/^[^_]+__/, "")} executed successfully.`;
+      }
 
-      const contextSummary = `Tool ${toolName} executed successfully. Result:\n${toolResultSummary}`;
-
-      // Call model with tool result to generate contextual response
-      const modelPrompt = `The user asked: "${userInput}"\n\nI executed the ${toolName} tool and got this result:\n${contextSummary}\n\nBased on this result, provide a helpful response to the user. Summarize what was accomplished and any relevant information from the tool output.`;
+      // Call model with minimal context to generate contextual response - NO raw output
+      const modelPrompt = `The user asked: "${userInput}"\n\nI executed the ${toolName.replace(/^[^_]+__/, "")} tool. ${meaningfulSummary}\n\nProvide a helpful response to the user explaining what was accomplished and what to do next. Do NOT include raw tool output, JSON, or technical details. Speak naturally and focus on the meaning.`;
 
       try {
         const knezClient = (await import("./KnezClient")).knezClient;
         const res = await knezClient.chatCompletionsNonStreamRaw([
-          { role: "system", content: "You are a helpful assistant. When a tool is executed, analyze the result and provide a clear, helpful summary to the user." },
+          { role: "system", content: "You are a helpful assistant. When a tool is executed, provide a clear, natural response explaining what happened and what to do next. NEVER include raw tool output, JSON, or technical details in your response. Focus on meaning and user-friendly explanations." },
           { role: "user", content: modelPrompt }
         ], sessionId, { temperature: 0.7 });
 
-        return res?.choices?.[0]?.message?.content || `Tool executed successfully. ${toolResultSummary.slice(0, 500)}`;
+        return res?.choices?.[0]?.message?.content || meaningfulSummary;
       } catch (modelErr) {
         // Fallback to simple summary if model call fails
-        return `Tool executed successfully. Result: ${toolResultSummary.slice(0, 500)}`;
+        return meaningfulSummary;
       }
     } catch (e: any) {
       this.updateToolTrace(sessionId, traceId, {
@@ -1852,7 +1890,7 @@ export class ChatService {
     const { sessionId, baseMessages, assistantId, streamId, controller, onMeta } = input;
     const finalMessages = [
       ...baseMessages,
-      { role: "user", content: "Summarize the tool results and provide a clear, complete answer to the user's question. Do not output tool calls. Plain text only." },
+      { role: "user", content: "Summarize the tool results and provide a clear, complete answer to the user's question. Do not output tool calls. Do NOT include raw tool output, JSON, or technical details. Focus on meaning and natural language. Plain text only." },
     ];
     this.state.messages = this.state.messages.map((m) =>
       m.id === assistantId ? { ...m, text: "", hasReceivedFirstToken: false } : m
