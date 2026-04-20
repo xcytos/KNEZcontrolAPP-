@@ -40,6 +40,10 @@ export interface ChatMessage {
   };
 }
 
+export type ExecutionPhase = "intent" | "planning" | "tool_selection" | "execution" | "post_execution" | "final_response";
+
+export type ExecutionPattern = "direct" | "plan_execute_respond" | "multi_step" | "tool_preview" | "silent";
+
 export interface ToolCallMessage {
   tool: string;
   args: any;
@@ -50,6 +54,10 @@ export interface ToolCallMessage {
   finishedAt?: string;
   executionTimeMs?: number;
   mcpLatencyMs?: number;
+  phase?: ExecutionPhase;
+  pattern?: ExecutionPattern;
+  groupingId?: string;
+  sequenceOrder?: number;
 }
 
 export type InfluenceVote = "upvote" | "downvote";

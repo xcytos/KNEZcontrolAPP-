@@ -941,7 +941,23 @@ export class ChatService {
         const startedAt = new Date().toISOString();
         const traceMessageId = `${assistantId}-tool-${Date.now()}`;
         currentToolMessageId = traceMessageId;
-        const toolCall: ToolCallMessage = { tool: toolName, args, status: "calling", startedAt };
+
+        // Detect phase and pattern
+        const existingToolMessages = this.state.messages.filter(m => m.from === "tool_execution" && m.correlationId === assistantId);
+        const toolIndex = existingToolMessages.length;
+        const phase: "execution" | "post_execution" = toolIndex === 0 ? "execution" : "post_execution";
+        const pattern: "direct" | "multi_step" = toolIndex === 0 ? "direct" : "multi_step";
+
+        const toolCall: ToolCallMessage = { 
+          tool: toolName, 
+          args, 
+          status: "calling", 
+          startedAt,
+          phase,
+          pattern,
+          groupingId: assistantId,
+          sequenceOrder: toolIndex
+        };
         this.persistToolTrace(sessionId, {
           id: traceMessageId,
           sessionId,
@@ -1067,7 +1083,15 @@ export class ChatService {
     // Emit tool start to UI
     const startedAt = new Date().toISOString();
     const traceId = `${assistantId}-direct-${Date.now()}`;
-    const toolCallMsg: ToolCallMessage = { tool: toolName, args: toolArgs, status: "calling", startedAt };
+    const toolCallMsg: ToolCallMessage = { 
+      tool: toolName, 
+      args: toolArgs, 
+      status: "calling", 
+      startedAt,
+      phase: "execution",
+      pattern: "direct",
+      groupingId: assistantId
+    };
     this.persistToolTrace(sessionId, {
       id: traceId, sessionId, from: "tool_execution" as any,
       text: "", createdAt: startedAt,
