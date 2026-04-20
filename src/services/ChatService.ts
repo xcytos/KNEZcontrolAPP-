@@ -685,19 +685,47 @@ export class ChatService {
 
   private parseBrowserNavigateResult(result: any): { page_url?: string; title?: string; snapshot?: string; logs?: string } {
     try {
-      // Handle format: {"content":[{"text":"..."}]}
+      // Handle playwright MCP format with sections (Result, Snapshot, Ran Playwright code)
       if (result?.content && Array.isArray(result.content) && result.content[0]?.text) {
         const text = result.content[0].text;
-        // Try to parse the text as JSON if it's a string
-        const parsed = typeof text === "string" ? JSON.parse(text) : text;
+        // Parse sections from the text format: "### Section\ncontent"
+        const sections = new Map<string, string>();
+        const sectionHeaders = text.split(/^### /m).slice(1);
+        for (const section of sectionHeaders) {
+          const firstNewlineIndex = section.indexOf('\n');
+          if (firstNewlineIndex === -1) continue;
+          const sectionName = section.substring(0, firstNewlineIndex);
+          const sectionContent = section.substring(firstNewlineIndex + 1).trim();
+          sections.set(sectionName, sectionContent);
+        }
+
+        const snapshot = sections.get('Snapshot') || sections.get('snapshot');
+        const code = sections.get('Ran Playwright code');
+        const error = sections.get('Error');
+        const resultSection = sections.get('Result');
+
+        // Extract URL from code if available (e.g., await page.goto('https://example.com'))
+        let page_url: string | undefined;
+        if (code) {
+          const urlMatch = code.match(/page\.goto\(['"`](.*?)['"`]\)/);
+          if (urlMatch) page_url = urlMatch[1];
+        }
+
+        // Extract title from snapshot if available
+        let title: string | undefined;
+        if (snapshot) {
+          const titleMatch = snapshot.match(/title\s+(.*?)(?:\n|\[)/i);
+          if (titleMatch) title = titleMatch[1].trim();
+        }
+
         return {
-          page_url: parsed.url || parsed.page_url,
-          title: parsed.title,
-          snapshot: parsed.snapshot,
-          logs: parsed.logs
+          page_url,
+          title,
+          snapshot,
+          logs: error || resultSection
         };
       }
-      // Handle direct format with url/title fields
+      // Handle direct format with url/title fields (fallback)
       return {
         page_url: result.url || result.page_url,
         title: result.title,
