@@ -1,6 +1,6 @@
 
 import Dexie, { Table } from 'dexie';
-import { ChatMessage, AssistantMessage, Block } from '../domain/DataContracts';
+import { ChatMessage, AssistantMessage, Block, MessageState } from '../domain/DataContracts';
 
 export interface Session {
   id: string;
@@ -31,8 +31,10 @@ export interface StoredAssistantMessage {
   id: string;
   sessionId: string;
   role: "assistant";
+  state: MessageState; // ADD 1: Add state field
   blocks: Block[];
-  createdAt: string;
+  createdAt: number; // ADD 1: Change to number timestamp
+  finalizedAt?: number; // ADD 1: Add finalizedAt field
   sequenceNumber?: number;
 }
 
@@ -173,8 +175,10 @@ export class SessionDatabase {
       id: assistantMessage.id,
       sessionId,
       role: assistantMessage.role,
+      state: assistantMessage.state, // ADD 1: Include state
       blocks: assistantMessage.blocks,
       createdAt: assistantMessage.createdAt,
+      finalizedAt: assistantMessage.finalizedAt, // ADD 1: Include finalizedAt
       sequenceNumber: assistantMessage.sequenceNumber
     };
     await db.assistantMessages.put(row);
@@ -187,8 +191,10 @@ export class SessionDatabase {
       id: r.id,
       sessionId: r.sessionId,
       role: r.role,
+      state: r.state, // ADD 1: Include state
       blocks: r.blocks,
       createdAt: r.createdAt,
+      finalizedAt: r.finalizedAt, // ADD 1: Include finalizedAt
       sequenceNumber: r.sequenceNumber
     }));
   }

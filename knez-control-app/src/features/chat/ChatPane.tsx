@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChatMessage, AssistantMessage } from "../../domain/DataContracts";
+import { AssistantMessageRenderer } from "./blocks/AssistantMessageRenderer";
 import { knezClient } from "../../services/KnezClient";
 import { MessageItem } from "./MessageItem";
 import { getMemoryEventSourcingService } from "../../services/MemoryEventSourcingService";
@@ -43,7 +44,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   // Use ChatService state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [assistantMessages, setAssistantMessages] = useState<AssistantMessage[]>([]);
-  const [phase, setPhase] = useState<"idle" | "request_sent" | "model_thinking" | "tool_execution" | "streaming" | "completed" | "error">("idle");
+  const [phase, setPhase] = useState<"idle" | "sending" | "thinking" | "tool_running" | "streaming" | "finalizing" | "done" | "error">("idle");
   const [activeTools, setActiveTools] = useState<{ search: boolean }>({ search: false });
   const [searchProvider, setSearchProvider] = useState<"off" | "taqwin" | "proxy">("off");
   // Manual approval removed - tools auto-approve
@@ -346,7 +347,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
 
   // P5.2 T6: AgentProgressBar — shows thinking/executing/generating stages based on phase
   const AgentProgressBar: React.FC<{
-    phase: "idle" | "request_sent" | "model_thinking" | "tool_execution" | "streaming" | "completed" | "error";
+    phase: "idle" | "sending" | "thinking" | "tool_running" | "streaming" | "finalizing" | "done" | "error";
     messages: ChatMessage[];
   }> = ({ phase, messages }) => {
     const [isCollapsed, setIsCollapsed] = useState(false);
@@ -354,12 +355,12 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
       (m: ChatMessage) => m.toolCall?.status === "running" || m.toolCall?.status === "pending"
     );
 
-    // P5.2 T7: Collapse based on lifecycle (idle or completed phase)
-    const shouldHide = phase === "idle" || phase === "completed";
+    // P5.2 T7: Collapse based on lifecycle (idle or done phase)
+    const shouldHide = phase === "idle" || phase === "done";
 
     // P5.2 T7: Auto-collapse when phase completes
     useEffect(() => {
-      if (phase === "idle" || phase === "completed") {
+      if (phase === "idle" || phase === "done") {
         const timer = setTimeout(() => setIsCollapsed(true), 2000);
         return () => clearTimeout(timer);
       } else {
@@ -371,17 +372,17 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
 
     let stage = "";
     let stageColor = "bg-blue-400";
-    if (activeToolMsg || phase === "tool_execution") {
+    if (activeToolMsg || phase === "tool_running") {
       const toolShortName = activeToolMsg?.toolCall?.tool.split("__").pop() ?? "tool";
       stage = `executing: ${toolShortName}`;
       stageColor = "bg-green-400";
     } else if (phase === "streaming") {
       stage = "generating response...";
       stageColor = "bg-purple-400";
-    } else if (phase === "model_thinking") {
+    } else if (phase === "thinking") {
       stage = "thinking...";
       stageColor = "bg-yellow-400";
-    } else if (phase === "request_sent") {
+    } else if (phase === "sending") {
       stage = "sending...";
     } else if (phase === "error") {
       stage = "error";
@@ -732,24 +733,103 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
               </button>
             )}
             
-            {visibleMessages.map((msg, idx) => {
-              // Find corresponding assistant message if this is a user message
-              const assistantMsg = msg.from === "user" && msg.id
-                ? assistantMessages.find(am => am.sessionId === msg.sessionId)
-                : undefined;
+            {(() => {
+              // Filter out assistant-type ChatMessages to prevent double rendering with AssistantMessage blocks
+              const filteredMessages = visibleMessages.filter(m => m.from !== "knez" && m.from !== "assistant");
+              
+              // Merge assistant messages with regular messages and sort by creation time
+              type MergedItem = { type: 'message', data: ChatMessage } | { type: 'assistant', data: AssistantMessage };
+              const mergedMessages: MergedItem[] = [
+                ...filteredMessages.map(m => ({ type: 'message' as const, data: m })),
+                ...assistantMessages.map(am => ({ type: 'assistant' as const, data: am }))
+              ].sort((a, b) => {
+                const timeA = new Date(a.data.createdAt).getTime();
+                const timeB = new Date(b.data.createdAt).getTime();
+                return timeA - timeB;
+              });
 
-              return (
-                <MessageItem
-                  key={msg.id || idx}
-                  msg={msg}
-                  assistantMessage={assistantMsg}
-                  onEdit={handleEdit}
-                  onStop={handleStop}
-                  onRetry={handleRetry}
-                  readOnly={readOnly}
-                />
-              );
-            })}
+              return mergedMessages.map((item, idx) => {
+                if (item.type === 'message') {
+                  return (
+                    <MessageItem
+                      key={item.data.id || idx}
+                      msg={item.data}
+                      onEdit={handleEdit}
+                      onStop={handleStop}
+                      onRetry={handleRetry}
+                      readOnly={readOnly}
+                    />
+                  );
+                } else {
+                  return (
+                    <div key={item.data.id} className="flex gap-3 max-w-full min-w-0">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs font-medium text-zinc-400">Assistant</span>
+                          <span className="text-[10px] text-zinc-600">{new Date(item.data.createdAt).toLocaleTimeString()}</span>
+                        </div>
+                        <div className="text-sm text-zinc-300">
+                          <AssistantMessageRenderer
+                            blocks={item.data.blocks}
+                            onApprovalApprove={() => {}}
+                            onApprovalReject={() => {}}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+              });
+            })()}
+
+            {/* Prominent status indicator when AI is processing - hide when streaming has started to avoid duplicate icons */}
+            {(phase === "sending" || phase === "thinking" || phase === "tool_running") && (
+              <div className="flex gap-3 max-w-full min-w-0 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-xs font-medium text-white shadow-lg shadow-indigo-500/20">
+                  AI
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs font-medium text-zinc-400">Assistant</span>
+                    <div className="flex items-center gap-2">
+                      {phase === "sending" && (
+                        <>
+                          <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+                          <span className="text-xs text-zinc-400">Sending prompt...</span>
+                        </>
+                      )}
+                      {phase === "thinking" && (
+                        <>
+                          <div className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
+                          <span className="text-xs text-zinc-400">Thinking...</span>
+                        </>
+                      )}
+                      {phase === "tool_running" && (
+                        <>
+                          <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                          <span className="text-xs text-zinc-400">Executing tools...</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-zinc-400">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>
+                      {phase === "sending" && "Your prompt has been received and is being sent to the AI model..."}
+                      {phase === "thinking" && "The AI is analyzing your request and formulating a response..."}
+                      {phase === "tool_running" && "The AI is executing tools to gather information..."}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Queue status indicator */}
+            {messages.length === 0 && phase === "idle" && (
+              <div className="flex items-center justify-center py-8 text-sm text-zinc-500">
+                <span>No messages yet. Start a conversation by typing a message below.</span>
+              </div>
+            )}
             <div ref={messagesEndRef} className="h-4" />
           </div>
 
@@ -896,7 +976,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                   }
                 }}
               />
-              {composerMode === "chat" && (phase === "streaming" || phase === "model_thinking" || phase === "tool_execution" || phase === "request_sent") && (
+              {composerMode === "chat" && (phase === "streaming" || phase === "thinking" || phase === "tool_running" || phase === "sending") && (
                 <button
                   type="button"
                   onClick={() => chatService.stopCurrentResponse()}
@@ -937,10 +1017,10 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                 <button
                   data-testid="chat-send"
                   type="submit"
-                  disabled={!inputValue.trim() || phase === "streaming" || phase === "model_thinking" || phase === "tool_execution" || phase === "request_sent"}
+                  disabled={!inputValue.trim() || phase === "streaming" || phase === "thinking" || phase === "tool_running" || phase === "sending"}
                   className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg shadow-blue-900/20"
                 >
-                  {phase === "streaming" ? "Streaming..." : phase === "request_sent" ? "Sending..." : "Send"}
+                  {phase === "streaming" ? "Streaming..." : phase === "sending" ? "Sending..." : "Send"}
                 </button>
               )}
             </form>
