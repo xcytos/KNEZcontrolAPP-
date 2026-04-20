@@ -146,6 +146,17 @@ const MessageItemInner: React.FC<{
           </div>
         )}
 
+        {/* Execution Group Header - show for multi-step executions */}
+        {msg.toolCall?.pattern === "multi_step" && msg.toolCall?.sequenceOrder === 0 && (
+          <div className="text-[10px] font-mono text-zinc-500 mb-2 flex items-center gap-2">
+            <span className="text-zinc-400">▶</span>
+            <span>Execution Cycle</span>
+            {msg.toolCall.groupingId && (
+              <span className="text-zinc-600">#{msg.toolCall.groupingId.slice(-4)}</span>
+            )}
+          </div>
+        )}
+
         {/* Content Rendering - Correct Order: Thoughts → Tools → Response */}
         {parts.map((part, i) => {
           if (part.type === 'think') {
@@ -204,6 +215,19 @@ const MessageItemInner: React.FC<{
                 <span className="text-xs font-mono text-zinc-200 break-all min-w-0">
                   MCP: {msg.toolCall.tool}
                 </span>
+                {msg.toolCall.phase && (
+                  <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+                    msg.toolCall.phase === "execution"
+                      ? "bg-purple-900/20 text-purple-300 border-purple-900/40"
+                      : msg.toolCall.phase === "planning"
+                        ? "bg-cyan-900/20 text-cyan-300 border-cyan-900/40"
+                        : msg.toolCall.phase === "post_execution"
+                          ? "bg-orange-900/20 text-orange-300 border-orange-900/40"
+                          : "bg-zinc-900/20 text-zinc-400 border-zinc-900/40"
+                  }`}>
+                    {msg.toolCall.phase.toUpperCase()}
+                  </span>
+                )}
                 <span className="text-[10px] text-zinc-500">
                   {toolDetailsOpen ? '▼' : '▶'}
                 </span>
