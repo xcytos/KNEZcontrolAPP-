@@ -14,6 +14,7 @@ import { agentTracer } from "./AgentTracer";
 import { knezClient } from "../KnezClient";
 import { toolExposureService } from "../ToolExposureService";
 import { toolExecutionService } from "../ToolExecutionService";
+import { logger } from "../LogService";
 
 export interface AgentCallbacks {
   onThinking: (isThinking: boolean) => void;
@@ -212,7 +213,7 @@ export class AgentOrchestrator {
     let toolResult: any;
     let toolSuccess = false;
 
-    for (let attempt = 0; attempt <= 2; attempt++) {
+    for (let attempt = 0; attempt < 1; attempt++) {
       callbacks.onToolStart(toolCall.name, toolCall.args);
 
       const execStart = Date.now();
@@ -465,6 +466,7 @@ ${contextSummary}
    */
   private detectToolIntent(userInput: string): { name: string; args: any } | null {
     const tools = toolExposureService.getToolsForModel();
+    logger.info("intent_detection", "detect_attempt", { toolCount: tools.length, inputPreview: userInput.slice(0, 80) });
     if (!tools.length) return null;
 
     const input = userInput.trim();
