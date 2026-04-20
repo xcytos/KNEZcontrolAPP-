@@ -1,6 +1,6 @@
 
 import Dexie, { Table } from 'dexie';
-import { ChatMessage } from '../domain/DataContracts';
+import { ChatMessage, AssistantMessage, Block } from '../domain/DataContracts';
 
 export interface Session {
   id: string;
@@ -27,6 +27,15 @@ export interface StoredMessage {
   correlationId?: string;
 }
 
+export interface StoredAssistantMessage {
+  id: string;
+  sessionId: string;
+  role: "assistant";
+  blocks: Block[];
+  createdAt: string;
+  sequenceNumber?: number;
+}
+
 export interface OutgoingQueueItem {
   id: string;
   sessionId: string;
@@ -42,6 +51,7 @@ export interface OutgoingQueueItem {
 export class KnezDatabase extends Dexie {
   sessions!: Table<Session>;
   messages!: Table<StoredMessage>;
+  assistantMessages!: Table<StoredAssistantMessage>;
   outgoingQueue!: Table<OutgoingQueueItem>;
 
   constructor() {
@@ -70,6 +80,12 @@ export class KnezDatabase extends Dexie {
         if (!Array.isArray((s as any).tags)) (s as any).tags = [];
         if (typeof (s as any).outcome !== "string") (s as any).outcome = "";
       });
+    });
+    this.version(4).stores({
+      sessions: 'id, name, createdAt, updatedAt, outcome',
+      messages: 'id, sessionId, from, createdAt, deliveryStatus',
+      assistantMessages: 'id, sessionId, createdAt, sequenceNumber',
+      outgoingQueue: 'id, sessionId, createdAt, status, nextRetryAt'
     });
   }
 }
@@ -150,6 +166,35 @@ export class SessionDatabase {
 
   async updateMessage(id: string, update: Partial<StoredMessage>): Promise<void> {
     await db.messages.update(id, update);
+  }
+
+  async saveAssistantMessage(sessionId: string, assistantMessage: AssistantMessage): Promise<void> {
+    const row: StoredAssistantMessage = {
+      id: assistantMessage.id,
+      sessionId,
+      role: assistantMessage.role,
+      blocks: assistantMessage.blocks,
+      createdAt: assistantMessage.createdAt,
+      sequenceNumber: assistantMessage.sequenceNumber
+    };
+    await db.assistantMessages.put(row);
+    await db.sessions.update(sessionId, { updatedAt: new Date().toISOString() });
+  }
+
+  async loadAssistantMessages(sessionId: string): Promise<AssistantMessage[]> {
+    const rows = await db.assistantMessages.where('sessionId').equals(sessionId).sortBy('createdAt');
+    return rows.map(r => ({
+      id: r.id,
+      sessionId: r.sessionId,
+      role: r.role,
+      blocks: r.blocks,
+      createdAt: r.createdAt,
+      sequenceNumber: r.sequenceNumber
+    }));
+  }
+
+  async updateAssistantMessage(id: string, update: Partial<StoredAssistantMessage>): Promise<void> {
+    await db.assistantMessages.update(id, update);
   }
 
   async enqueueOutgoing(item: Omit<OutgoingQueueItem, "attempts" | "status" | "nextRetryAt"> & { attempts?: number; status?: OutgoingQueueItem["status"]; nextRetryAt?: string }): Promise<void> {

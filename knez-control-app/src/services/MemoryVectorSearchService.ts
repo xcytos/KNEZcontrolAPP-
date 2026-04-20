@@ -54,7 +54,7 @@ export class MemoryVectorSearchService {
     const words = text.toLowerCase().split(/\s+/);
     const embedding = new Array(1536).fill(0); // Match OpenAI embedding size
     
-    words.forEach((word, i) => {
+    words.forEach((word) => {
       const hash = this.simpleHash(word);
       const index = Math.abs(hash) % embedding.length;
       embedding[index] += 1;
@@ -145,8 +145,7 @@ export class MemoryVectorSearchService {
       limit = 10,
       threshold = 0.3,
       domain,
-      tags,
-      recall = 0.95
+      tags
     } = options;
 
     // Check cache first (Cache-Aside pattern, Learning 83)

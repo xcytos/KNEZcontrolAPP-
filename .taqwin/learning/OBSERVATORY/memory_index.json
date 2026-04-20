@@ -1,0 +1,191 @@
+{
+  "version": "1.0",
+  "title": "KNEZ Observatory Memory Index",
+  "description": "Memory index for KNEZ architecture learning content",
+  "topics": [
+    {
+      "id": "knez-architecture-overview",
+      "name": "KNEZ Architecture Overview",
+      "description": "Overview of the 10-layer KNEZ architecture",
+      "tags": ["architecture", "overview", "layers"],
+      "related_files": ["summary.md", "deep_notes.md"],
+      "key_concepts": ["layered-architecture", "separation-of-concerns", "modularity"]
+    },
+    {
+      "id": "observability-layer",
+      "name": "Observability Layer",
+      "description": "Monitoring, logging, and debugging capabilities",
+      "tags": ["observability", "monitoring", "debugging"],
+      "related_files": ["deep_notes.md", "concepts.md"],
+      "key_concepts": ["event-based-ui", "tool-tracing", "metrics", "error-classification"]
+    },
+    {
+      "id": "governance-layer",
+      "name": "Governance & Control Layer",
+      "description": "Policy enforcement and approval workflows",
+      "tags": ["governance", "policy", "control"],
+      "related_files": ["deep_notes.md", "concepts.md"],
+      "key_concepts": ["policy-enforcement", "approval-workflows", "audit-trails"]
+    },
+    {
+      "id": "cognitive-layer",
+      "name": "Cognitive & Intelligence Layer",
+      "description": "Context management and drift detection",
+      "tags": ["cognitive", "intelligence", "context"],
+      "related_files": ["deep_notes.md", "concepts.md"],
+      "key_concepts": ["context-compression", "drift-detection", "dom-awareness"]
+    },
+    {
+      "id": "infrastructure-layer",
+      "name": "Infrastructure & System Layer",
+      "description": "System orchestration and performance monitoring",
+      "tags": ["infrastructure", "system", "performance"],
+      "related_files": ["deep_notes.md"],
+      "key_concepts": ["system-orchestration", "health-monitoring", "performance-metrics"]
+    },
+    {
+      "id": "mcp-integration",
+      "name": "MCP Integration Layer",
+      "description": "Model Context Protocol tool integration",
+      "tags": ["mcp", "protocol", "tools"],
+      "related_files": ["deep_notes.md", "concepts.md", "qa_system.json"],
+      "key_concepts": ["mcp-protocol", "tool-catalog", "client-types", "server-registry"]
+    },
+    {
+      "id": "tool-execution",
+      "name": "Tool Execution Layer",
+      "description": "Tool catalog and execution management",
+      "tags": ["tools", "execution", "management"],
+      "related_files": ["deep_notes.md", "qa_system.json"],
+      "key_concepts": ["tool-catalog", "execution-service", "validation", "approval"]
+    },
+    {
+      "id": "agent-runtime",
+      "name": "Agent Runtime Layer",
+      "description": "Central brain for autonomous agent execution",
+      "tags": ["agent", "runtime", "orchestration"],
+      "related_files": ["deep_notes.md", "concepts.md", "qa_system.json", "mental_models.md"],
+      "key_concepts": ["agent-loop", "intent-detection", "retry-strategy", "security-layer"]
+    },
+    {
+      "id": "chat-communication",
+      "name": "Chat & Communication Layer",
+      "description": "User interface for AI interaction",
+      "tags": ["chat", "communication", "ui"],
+      "related_files": ["deep_notes.md"],
+      "key_concepts": ["chat-service", "message-rendering", "streaming", "session-management"]
+    },
+    {
+      "id": "memory-knowledge",
+      "name": "Memory & Knowledge Layer",
+      "description": "Event-sourced memory and knowledge management",
+      "tags": ["memory", "knowledge", "event-sourcing"],
+      "related_files": ["deep_notes.md", "concepts.md", "qa_system.json", "mental_models.md"],
+      "key_concepts": ["event-sourcing", "vector-search", "knowledge-graph", "multi-level-caching"]
+    },
+    {
+      "id": "data-processing",
+      "name": "Data Processing Layer",
+      "description": "Data extraction, persistence, and session management",
+      "tags": ["data", "processing", "persistence"],
+      "related_files": ["deep_notes.md"],
+      "key_concepts": ["extraction", "presence-tracking", "persistence", "session-control"]
+    },
+    {
+      "id": "architectural-patterns",
+      "name": "Architectural Patterns",
+      "description": "Key patterns used in KNEZ architecture",
+      "tags": ["patterns", "architecture", "design"],
+      "related_files": ["concepts.md", "insights.md"],
+      "key_concepts": ["event-sourcing", "multi-level-caching", "agent-loop", "observability", "governance"]
+    },
+    {
+      "id": "integration-points",
+      "name": "Integration Points",
+      "description": "How layers interact and depend on each other",
+      "tags": ["integration", "dependencies", "architecture"],
+      "related_files": ["insights.md"],
+      "key_concepts": ["layer-dependencies", "cross-cutting-concerns", "shared-resources"]
+    },
+    {
+      "id": "implementation-details",
+      "name": "Implementation Details",
+      "description": "Technical implementation choices and patterns",
+      "tags": ["implementation", "typescript", "react"],
+      "related_files": ["insights.md"],
+      "key_concepts": ["typescript", "react-hooks", "service-pattern", "modal-pattern"]
+    },
+    {
+      "id": "performance-optimizations",
+      "name": "Performance Optimizations",
+      "description": "Performance-related architectural decisions",
+      "tags": ["performance", "optimization", "efficiency"],
+      "related_files": ["insights.md"],
+      "key_concepts": ["lazy-loading", "event-based-updates", "caching", "context-compression"]
+    },
+    {
+      "id": "security-considerations",
+      "name": "Security Considerations",
+      "description": "Security-related architectural decisions",
+      "tags": ["security", "governance", "protection"],
+      "related_files": ["insights.md", "concepts.md"],
+      "key_concepts": ["security-layer", "defense-in-depth", "human-oversight", "policy-enforcement"]
+    },
+    {
+      "id": "future-improvements",
+      "name": "Future Improvements",
+      "description": "Planned enhancements and future directions",
+      "tags": ["future", "improvements", "roadmap"],
+      "related_files": ["insights.md", "actions.md"],
+      "key_concepts": ["vector-search", "knowledge-graph", "determinism-testing", "multi-agent"]
+    },
+    {
+      "id": "actionable-tasks",
+      "name": "Actionable Tasks",
+      "description": "Concrete actions to improve the system",
+      "tags": ["actions", "tasks", "improvement"],
+      "related_files": ["actions.md"],
+      "key_concepts": ["immediate-actions", "medium-term", "long-term", "maintenance"]
+    },
+    {
+      "id": "mental-models",
+      "name": "Mental Models",
+      "description": "Analogies and mental models for understanding KNEZ",
+      "tags": ["mental-models", "analogies", "understanding"],
+      "related_files": ["mental_models.md"],
+      "key_concepts": ["building-analogy", "loop-analogy", "timeline-analogy", "plug-system-analogy"]
+    }
+  ],
+  "file_structure": {
+    "video_meta.json": "Metadata about the learning content",
+    "summary.md": "Short, medium, and full summaries of KNEZ architecture",
+    "deep_notes.md": "Detailed breakdown of each layer and component",
+    "concepts.md": "Key architectural concepts and patterns",
+    "qa_system.json": "Question-answer system for testing understanding",
+    "insights.md": "Key insights about architecture, integration, and implementation",
+    "actions.md": "Actionable tasks for improvement and maintenance",
+    "mental_models.md": "Analogies and mental models for better understanding",
+    "memory_index.json": "This file - index of all topics and concepts"
+  },
+  "learning_path": [
+    "knez-architecture-overview",
+    "architectural-patterns",
+    "mental-models",
+    "observability-layer",
+    "governance-layer",
+    "cognitive-layer",
+    "infrastructure-layer",
+    "mcp-integration",
+    "tool-execution",
+    "agent-runtime",
+    "chat-communication",
+    "memory-knowledge",
+    "data-processing",
+    "integration-points",
+    "implementation-details",
+    "performance-optimizations",
+    "security-considerations",
+    "future-improvements",
+    "actionable-tasks"
+  ]
+}

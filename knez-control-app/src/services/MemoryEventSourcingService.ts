@@ -76,11 +76,9 @@ export interface MemoryUpdatedEventData extends MemoryEventData {
 }
 
 export class MemoryEventSourcingService {
-  private db: Database.Database;
-  private dbPath: string;
+  private db: any;
 
   constructor(dbPath: string = '.taqwin/memory/events.db') {
-    this.dbPath = dbPath;
     this.db = new Database(dbPath);
     this.initializeDatabase();
     this.configurePerformance();

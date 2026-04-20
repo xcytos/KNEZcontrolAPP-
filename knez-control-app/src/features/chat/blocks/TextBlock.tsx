@@ -1,0 +1,14 @@
+import React from 'react';
+import { Block } from '../../../domain/DataContracts';
+
+interface TextBlockProps {
+  block: Extract<Block, { type: 'text' }>;
+}
+
+export const TextBlock: React.FC<TextBlockProps> = ({ block }) => {
+  return (
+    <div className="my-2 text-sm text-gray-700 whitespace-pre-wrap">
+      {block.content}
+    </div>
+  );
+};

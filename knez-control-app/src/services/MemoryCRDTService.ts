@@ -169,7 +169,7 @@ export class MemoryCRDTService {
     }
 
     let conflicts = 0;
-    for (const [id, ops] of opMap) {
+    for (const [, ops] of opMap) {
       if (ops.length > 1) {
         conflicts++;
       }

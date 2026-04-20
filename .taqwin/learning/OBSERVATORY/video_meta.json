@@ -1,0 +1,26 @@
+{
+  "title": "KNEZ Architecture - AI Periodic Table Adapted for KNEZ",
+  "description": "Comprehensive learning system for understanding KNEZ architecture through the lens of AI Periodic Table concepts, adapted specifically for the knez-control-app codebase",
+  "duration": "45 minutes",
+  "created_at": "2026-04-20",
+  "source": "AI Periodic Table framework adapted to KNEZ system",
+  "topics": [
+    "KNEZ Architecture Layers",
+    "Agent Runtime Layer",
+    "Chat & Communication Layer",
+    "Memory & Knowledge Layer",
+    "MCP Integration Layer",
+    "Tool Execution Layer",
+    "Infrastructure & System Layer",
+    "Governance & Control Layer",
+    "Cognitive & Intelligence Layer",
+    "Observability Layer",
+    "Data Processing Layer"
+  ],
+  "difficulty": "intermediate",
+  "prerequisites": [
+    "Basic understanding of React and TypeScript",
+    "Familiarity with MCP (Model Context Protocol)",
+    "Knowledge of event-sourcing patterns"
+  ]
+}

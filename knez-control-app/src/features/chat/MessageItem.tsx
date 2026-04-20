@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { ChatMessage } from '../../domain/DataContracts';
+import { ChatMessage, AssistantMessage } from '../../domain/DataContracts';
 import { AgentTrace } from '../../services/agent/AgentTracer';
 import { parseMessageContent, formatMarkdown, copyToClipboard } from './ChatUtils';
+import { AssistantMessageRenderer } from './blocks/AssistantMessageRenderer';
 
 const CodeBlock: React.FC<{ language: string; content: string }> = ({ language, content }) => {
   const [copied, setCopied] = useState(false);
@@ -72,12 +73,13 @@ const FormattedContent: React.FC<{ text: string }> = ({ text }) => {
 
 const MessageItemInner: React.FC<{
   msg: ChatMessage;
+  assistantMessage?: AssistantMessage;
   readOnly: boolean;
   onStop?: (id: string) => void;
   onRetry?: (id: string) => void;
   onEdit?: (id: string) => void;
   agentTrace?: AgentTrace;
-}> = ({ msg, readOnly, onStop, onRetry, onEdit, agentTrace }) => {
+}> = ({ msg, assistantMessage, readOnly, onStop, onRetry, onEdit, agentTrace }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [copied, setCopied] = useState(false);
   const [thoughtsOpen, setThoughtsOpen] = useState(false);
@@ -393,8 +395,17 @@ const MessageItemInner: React.FC<{
           </div>
         ) : null}
 
-        {/* Response Text - Rendered after tool execution */}
-        {parts.map((part, i) => {
+        {/* Block-based rendering for new AssistantMessage structure */}
+        {assistantMessage && (
+          <AssistantMessageRenderer
+            blocks={assistantMessage.blocks}
+            onApprovalApprove={() => {}}
+            onApprovalReject={() => {}}
+          />
+        )}
+
+        {/* Legacy rendering for backward compatibility */}
+        {!assistantMessage && parts.map((part, i) => {
           if (part.type === 'think' || part.type === 'system') {
             return null; // Already rendered above
           }

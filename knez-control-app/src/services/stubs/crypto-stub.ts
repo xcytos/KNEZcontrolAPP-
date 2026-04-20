@@ -6,12 +6,9 @@
  */
 
 class Hash {
-  private _algorithm: string;
   private data: Uint8Array[] = [];
-
-  constructor(_algorithm: string) {
-    this._algorithm = _algorithm;
-  }
+  // @ts-expect-error - algorithm parameter kept for API compatibility but not used in stub
+  constructor(private _algorithm: string) {}
 
   update(data: string | Buffer): Hash {
     if (typeof data === 'string') {

@@ -5,6 +5,22 @@ export type TraceId = string;
 export type CorrelationId = string;
 export type ToolCallId = string;
 
+// Block types for inline execution UI
+export type Block =
+  | { type: "text"; content: string }
+  | { type: "approval"; tool: string; args: any; status: "pending" | "approved" | "rejected" }
+  | { type: "mcp_call"; tool: string; args: any; status: "pending" | "running" | "success" | "failed"; result?: any; error?: string; executionTimeMs?: number; mcpLatencyMs?: number }
+  | { type: "final"; content: string };
+
+export interface AssistantMessage {
+  id: string;
+  sessionId: SessionId;
+  role: "assistant";
+  blocks: Block[];
+  createdAt: string;
+  sequenceNumber?: number;
+}
+
 export interface ChatMessage {
   id: string;
   sessionId: SessionId;

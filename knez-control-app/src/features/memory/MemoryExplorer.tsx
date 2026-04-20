@@ -5,81 +5,10 @@ import { useStatus } from "../../contexts/useStatus";
 import { EventSourcedMemoryView } from "./EventSourcedMemoryView";
 import { getMemoryEventSourcingService, MemoryState } from "../../services/MemoryEventSourcingService";
 
-const MemoryDetailModal: React.FC<{ 
-  memoryId: string | null;
-  onClose: () => void;
-}> = ({ memoryId, onClose }) => {
-  const [detail, setDetail] = useState<any>(null);
-
-  useEffect(() => {
-    if (memoryId) {
-      knezClient.getMemoryDetail(memoryId).then(setDetail).catch(() => setDetail(null));
-    } else {
-      setDetail(null);
-    }
-  }, [memoryId]);
-
-  if (!memoryId) return null;
-
-  return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
-      <div className="bg-zinc-900 border border-zinc-700 p-6 rounded-lg max-w-lg w-full max-h-[80vh] overflow-y-auto">
-        <h3 className="text-lg font-bold text-white mb-4">Memory Detail</h3>
-        {detail ? (
-           <div className="space-y-4">
-             <div>
-               <label className="text-xs text-zinc-500 uppercase">Summary</label>
-               <p className="text-zinc-300">{detail.summary}</p>
-             </div>
-             <div>
-               <label className="text-xs text-zinc-500 uppercase">Confidence</label>
-               <p className="text-zinc-300">{(detail.confidence * 100).toFixed(1)}%</p>
-             </div>
-             <div>
-               <label className="text-xs text-zinc-500 uppercase">Evidence</label>
-               <div className="bg-zinc-950 p-2 rounded text-xs font-mono text-zinc-400 space-y-1">
-                 {Array.isArray(detail.evidence_event_ids) && detail.evidence_event_ids.length > 0 ? (
-                   detail.evidence_event_ids.map((ev: any) => (
-                     <button
-                       key={String(ev)}
-                       onClick={() => {
-                         const id = String(ev);
-                         window.dispatchEvent(new CustomEvent("knez-navigate", { detail: { view: "replay" } }));
-                         window.dispatchEvent(new CustomEvent("replay-focus-event", { detail: { eventId: id } }));
-                       }}
-                       className="block w-full text-left hover:text-blue-300 transition-colors"
-                     >
-                       {String(ev)}
-                     </button>
-                   ))
-                 ) : (
-                   <div>None</div>
-                 )}
-               </div>
-             </div>
-             <div>
-               <label className="text-xs text-zinc-500 uppercase">JSON</label>
-               <pre className="text-[10px] bg-zinc-950 p-2 rounded overflow-x-auto text-green-400">
-                 {JSON.stringify(detail, null, 2)}
-               </pre>
-             </div>
-           </div>
-        ) : (
-          <div className="text-zinc-500">Loading...</div>
-        )}
-        <div className="mt-6 flex justify-end">
-          <button onClick={onClose} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded">Close</button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 import { persistenceService } from '../../services/PersistenceService'
 export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: boolean }> = ({ sessionId, readOnly }) => {
   const { online } = useStatus();
   const [memories, setMemories] = useState<any[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"memories" | "knowledge" | "graph" | "gate" | "eventsourced">("memories");
   const [error, setError] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -308,7 +237,6 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
               {eventSourcedMemories.map((m) => (
                 <div 
                   key={m.id} 
-                  onClick={() => setSelectedId(m.id)}
                   className="p-3 border rounded hover:bg-zinc-800 cursor-pointer transition-colors group bg-blue-900/10 border-blue-900/50 mb-2"
                 >
                   <div className="text-sm text-zinc-300 group-hover:text-white flex justify-between">
@@ -337,7 +265,6 @@ export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: bool
           {(searchQuery ? searchResults : memories).map((m) => (
             <div 
               key={m.id} 
-              onClick={() => setSelectedId(m.id)}
               className={`p-3 border rounded hover:bg-zinc-800 cursor-pointer transition-colors group ${
                  searchQuery && searchResults.includes(m) ? 'bg-blue-900/10 border-blue-900/50' : 'bg-zinc-900 border-zinc-800'
               }`}

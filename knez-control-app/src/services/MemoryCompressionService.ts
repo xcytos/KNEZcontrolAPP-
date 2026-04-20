@@ -66,16 +66,16 @@ export class MemoryCompressionService {
       switch (this.config.algorithm) {
         case 'gzip':
           // GZIP: Good compression, slower (Learning 66)
-          compressed = gzip(input, { level: this.config.level });
+          compressed = Buffer.from(gzip(input, { level: this.config.level as any }));
           break;
         case 'deflate':
           // Deflate: Similar to gzip without headers (Learning 67)
-          compressed = deflate(input, { level: this.config.level });
+          compressed = Buffer.from(deflate(input, { level: this.config.level as any }));
           break;
         case 'zstd':
           // ZSTD: Best ratio, fast decompression (Learning 65)
           // For now, fall back to gzip since zstd binding not available
-          compressed = gzip(input, { level: this.config.level });
+          compressed = Buffer.from(gzip(input, { level: this.config.level as any }));
           algorithm = 'gzip';
           break;
         default:
@@ -125,12 +125,12 @@ export class MemoryCompressionService {
     try {
       switch (algorithm) {
         case 'gzip':
-          return ungzip(data);
+          return Buffer.from(ungzip(data));
         case 'deflate':
-          return inflate(data);
+          return Buffer.from(inflate(data));
         case 'zstd':
           // Fallback to gzip
-          return ungzip(data);
+          return Buffer.from(ungzip(data));
         default:
           return data;
       }

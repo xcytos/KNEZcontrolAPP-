@@ -1,16 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { MemoryData } from '../../services/StaticMemoryLoader';
-import { getMemoryEventSourcingService } from '../../services/MemoryEventSourcingService';
 
 type Props = {
   isOpen: boolean;
   onClose: () => void;
-  onInject: (memory: MemoryData) => void;
+  onInject: (memory: MemoryData) => Promise<void>;
 };
 
 export const MemoryModal: React.FC<Props> = ({ isOpen, onClose, onInject }) => {
   const [availableMemories, setAvailableMemories] = useState<MemoryData[]>([]);
   const [loading, setLoading] = useState(false);
+  const [injectedMemories, setInjectedMemories] = useState<Set<string>>(new Set());
+  const [injecting, setInjecting] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -36,53 +37,41 @@ export const MemoryModal: React.FC<Props> = ({ isOpen, onClose, onInject }) => {
   };
 
   const parseMarkdown = (content: string): MemoryData[] => {
-    const memories: MemoryData[] = [];
-    const sections = content.split(/^---$/gm);
+    const lines = content.split('\n');
+    let title = '';
+    let type: 'learning' | 'mistake' | 'decision' | 'pattern' = 'learning';
+    let domain = 'default';
+    let tags: string[] = [];
+    let contentLines: string[] = [];
 
-    for (const section of sections) {
-      const trimmed = section.trim();
-      if (!trimmed) continue;
-
-      const lines = trimmed.split('\n');
-      let title = '';
-      let type: 'learning' | 'mistake' | 'decision' | 'pattern' = 'learning';
-      let domain = 'default';
-      let tags: string[] = [];
-      let contentLines: string[] = [];
-
-      let inContent = false;
-
-      for (const line of lines) {
-        if (line.startsWith('# ') && !inContent) {
-          title = line.substring(2);
-        } else if (line.toLowerCase().startsWith('domain:')) {
-          domain = line.split(':', 2)[1]?.trim() || 'default';
-        } else if (line.toLowerCase().startsWith('tags:')) {
-          tags = line.split(':', 2)[1]?.trim().split(',').map(t => t.trim()) || [];
-        } else if (line.toLowerCase().startsWith('type:')) {
-          const typeValue = line.split(':', 2)[1]?.trim().toLowerCase();
-          if (['learning', 'mistake', 'decision', 'pattern'].includes(typeValue)) {
-            type = typeValue as 'learning' | 'mistake' | 'decision' | 'pattern';
-          }
-        } else if (line.startsWith('#') || line.trim() === '') {
-          inContent = true;
-        } else if (inContent) {
-          contentLines.push(line);
+    for (const line of lines) {
+      if (line.startsWith('# ')) {
+        title = line.substring(2);
+      } else if (line.toLowerCase().startsWith('domain:')) {
+        domain = line.split(':', 2)[1]?.trim() || 'default';
+      } else if (line.toLowerCase().startsWith('tags:')) {
+        tags = line.split(':', 2)[1]?.trim().split(',').map(t => t.trim()) || [];
+      } else if (line.toLowerCase().startsWith('type:')) {
+        const typeValue = line.split(':', 2)[1]?.trim().toLowerCase();
+        if (['learning', 'mistake', 'decision', 'pattern'].includes(typeValue)) {
+          type = typeValue as 'learning' | 'mistake' | 'decision' | 'pattern';
         }
-      }
-
-      if (title && contentLines.length > 0) {
-        memories.push({
-          type,
-          title,
-          content: contentLines.join('\n'),
-          domain,
-          tags
-        });
+      } else if (line.trim() !== '' && !line.startsWith('---')) {
+        contentLines.push(line);
       }
     }
 
-    return memories;
+    if (title && contentLines.length > 0) {
+      return [{
+        type,
+        title,
+        content: contentLines.join('\n'),
+        domain,
+        tags
+      }];
+    }
+
+    return [];
   };
 
   if (!isOpen) return null;
@@ -116,13 +105,27 @@ export const MemoryModal: React.FC<Props> = ({ isOpen, onClose, onInject }) => {
                     ))}
                   </div>
                   <button
-                    onClick={() => {
-                      onInject(memory);
-                      onClose();
+                    onClick={async () => {
+                      setInjecting(true);
+                      try {
+                        await onInject(memory);
+                        setInjectedMemories(prev => new Set(prev).add(memory.title));
+                      } catch (error) {
+                        console.error('Injection failed:', error);
+                      } finally {
+                        setInjecting(false);
+                      }
                     }}
-                    className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs"
+                    disabled={injectedMemories.has(memory.title) || injecting}
+                    className={`px-3 py-1 rounded text-xs ${
+                      injectedMemories.has(memory.title)
+                        ? 'bg-green-600 text-white cursor-not-allowed'
+                        : injecting
+                        ? 'bg-zinc-600 text-zinc-400 cursor-not-allowed'
+                        : 'bg-blue-600 hover:bg-blue-700 text-white'
+                    }`}
                   >
-                    Inject
+                    {injectedMemories.has(memory.title) ? 'Injected' : injecting ? 'Injecting...' : 'Inject'}
                   </button>
                 </div>
               </div>

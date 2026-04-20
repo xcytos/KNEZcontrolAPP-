@@ -1,0 +1,127 @@
+{
+  "version": "1.0",
+  "title": "KNEZ Architecture Q&A System",
+  "description": "Question-answer system for KNEZ architecture understanding",
+  "categories": [
+    {
+      "name": "Architecture Overview",
+      "questions": [
+        {
+          "question": "What are the 10 KNEZ architecture layers?",
+          "answer": "The 10 KNEZ layers are: 1) Observability Layer, 2) Governance & Control Layer, 3) Cognitive & Intelligence Layer, 4) Infrastructure & System Layer, 5) MCP Integration Layer, 6) Tool Execution Layer, 7) Agent Runtime Layer, 8) Chat & Communication Layer, 9) Memory & Knowledge Layer, 10) Data Processing Layer.",
+          "tags": ["architecture", "layers", "overview"]
+        },
+        {
+          "question": "What is the purpose of the Observability Layer?",
+          "answer": "The Observability Layer provides comprehensive monitoring, logging, and debugging capabilities across the entire KNEZ system. It includes components like KnezEventsPanel, LogsPanel, DebugPanel, and various analytics services to track system behavior and performance.",
+          "tags": ["observability", "monitoring", "debugging"]
+        },
+        {
+          "question": "How does the Agent Runtime Layer work?",
+          "answer": "The Agent Runtime Layer is the central brain for autonomous agent execution. It uses an AgentOrchestrator to manage the agent loop, which includes detecting tool intent, calling models for decisions, executing tools with retry logic, and generating final answers. Key components include AgentLoopService, LoopController, RetryStrategyEngine, and SecurityLayer.",
+          "tags": ["agent", "runtime", "orchestration"]
+        }
+      ]
+    },
+    {
+      "name": "MCP Integration",
+      "questions": [
+        {
+          "question": "What is MCP in the KNEZ context?",
+          "answer": "MCP (Model Context Protocol) is a standardized protocol for connecting AI models to external tools and data sources. KNEZ implements multiple MCP client types (HTTP, Stdio, Rust, Builtin) to communicate with different MCP servers, managed by the McpOrchestrator.",
+          "tags": ["mcp", "protocol", "integration"]
+        },
+        {
+          "question": "What MCP client types does KNEZ support?",
+          "answer": "KNEZ supports four MCP client types: McpBuiltinClient (for local tools), McpHttpClient (for remote HTTP-based servers), McpStdioClient (for process-based communication), and McpRustClient (for native Rust integration via Tauri).",
+          "tags": ["mcp", "clients", "types"]
+        },
+        {
+          "question": "How does tool execution work in KNEZ?",
+          "answer": "Tool execution is managed by the ToolExecutionService, which uses the McpOrchestrator to route tool calls to the appropriate MCP client. Tools are registered in the ToolExposureService catalog, validated by the SecurityLayer, and executed with timeout handling and retry logic in the ExecutionSandbox.",
+          "tags": ["tools", "execution", "mcp"]
+        }
+      ]
+    },
+    {
+      "name": "Memory System",
+      "questions": [
+        {
+          "question": "What is event sourcing in KNEZ?",
+          "answer": "Event sourcing is a pattern where state changes are stored as a sequence of immutable events. KNEZ's MemoryEventSourcingService stores memory operations as events (MEMORY_CREATED, MEMORY_UPDATED, etc.) in an append-only log. State is reconstructed by replaying events, enabling temporal queries and complete audit trails.",
+          "tags": ["memory", "event-sourcing", "events"]
+        },
+        {
+          "question": "How does multi-level caching work in KNEZ?",
+          "answer": "KNEZ uses a three-level cache hierarchy: L1 (in-memory, fastest, smallest), L2 (IndexedDB, medium speed, medium capacity), and L3 (SQLite, slowest, largest). The MemoryMultiLevelCacheService checks each layer in sequence (L1 → L2 → L3 → source) to optimize performance while reducing database load.",
+          "tags": ["memory", "caching", "performance"]
+        },
+        {
+          "question": "What memory services does KNEZ provide?",
+          "answer": "KNEZ provides several memory services: MemoryEventSourcingService (event log), MemoryVectorSearchService (semantic search), MemoryKnowledgeGraphService (relationship tracking), MemoryCompressionService (compression), MemoryMultiLevelCacheService (caching), MemoryBackupService (backup/restore), and MemoryLoaderService (file-based injection).",
+          "tags": ["memory", "services", "components"]
+        }
+      ]
+    },
+    {
+      "name": "Agent Patterns",
+      "questions": [
+        {
+          "question": "What is the Agent Loop pattern in KNEZ?",
+          "answer": "The Agent Loop pattern is a control loop where the AgentOrchestrator iteratively: 1) Initializes context, 2) Detects tool intent (bypassing model if possible), 3) Calls model for decision, 4) Parses tool call, 5) Validates with SecurityLayer, 6) Executes tool with retry logic, 7) Normalizes result, 8) Updates context, 9) Checks stop conditions, 10) Repeats or generates final answer.",
+          "tags": ["agent", "loop", "pattern"]
+        },
+        {
+          "question": "What is intent detection in KNEZ?",
+          "answer": "Intent detection bypasses the model for clear, deterministic actions by pattern-matching natural language. Implemented in AgentOrchestrator.detectToolIntent(), it detects patterns like navigation ('navigate to'), clicking ('click button'), typing ('type text in field'), and screenshots, enabling faster execution without model calls.",
+          "tags": ["agent", "intent", "detection"]
+        },
+        {
+          "question": "How does retry strategy work in KNEZ?",
+          "answer": "The RetryStrategyEngine classifies failures (selector_not_found, navigation_failed, timeout, invalid_args) and determines retry strategies. It decides whether to retry, calculates delay (exponential backoff), and can refine arguments to fix common issues. Each tool execution attempt has a maximum retry limit.",
+          "tags": ["agent", "retry", "error-handling"]
+        }
+      ]
+    },
+    {
+      "name": "Governance & Security",
+      "questions": [
+        {
+          "question": "What is the purpose of the Governance Layer?",
+          "answer": "The Governance Layer enforces policies and manages approval workflows. Components like GovernanceService enforce rules, ApprovalPanel manages approval requests for sensitive operations, and AuditModal provides audit trails. It implements phase-based restrictions (READ_ONLY vs READ_WRITE) to control system autonomy.",
+          "tags": ["governance", "policy", "control"]
+        },
+        {
+          "question": "How does the Security Layer work?",
+          "answer": "The SecurityLayer validates tool calls before execution by checking tool permissions, sanitizing arguments, enforcing resource limits, and detecting dangerous operations. It blocks unauthorized actions, protects system resources, and logs security events for audit trails.",
+          "tags": ["security", "validation", "protection"]
+        },
+        {
+          "question": "What is drift detection in KNEZ?",
+          "answer": "Drift detection monitors system behavior over time to detect deviations from expected patterns. The DriftVisualizer shows three drift dimensions: scope drift (unplanned task expansion), rule drift (deviation from rules), and focus drift (loss of primary focus). It triggers challenge events for mitigation.",
+          "tags": ["drift", "monitoring", "quality"]
+        }
+      ]
+    },
+    {
+      "name": "Data Processing",
+      "questions": [
+        {
+          "question": "What is context compression in KNEZ?",
+          "answer": "Context compression reduces token usage while preserving relevant information. The ContextCompressionEngine applies strategies like removing redundant information, summarizing long content, prioritizing recent/relevant data, and using structured formats. DOMAwarenessInjector adds page structure awareness for web context.",
+          "tags": ["context", "compression", "optimization"]
+        },
+        {
+          "question": "How does session management work in KNEZ?",
+          "answer": "Session management is handled by SessionController (lifecycle), SessionDatabase (storage via SQLite and IndexedDB), and PersistenceService (abstraction layer). Sessions support creation, deletion, switching, and lineage tracking via LineagePanel for fork/resume visualization.",
+          "tags": ["session", "management", "storage"]
+        },
+        {
+          "question": "What data extraction capabilities does KNEZ have?",
+          "answer": "KNEZ provides data extraction via ExtractionPanel (UI) and ContentExtractionHeuristics (logic). It uses pattern matching and content parsing to extract structured data from unstructured sources, supporting various content types and extraction rules.",
+          "tags": ["extraction", "data", "parsing"]
+        }
+      ]
+    }
+  ]
+}
