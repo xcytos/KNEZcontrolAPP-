@@ -154,7 +154,7 @@ const MessageItemInner: React.FC<{
           <div className="text-[10px] font-mono text-zinc-500 mb-2 flex items-center gap-2">
             <span className="text-zinc-400">▶</span>
             <span>Execution Cycle</span>
-            {msg.toolCall.groupingId && (
+            {msg.toolCall?.groupingId && (
               <span className="text-zinc-600">#{msg.toolCall.groupingId.slice(-4)}</span>
             )}
           </div>
@@ -221,8 +221,8 @@ const MessageItemInner: React.FC<{
             )}
             {/* Check if this is a browser_navigate with parsed result */}
             {(() => {
-              const isBrowserNavigate = /browser_navigate$/.test(msg.toolCall.tool);
-              const parsedResult = msg.toolCall.result && typeof msg.toolCall.result === 'object' && (msg.toolCall.result.page_url || msg.toolCall.result.title);
+              const isBrowserNavigate = msg.toolCall?.tool && /browser_navigate$/.test(msg.toolCall.tool);
+              const parsedResult = msg.toolCall?.result && typeof msg.toolCall.result === 'object' && (msg.toolCall.result.page_url || msg.toolCall.result.title);
 
               if (isBrowserNavigate && parsedResult) {
                 // Structured UI for browser_navigate
@@ -234,10 +234,10 @@ const MessageItemInner: React.FC<{
                     >
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-mono text-zinc-200">
-                          {msg.toolCall.tool.replace(/^[^_]+__/, '')}
+                          {msg.toolCall?.tool?.replace(/^[^_]+__/, '') || 'Unknown Tool'}
                         </span>
                         <span className="text-[10px] text-green-400">
-                          → {msg.toolCall.status === "succeeded" || msg.toolCall.status === "completed" ? "success" : msg.toolCall.status}
+                          → {msg.toolCall?.status === "succeeded" || msg.toolCall?.status === "completed" ? "success" : msg.toolCall?.status || 'unknown'}
                         </span>
                         {parsedResult.page_url && (
                           <span className="text-[10px] text-zinc-400 truncate max-w-[300px]">

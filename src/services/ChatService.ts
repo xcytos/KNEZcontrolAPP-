@@ -1109,12 +1109,45 @@ export class ChatService {
     const timeoutConfig = getTimeoutConfig(toolName);
     const adaptiveTimeout = adaptiveTimeoutManager.getAdaptiveTimeout(toolName, timeoutConfig);
 
-    const exec = await toolExecutionService.executeNamespacedTool(toolName, input.args, {
-      timeoutMs: adaptiveTimeout,
-      traceId: input.traceId,
-      toolCallId: input.toolCallId,
-      correlationId: input.assistantId
-    });
+    let exec;
+    try {
+      exec = await toolExecutionService.executeNamespacedTool(toolName, input.args, {
+        timeoutMs: adaptiveTimeout,
+        traceId: input.traceId,
+        toolCallId: input.toolCallId,
+        correlationId: input.assistantId
+      });
+    } catch (error) {
+      logger.error("mcp_loop", "tool_execution_unexpected_error", {
+        traceId: input.traceId,
+        toolCallId: input.toolCallId,
+        tool: toolName,
+        error: String(error)
+      });
+      return {
+        ok: false,
+        payload: { ok: false, error: { code: "tool_execution_error", message: String(error) } },
+        errorMsg: `tool_execution_error:${String(error)}`,
+        errorCode: "tool_execution_error",
+        durationMs: Math.round(performance.now() - startedAt)
+      };
+    }
+
+    if (!exec || !exec.tool) {
+      logger.error("mcp_loop", "tool_execution_invalid_response", {
+        traceId: input.traceId,
+        toolCallId: input.toolCallId,
+        tool: toolName
+      });
+      return {
+        ok: false,
+        payload: { ok: false, error: { code: "tool_execution_invalid_response", message: "Tool execution returned invalid response" } },
+        errorMsg: "tool_execution_invalid_response:Tool execution returned invalid response",
+        errorCode: "tool_execution_invalid_response",
+        durationMs: Math.round(performance.now() - startedAt)
+      };
+    }
+
     const serverId = exec.tool.serverId;
     const originalName = exec.tool.originalName;
     const runtime = serverId ? mcpOrchestrator.getServer(serverId) : null;
@@ -1169,7 +1202,8 @@ export class ChatService {
       };
     }
 
-    const errorMsg = `${exec.error.code}:${exec.error.message}`;
+    const errorMsg = exec.error ? `${exec.error.code}:${exec.error.message}` : "tool_execution_failed:Unknown error";
+    const errorCode = exec.error?.code ?? "tool_execution_failed";
     // P5.2 T5: Trigger TOOL_END event
     if (this.sessionId === input.sessionId) {
       this.setPhase("TOOL_END", input.assistantId);
@@ -1188,7 +1222,7 @@ export class ChatService {
         generation: runtime?.generation ?? null,
         duration_ms: durationMs,
         durationMs,
-        error_code: exec.error.code,
+        error_code: errorCode,
         status: exec.kind === "denied" ? "denied" : "failed",
         correlation_id: input.assistantId
       },
@@ -1204,7 +1238,7 @@ export class ChatService {
       framing: runtime?.framing ?? null,
       generation: runtime?.generation ?? null,
       durationMs,
-      errorCode: exec.error.code,
+      errorCode,
       status: exec.kind === "denied" ? "denied" : "failed",
       correlationId: input.assistantId
     });
@@ -1212,7 +1246,7 @@ export class ChatService {
       ok: false,
       payload: { ok: false, error: exec.error },
       errorMsg,
-      errorCode: exec.error.code,
+      errorCode,
       serverId,
       originalName,
       durationMs

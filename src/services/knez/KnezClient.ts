@@ -391,6 +391,16 @@ export class KnezClient {
         throw new AppError("KNEZ_HEALTH_FAILED", `Health check failed (${resp.status})`, { status: resp.status });
       }
       const data = (await resp.json()) as KnezHealthResponse;
+      // Validate response structure
+      if (!data || typeof data !== 'object') {
+        throw new AppError("KNEZ_FETCH_FAILED", "Health check returned invalid response (not an object)", {});
+      }
+      if (!Array.isArray(data.backends)) {
+        throw new AppError("KNEZ_FETCH_FAILED", "Health check returned invalid response (backends not an array)", {});
+      }
+      if (!data.status || typeof data.status !== 'string') {
+        throw new AppError("KNEZ_FETCH_FAILED", "Health check returned invalid response (status missing or invalid)", {});
+      }
       logger.debugThrottled("knez_health_ok", 180000, "knez_client", "Health check passed", { backends: data.backends.length });
       return data;
     } catch (e: any) {

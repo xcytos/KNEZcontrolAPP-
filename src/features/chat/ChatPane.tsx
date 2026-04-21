@@ -162,7 +162,8 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (historyOpen) setHistoryOpen(false);
+        if (debugPanelOpen) setDebugPanelOpen(false);
+        else if (historyOpen) setHistoryOpen(false);
         else if (auditOpen) setAuditOpen(false);
         else if (renameOpen) setRenameOpen(false);
         else if (headerMenuOpen) setHeaderMenuOpen(false);
@@ -194,10 +195,14 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
 
   useEffect(() => {
     if (!sessionId) return;
+    let mounted = true;
     sessionDatabase.getSession(sessionId).then(s => {
-      if (s) setSessionName(s.name);
-      else setSessionName(`Session ${sessionId.substring(0,6)}`);
+      if (mounted) {
+        if (s) setSessionName(s.name);
+        else setSessionName(`Session ${sessionId.substring(0,6)}`);
+      }
     });
+    return () => { mounted = false; };
   }, [sessionId]);
 
   const handleSend = async (e?: React.FormEvent) => {
