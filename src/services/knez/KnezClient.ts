@@ -933,6 +933,9 @@ export class KnezClient {
         throw new AppError("KNEZ_COMPLETION_FAILED", `${err.error}${err.reason ? `:${err.reason}` : ""}`);
       }
       const data = raw as ChatCompletionsFinal;
+      if (data?.model) {
+        logger.info("knez_client", "model_loaded", { model: data.model, sessionId });
+      }
       if (data?.model && options?.onMeta) {
         try { options.onMeta({ model: data.model }); } catch {}
       }
@@ -1069,6 +1072,9 @@ export class KnezClient {
           resp.headers.get("x-model") ??
           resp.headers.get("openai-model") ??
           resp.headers.get("x-openai-model");
+        if (hdrModel) {
+          logger.info("knez_client", "model_loaded", { model: hdrModel, sessionId });
+        }
         if (hdrModel && options?.onMeta) {
           try { options.onMeta({ model: hdrModel }); } catch {}
         }

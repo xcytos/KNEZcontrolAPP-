@@ -87,11 +87,6 @@
           "name": "exec",
           "cmd": "taskkill",
           "args": true
-        },
-        {
-          "name": "ollama",
-          "cmd": "ollama",
-          "args": true
         }
       ]
     },

@@ -77,8 +77,8 @@ export function useSystemOrchestrator(onReady?: () => void) {
       // Direct Rust spawn instead of PowerShell script
       setOutput((prev) => prev + "\n[Rust Spawn] Starting Ollama...");
 
-      // Start Ollama first
-      const ollamaCommand = Command.create("ollama", ["serve"]);
+      // Start Ollama first using cmd scope
+      const ollamaCommand = Command.create("cmd", ["/c", "ollama", "serve"]);
       ollamaCommand.on("error", (error) => {
         setOutput((prev) => prev + `\n[Ollama Error] ${error}`);
       });
