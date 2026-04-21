@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getChatMemorySyncService, MemoryCandidate, SyncAnalysisResult } from '../../services/ChatMemorySyncService';
+import { getChatMemorySyncService, MemoryCandidate, SyncAnalysisResult } from '../../services/chat/sync/ChatMemorySyncService';
 import { X, Check, RefreshCw, Database, Filter } from 'lucide-react';
 
 type Props = {

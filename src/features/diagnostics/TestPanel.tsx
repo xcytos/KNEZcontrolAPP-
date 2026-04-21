@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { testRunner, TestResult } from '../../services/TestRunner';
+import { testRunner, TestResult } from '../../services/testing/TestRunner';
 import { useStatus } from '../../contexts/useStatus';
 import { useSystemOrchestrator } from '../system/useSystemOrchestrator';
-import { clearTestSessions, getRecommendedFixes } from '../../services/Troubleshooter';
+import { clearTestSessions, getRecommendedFixes } from '../../services/utils/Troubleshooter';
 import { Button } from '../../components/ui/core/Button';
 import { Badge } from '../../components/ui/core/Badge';
 import { Card } from '../../components/ui/core/Card';

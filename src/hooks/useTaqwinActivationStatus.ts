@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { taqwinActivationService } from "../services/TaqwinActivationService";
+import { taqwinActivationService } from "../services/infrastructure/activation/TaqwinActivationService";
 
 export function useTaqwinActivationStatus() {
   const [status, setStatus] = useState(() => taqwinActivationService.getStatus());

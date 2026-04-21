@@ -22,29 +22,29 @@ import { ExtractionPanel } from './features/extraction/ExtractionPanel';
 import { TestPanel } from './features/diagnostics/TestPanel';
 import { SkillsView } from './features/skills/SkillsView';
 import { PresenceState, McpRegistrySnapshot } from './domain/DataContracts';
-import { knezClient } from './services/KnezClient';
+import { knezClient } from './services/knez/KnezClient';
 import { chatService } from './services/ChatService';
-import { sessionController } from './services/SessionController';
-import { getKeepAliveEnabled } from './services/Preferences';
+import { sessionController } from './services/session/SessionController';
+import { getKeepAliveEnabled } from './services/infrastructure/config/Preferences';
 import { useSystemOrchestrator } from './features/system/useSystemOrchestrator';
 import { ToastProvider } from './components/ui/Toast';
 import { StatusProvider } from './contexts/StatusProvider';
 import { useStatus } from './contexts/useStatus';
 import { setObserverState } from './utils/observer';
-import { tabErrorStore } from './services/TabErrorStore';
+import { tabErrorStore } from './services/infrastructure/error/TabErrorStore';
 import './App.css';
 
 import { CommandPalette } from './components/ui/CommandPalette';
 import { FloatingConsole } from './components/ui/FloatingConsole';
 import { E2EBanner } from './components/ui/E2EBanner';
-import { taqwinActivationService } from './services/TaqwinActivationService';
+import { taqwinActivationService } from './services/infrastructure/activation/TaqwinActivationService';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { ThemeProvider } from './contexts/ThemeContext';
-import { analytics } from './services/AnalyticsService';
-import { logger } from './services/LogService';
+import { analytics } from './services/analytics/AnalyticsService';
+import { logger } from './services/utils/LogService';
 import { features } from './config/features';
 import { initMcpBoot } from './mcp/mcpBoot';
-import { getStaticMemoryLoader } from './services/StaticMemoryLoader';
+import { getStaticMemoryLoader } from './services/memory/StaticMemoryLoader';
 
 // ...
 
@@ -97,7 +97,7 @@ function AppContent() {
       if ((e.metaKey || e.ctrlKey) && e.key === 'r') {
         e.preventDefault();
         // Resume last session quick action
-        import('./services/PersistenceService').then(async ({ persistenceService }) => {
+        import('./services/infrastructure/persistence/PersistenceService').then(async ({ persistenceService }) => {
           const sessions = await persistenceService.listSessions()
           const last = sessions[0]
           if (last) {

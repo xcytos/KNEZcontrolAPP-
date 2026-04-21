@@ -773,7 +773,8 @@ export const McpRegistryView: React.FC<{
       for (const [key, val] of Object.entries(extracted.servers ?? {})) {
         const id = String(key ?? "").trim();
         if (!id) continue;
-        serverMap[id] = { ...(val as any), id };
+        // Ensure enabled flag is set to true by default when adding servers
+        serverMap[id] = { ...(val as any), id, enabled: (val as any).enabled !== false };
       }
 
       const validationErrors: string[] = [];

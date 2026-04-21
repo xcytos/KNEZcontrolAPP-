@@ -21,7 +21,7 @@ export interface LoopConfig {
 
 export class LoopController {
   private config: LoopConfig = {
-    maxSteps: 5,
+    maxSteps: 10,
     maxConsecutiveFailures: 3,
     maxSameToolRepeats: 2,
     forceAnswerTimeoutMs: 5000

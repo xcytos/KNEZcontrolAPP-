@@ -1,28 +1,34 @@
 
-import { knezClient } from "./KnezClient";
-import { extractionService } from "./ExtractionService";
-import { persistenceService } from "./PersistenceService";
+import { knezClient } from "./knez/KnezClient";
+import { extractionService } from "./utils/ExtractionService";
+import { persistenceService } from "./infrastructure/persistence/PersistenceService";
 import { ChatMessage, ToolCallMessage, AssistantMessage, Block, MessageState } from "../domain/DataContracts";
 import { AppError, asErrorMessage } from "../domain/Errors";
 import { observe } from "../utils/observer";
-import { sessionDatabase } from "./SessionDatabase";
-import { sessionController } from "./SessionController";
-import { logger } from "./LogService";
-import { tabErrorStore } from "./TabErrorStore";
+import { sessionDatabase } from "./session/SessionDatabase";
+import { sessionController } from "./session/SessionController";
+import { logger } from "./utils/LogService";
+import { tabErrorStore } from "./infrastructure/error/TabErrorStore";
 import { selectPrimaryBackend } from "../utils/health";
-import { toolExposureService } from "./ToolExposureService";
+import { toolExposureService } from "./mcp/ToolExposureService";
 import { mcpOrchestrator } from "../mcp/McpOrchestrator";
-import { toolExecutionService } from "./ToolExecutionService";
-import { memoryInjectionService } from "./MemoryInjectionService";
-import { governanceService } from "./GovernanceService";
-import { interpretOutput, canClassifyEarly, OutputClass } from "./OutputInterpreter";
-import { validateToolResult } from "./ToolResultValidator";
-import { getTimeoutConfig, adaptiveTimeoutManager } from "./TimeoutConfig";
+import { toolExecutionService } from "./mcp/ToolExecutionService";
+import { memoryInjectionService } from "./memory/MemoryInjectionService";
+import { governanceService } from "./governance/GovernanceService";
+import { interpretOutput, canClassifyEarly, OutputClass } from "./utils/OutputInterpreter";
+import { validateToolResult } from "./mcp/ToolResultValidator";
+import { getTimeoutConfig, adaptiveTimeoutManager } from "./utils/TimeoutConfig";
 import { agentLoopService } from "./agent/AgentLoopService";
 import { failureClassifier } from "./agent/FailureClassifier";
 import { agentOrchestrator } from "./agent/AgentOrchestrator";
-import { getMemoryEventSourcingService } from "./MemoryEventSourcingService";
-import { StreamController } from "./StreamController";
+import { getMemoryEventSourcingService } from "./memory/storage/MemoryEventSourcingService";
+import { StreamController } from "./chat/core/StreamController";
+// NEW: Modular chat core imports
+import { MessageStore } from "./chat/core/MessageStore";
+import { RequestController } from "./chat/core/RequestController";
+import { PhaseManager, ChatPhase as ModularChatPhase } from "./chat/core/PhaseManager";
+import { ResponseAssembler } from "./chat/core/ResponseAssembler";
+import { ToolExecutionBridge } from "./chat/tools/ToolExecutionBridge";
 
 export type ChatPhase =
   | "idle"
@@ -43,17 +49,8 @@ export type EventType =
   | "STREAM_END"
   | "ERROR";
 
-// ADD 6: Strict phase transition rules
-const PHASE_TRANSITIONS: Record<ChatPhase, ChatPhase[]> = {
-  idle: ["sending"],
-  sending: ["thinking", "error"],
-  thinking: ["tool_running", "streaming", "error"],
-  tool_running: ["thinking", "streaming", "error"],
-  streaming: ["finalizing", "error"],
-  finalizing: ["done", "error"],
-  done: ["idle"],
-  error: ["idle"]
-};
+// NOTE: Phase transition validation now handled by PhaseManager
+// PHASE_TRANSITIONS constant removed as it's no longer used
 
 export interface ChatState {
   messages: ChatMessage[];
@@ -100,26 +97,71 @@ export class ChatService {
   // ADD 5: Single Active Request Lock
   private activeRequestLock: { sessionId: string; requestId: string } | null = null;
 
+  // PART 2: Single Stream Enforcement - Track active stream to prevent duplicates
+  private activeStream: { streamId: string; assistantId: string; requestId: string } | null = null;
+
+  // PART 5: Remove Multiple Stream Triggers - Track if stream has started to disable fallback
+  private streamStarted: boolean = false;
+
   // ADD 2: Stream Controller
   private streamController = new StreamController();
 
+  // NEW: Modular chat core controllers
+  private messageStore: MessageStore | null = null;
+  private requestController: RequestController | null = null;
+  private phaseManager: PhaseManager | null = null;
+  // NOTE: responseAssembler intentionally unused - deferred until block-based message architecture migration
+  // @ts-ignore - Intentionally unused (deferred integration)
+  private responseAssembler: ResponseAssembler | null = null;
+  private toolExecutionBridge: ToolExecutionBridge = new ToolExecutionBridge();
+
   private async acquireRequestLock(sessionId: string, requestId: string): Promise<boolean> {
-    if (this.activeRequestLock) {
-      logger.warn("chat_service", "request_rejected_active", { 
-        activeSession: this.activeRequestLock.sessionId,
-        activeRequest: this.activeRequestLock.requestId,
-        newSession: sessionId,
-        newRequest: requestId
-      });
-      return false; // Reject overlapping requests
+    // NEW: Use RequestController for request lifecycle management
+    if (this.requestController) {
+      try {
+        this.requestController.startRequest(requestId);
+        return true;
+      } catch (error) {
+        logger.warn("chat_service", "request_rejected_active", { 
+          sessionId,
+          requestId,
+          error: String(error)
+        });
+        return false;
+      }
+    } else {
+      // Fallback to old method
+      if (this.activeRequestLock) {
+        logger.warn("chat_service", "request_rejected_active", { 
+          activeSession: this.activeRequestLock.sessionId,
+          activeRequest: this.activeRequestLock.requestId,
+          newSession: sessionId,
+          newRequest: requestId
+        });
+        return false;
+      }
+      this.activeRequestLock = { sessionId, requestId };
+      return true;
     }
-    this.activeRequestLock = { sessionId, requestId };
-    return true;
   }
 
   private releaseRequestLock(sessionId: string, requestId: string): void {
-    if (this.activeRequestLock?.sessionId === sessionId && this.activeRequestLock?.requestId === requestId) {
-      this.activeRequestLock = null;
+    // NEW: Use RequestController for request lifecycle management
+    if (this.requestController) {
+      try {
+        this.requestController.endRequest(requestId);
+      } catch (error) {
+        logger.warn("chat_service", "request_release_failed", { 
+          sessionId,
+          requestId,
+          error: String(error)
+        });
+      }
+    } else {
+      // Fallback to old method
+      if (this.activeRequestLock?.sessionId === sessionId && this.activeRequestLock?.requestId === requestId) {
+        this.activeRequestLock = null;
+      }
     }
   }
   private static get MCP_ENABLED(): boolean {
@@ -159,6 +201,12 @@ export class ChatService {
 
   constructor() {
     this.sessionId = sessionController.getSessionId();
+    // NEW: Initialize modular chat core controllers
+    this.messageStore = new MessageStore(this.sessionId);
+    this.requestController = new RequestController(this.sessionId);
+    this.phaseManager = new PhaseManager(this.sessionId);
+    this.responseAssembler = new ResponseAssembler("");
+    
     void this.load(this.sessionId);
     sessionController.subscribe(({ sessionId }) => {
       const previousSessionId = this.sessionId;
@@ -167,6 +215,10 @@ export class ChatService {
         void this.forceStopForSession(previousSessionId);
       }
       this.sessionId = sessionId;
+      // NEW: Reinitialize modular controllers for new session
+      this.messageStore = new MessageStore(this.sessionId);
+      this.requestController = new RequestController(this.sessionId);
+      this.phaseManager = new PhaseManager(this.sessionId);
       // P5.2 T12: Reset to idle on session change for state isolation
       this.resetToIdle();
       const stored = localStorage.getItem(`chat_search_enabled:${sessionId}`);
@@ -190,7 +242,9 @@ export class ChatService {
   }
 
   private notify() {
-    if (this.state.phase === "streaming") {
+    // NEW: Use PhaseManager to check phase (with fallback to state.phase for backward compatibility)
+    const currentPhase = this.phaseManager?.getPhase() as ChatPhase ?? this.state.phase;
+    if (currentPhase === "streaming") {
       if (!this._pendingNotify) {
         this._pendingNotify = true;
         this._notifyTimer = window.setTimeout(() => {
@@ -209,9 +263,26 @@ export class ChatService {
     }
   }
 
-  // P5.2 T2: Event-driven state engine
-  // ADD 6: Updated to use new phase names with strict transition validation
-  private setPhase(event: EventType): void {
+  // PART 1: Tolerant event-driven state engine
+  // Allows re-entrant transitions, logs instead of throws on invalid transitions
+  // PART 4: Added ownership validation via requestId, streamId, or assistantId
+  private setPhase(event: EventType, ownershipId?: string): void {
+    // PART 4: Validate ownership - ignore updates from stale requests
+    // Accept requestId, streamId, or assistantId as ownership identifier
+    if (ownershipId && this.activeRequestLock) {
+      // Check if ownershipId matches the active request's requestId
+      // For streaming contexts, ownershipId might be streamId or assistantId
+      // We validate by checking if the current stream matches
+      if (this.state.currentStreamId && ownershipId !== this.state.currentStreamId && ownershipId !== this.activeRequestLock.requestId) {
+        logger.warn("chat_service", "phase_transition_stale_ownership", {
+          event,
+          currentStreamId: this.state.currentStreamId,
+          ownershipId
+        });
+        return;
+      }
+    }
+
     const phaseTransition: Record<EventType, ChatPhase> = {
       USER_SEND: "sending",
       MODEL_CALL_START: "thinking",
@@ -224,23 +295,18 @@ export class ChatService {
 
     const newPhase = phaseTransition[event];
     if (!newPhase) {
-      logger.warn("chat_service", "invalid_phase_transition", { event });
+      logger.warn("chat_service", "phase_transition_no_mapping", { event });
       return;
     }
 
-    // ADD 6: Validate phase transition
     const currentPhase = this.state.phase;
-    const allowedTransitions = PHASE_TRANSITIONS[currentPhase];
-    if (!allowedTransitions.includes(newPhase)) {
-      logger.error("chat_service", "invalid_phase_transition", { 
-        from: currentPhase, 
-        to: newPhase,
-        allowed: allowedTransitions,
-        event
-      });
-      throw new Error(`Invalid phase transition: ${currentPhase} → ${newPhase}`);
+
+    // NEW: Use PhaseManager for phase transitions (handles validation)
+    if (this.phaseManager) {
+      this.phaseManager.setPhase(newPhase as ModularChatPhase);
     }
 
+    // Keep ChatService state in sync for backward compatibility
     this.state.phase = newPhase;
 
     // Response time measurement (P5.2 T10)
@@ -249,9 +315,10 @@ export class ChatService {
     }
     if (event === "STREAM_END" || event === "ERROR") {
       this.state.responseEnd = Date.now();
-      // ADD 6: Auto-reset to idle after finalizing or error
+      // Auto-reset to idle after finalizing or error
       setTimeout(() => {
-        if (this.state.phase === "done" || this.state.phase === "error") {
+        const currentPhase = this.phaseManager?.getPhase() as ChatPhase ?? this.state.phase;
+        if (currentPhase === "done" || currentPhase === "error") {
           this.resetToIdle();
         }
       }, 150);
@@ -260,7 +327,8 @@ export class ChatService {
     logger.info("chat_service", "phase_transition", {
       event,
       from: currentPhase,
-      to: newPhase
+      to: newPhase,
+      ownershipId
     });
 
     this.notify();
@@ -268,6 +336,11 @@ export class ChatService {
 
   // Helper to reset to idle
   private resetToIdle(): void {
+    // NEW: Use PhaseManager to reset to idle
+    if (this.phaseManager) {
+      this.phaseManager.setPhase("idle" as ModularChatPhase);
+    }
+    // Keep ChatService state in sync for backward compatibility
     this.state.phase = "idle";
     this.state.currentStreamId = null;
     this.state.responseStart = undefined;
@@ -329,17 +402,26 @@ export class ChatService {
   }
 
   async load(sessionId: string) {
-    const loaded = await persistenceService.loadChat(sessionId);
-    const loadedAssistantMessages = await sessionDatabase.loadAssistantMessages(sessionId);
-    if (loaded && loaded.length > 0) {
-      this.state.messages = loaded;
-      this.state.assistantMessages = loadedAssistantMessages;
-      this.state.sequenceCounter = Math.max(...loaded.map(m => m.sequenceNumber ?? 0), ...loadedAssistantMessages.map(m => m.sequenceNumber ?? 0)) + 1;
+    // NEW: Use MessageStore for loading messages
+    if (this.messageStore) {
+      await this.messageStore.load();
+      // Sync ChatService state from MessageStore for backward compatibility
+      this.state.messages = this.messageStore.getAllMessages();
+      this.state.assistantMessages = this.messageStore.getAllAssistantMessages();
     } else {
-      // Clear state for new session
-      this.state.messages = [];
-      this.state.assistantMessages = [];
-      this.state.sequenceCounter = 0;
+      // Fallback to old method if MessageStore not initialized
+      const loaded = await persistenceService.loadChat(sessionId);
+      const loadedAssistantMessages = await sessionDatabase.loadAssistantMessages(sessionId);
+      if (loaded && loaded.length > 0) {
+        this.state.messages = loaded;
+        this.state.assistantMessages = loadedAssistantMessages;
+        this.state.sequenceCounter = Math.max(...loaded.map(m => m.sequenceNumber ?? 0), ...loadedAssistantMessages.map(m => m.sequenceNumber ?? 0)) + 1;
+      } else {
+        // Clear state for new session
+        this.state.messages = [];
+        this.state.assistantMessages = [];
+        this.state.sequenceCounter = 0;
+      }
     }
     this.notify();
   }
@@ -377,11 +459,21 @@ export class ChatService {
         correlationId: userId
       };
 
-      // Create AssistantMessage with blocks instead of regular ChatMessage
-      const assistantMsg = this.createAssistantMessage(this.sessionId, [], assistantId);
+      // NEW: Use MessageStore for message creation
+      let assistantMsg: AssistantMessage;
+      if (this.messageStore) {
+        this.messageStore.createMessage(userMsg);
+        assistantMsg = this.messageStore.createAssistantMessage(assistantId, []);
+        // Sync ChatService state from MessageStore for backward compatibility
+        this.state.messages = this.messageStore.getAllMessages();
+        this.state.assistantMessages = this.messageStore.getAllAssistantMessages();
+      } else {
+        // Fallback to old method
+        assistantMsg = this.createAssistantMessage(this.sessionId, [], assistantId);
+        this.state.messages = [...this.state.messages, userMsg];
+        this.state.assistantMessages = [...this.state.assistantMessages, assistantMsg];
+      }
 
-      this.state.messages = [...this.state.messages, userMsg];
-      this.state.assistantMessages = [...this.state.assistantMessages, assistantMsg];
       this.notify();
       observe("chat_send_attempt", { sessionId: this.sessionId, message: text });
       await this.ensureSessionExists(this.sessionId);
@@ -469,7 +561,16 @@ export class ChatService {
       correlationId: userId
     };
 
-    if (this.sessionId === sessionId) {
+    // NEW: Use MessageStore for message creation
+    if (this.sessionId === sessionId && this.messageStore) {
+      this.messageStore.createMessage(userMsg);
+      this.messageStore.createMessage(assistantMsg);
+      // Sync ChatService state from MessageStore for backward compatibility
+      this.state.messages = this.messageStore.getAllMessages();
+      this.state.assistantMessages = this.messageStore.getAllAssistantMessages();
+      this.notify();
+    } else if (this.sessionId === sessionId) {
+      // Fallback to old method
       this.state.messages = [...this.state.messages, userMsg, assistantMsg];
       this.notify();
     }
@@ -514,10 +615,13 @@ export class ChatService {
   // This method is available for direct tool calls outside the agent loop
   // @ts-ignore — intentionally retained as reference; never called
   private async executeToolAndInterpret(toolName: string, args: any): Promise<string> {
-    const result = await toolExecutionService.executeNamespacedTool(toolName, args, { timeoutMs: 30000 });
+    // NEW: Use ToolExecutionBridge for tool execution
+    const result = this.toolExecutionBridge ? 
+      await this.toolExecutionBridge.executeTool(toolName, args) :
+      await toolExecutionService.executeNamespacedTool(toolName, args, { timeoutMs: 30000 });
     
     if (!result.ok) {
-      throw new Error(`Tool execution failed: ${result.error.message}`);
+      throw new Error(`Tool execution failed: ${result.error}`);
     }
 
     // Return the result - the agent loop will handle interpretation
@@ -525,49 +629,100 @@ export class ChatService {
     return JSON.stringify(result.result);
   }
 
-  // ADD 7: Final Response Guarantee - ensure every request ends with FINAL state message
+  // PART 7: Final Response Guarantee - ensure every request ends with FINAL state message
   private async ensureFinalResponse(assistantId: string): Promise<void> {
-    const assistantMsg = this.state.assistantMessages.find(m => m.id === assistantId);
+    // PART 7: Check in state.messages first (main location for assistant messages)
+    const assistantMsg = this.state.messages.find(m => m.id === assistantId);
     if (!assistantMsg) {
-      logger.warn("chat_service", "ensure_final_response_assistant_not_found", { assistantId });
-      return;
+      // PART 7: CRITICAL ERROR - Assistant missing at finalization
+      // Instead of throwing, log and try to load from persistence
+      logger.error("chat_service", "finalization_assistant_not_found_loading_from_persistence", { assistantId, messageCount: this.state.messages.length });
+      
+      // Try to load the assistant message from persistence
+      try {
+        const sessionId = this.sessionId;
+        if (sessionId) {
+          const messages = await persistenceService.loadChat(sessionId);
+          const loadedAssistant = messages?.find(m => m.id === assistantId);
+          if (loadedAssistant) {
+            logger.info("chat_service", "finalization_assistant_loaded_from_persistence", { assistantId });
+            // Add to state.messages
+            this.state.messages = [...this.state.messages, loadedAssistant];
+          } else {
+            // Create a fallback assistant message
+            logger.warn("chat_service", "finalization_creating_fallback_assistant", { assistantId });
+            const fallbackAssistant: ChatMessage = {
+              id: assistantId,
+              sessionId,
+              from: "knez",
+              createdAt: new Date().toISOString(),
+              deliveryStatus: "delivered",
+              isPartial: false,
+              refusal: true,
+              text: "Unable to generate response. Please try again."
+            };
+            this.state.messages = [...this.state.messages, fallbackAssistant];
+            await sessionDatabase.updateMessage(assistantId, fallbackAssistant);
+          }
+        }
+      } catch (err) {
+        logger.error("chat_service", "finalization_failed_to_load_from_persistence", { assistantId, error: String(err) });
+        // Create fallback assistant message
+        const fallbackAssistant: ChatMessage = {
+          id: assistantId,
+          sessionId: this.sessionId,
+          from: "knez",
+          createdAt: new Date().toISOString(),
+          deliveryStatus: "delivered",
+          isPartial: false,
+          refusal: true,
+          text: "Unable to generate response. Please try again."
+        };
+        this.state.messages = [...this.state.messages, fallbackAssistant];
+      }
+      
+      // Re-check after loading/creating
+      const reloadedAssistant = this.state.messages.find(m => m.id === assistantId);
+      if (!reloadedAssistant) {
+        logger.error("chat_service", "finalization_failed_assistant_still_missing", { assistantId });
+        return; // Cannot proceed
+      }
     }
 
-    // If message is already in FINAL state, nothing to do
-    if (assistantMsg.state === MessageState.FINAL || assistantMsg.state === MessageState.LOCKED) {
-      return;
-    }
-
-    // If message has content, finalize it
-    if (assistantMsg.blocks.length > 0) {
-      assistantMsg.state = MessageState.FINAL;
-      assistantMsg.finalizedAt = Date.now();
-      await sessionDatabase.updateAssistantMessage(assistantId, {
-        state: MessageState.FINAL,
-        finalizedAt: Date.now()
+    // PART 7: Ensure content is not empty - fallback if empty
+    const currentAssistant = this.state.messages.find(m => m.id === assistantId);
+    if (!currentAssistant) return;
+    
+    if (!currentAssistant.text || currentAssistant.text.trim() === "") {
+      logger.warn("chat_service", "finalization_empty_content_fallback", { assistantId });
+      await sessionDatabase.updateMessage(assistantId, {
+        text: "Unable to generate response. Please try again.",
+        deliveryStatus: "delivered",
+        isPartial: false,
+        refusal: true,
+        metrics: { ...(currentAssistant.metrics as any), finishReason: "fallback" } as any
       });
-      logger.info("chat_service", "assistant_message_finalized", { assistantId, blockCount: assistantMsg.blocks.length });
+      this.state.messages = this.state.messages.map(m => 
+        m.id === assistantId 
+          ? { ...m, text: "Unable to generate response. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true }
+          : m
+      );
+      logger.info("chat_service", "finalization_fallback_applied", { assistantId });
     } else {
-      // No content - generate fallback
-      assistantMsg.state = MessageState.ERROR;
-      assistantMsg.finalizedAt = Date.now();
-      assistantMsg.blocks.push({ type: "text", content: "⚠️ No response generated. Please try again." });
-      await sessionDatabase.updateAssistantMessage(assistantId, {
-        state: MessageState.ERROR,
-        finalizedAt: Date.now(),
-        blocks: assistantMsg.blocks
-      });
-      logger.warn("chat_service", "assistant_message_fallback_generated", { assistantId });
+      logger.info("chat_service", "finalization_success", { assistantId, contentLength: currentAssistant.text.length });
     }
+    
     this.notify();
   }
 
   appendToMessage(messageId: string, text: string) {
+    // PART 4: Append Pipeline Hard Fix - MUST read from state.messages only
     const msgs = this.state.messages;
     const idx = msgs.findIndex((m) => m.id === messageId);
     if (idx === -1) {
-      logger.warn("chat_service", "append_message_not_found", { messageId });
-      return;
+      // PART 4: DO NOT silently fail - throw error to prevent data corruption
+      logger.error("chat_service", "append_message_missing_critical", { messageId, messageCount: msgs.length });
+      throw new Error(`Message missing during stream append: ${messageId}`);
     }
 
     // ADD 2: Validate stream ownership
@@ -578,11 +733,14 @@ export class ChatService {
     }
     const msg = msgs[idx];
     const isFirstToken = !msg.hasReceivedFirstToken;
+    const newText = (msg.text ?? "") + text;
     this.state.messages = msgs.map((m, i) =>
       i === idx
-        ? { ...m, text: (m.text ?? "") + text, hasReceivedFirstToken: true }
+        ? { ...m, text: newText, hasReceivedFirstToken: true }
         : m
     );
+    // PART 10: Log append success
+    logger.info("chat_service", "append_success", { messageId, textLength: text.length, totalLength: newText.length });
     // T5: Clear first-token watchdog on first token received
     if (isFirstToken) {
       const timer = (this as any).firstTokenTimer;
@@ -765,7 +923,7 @@ export class ChatService {
         return m;
       });
       if (this.sessionId === sessionId) {
-        this.setPhase("STREAM_END");
+        this.setPhase("STREAM_END", assistantId);
       }
     }
   }
@@ -778,7 +936,8 @@ export class ChatService {
 
   private async flushOutgoingQueue(forceContexts?: Record<string, string>) {
     if (this.queueFlushInFlight) return;
-    if (this.state.phase === "streaming") return;
+    const currentPhase = this.phaseManager?.getPhase() as ChatPhase ?? this.state.phase;
+    if (currentPhase === "streaming") return;
     this.queueFlushInFlight = true;
     try {
       const now = Date.now();
@@ -938,7 +1097,7 @@ export class ChatService {
     if (exec.ok) {
       // P5.2 T5: Trigger TOOL_END event on success
       if (this.sessionId === input.sessionId) {
-        this.setPhase("TOOL_END");
+        this.setPhase("TOOL_END", input.assistantId);
       }
 
       void this.tryEmit(
@@ -985,7 +1144,7 @@ export class ChatService {
     const errorMsg = `${exec.error.code}:${exec.error.message}`;
     // P5.2 T5: Trigger TOOL_END event
     if (this.sessionId === input.sessionId) {
-      this.setPhase("TOOL_END");
+      this.setPhase("TOOL_END", input.assistantId);
     }
 
     void this.tryEmit(
@@ -1111,11 +1270,11 @@ export class ChatService {
             // Persist to database
             void sessionDatabase.updateAssistantMessage(assistantId, { blocks: assistantMsg.blocks });
           }
-          this.setPhase("FIRST_TOKEN");
+          this.setPhase("FIRST_TOKEN", assistantId);
         }
       },
       onToolStart: (toolName, args) => {
-        this.setPhase("TOOL_START");
+        this.setPhase("TOOL_START", assistantId);
         const traceMessageId = `${assistantId}-tool-${Date.now()}`;
         currentToolMessageId = traceMessageId;
 
@@ -1128,7 +1287,7 @@ export class ChatService {
         });
       },
       onToolEnd: (toolName, result, success) => {
-        this.setPhase("TOOL_END");
+        this.setPhase("TOOL_END", assistantId);
         if (currentToolMessageId) {
           const finishedAt = new Date().toISOString();
           // Calculate execution time
@@ -1154,7 +1313,7 @@ export class ChatService {
       },
       onFinal: (output) => {
         finalOutput = output;
-        this.setPhase("STREAM_END");
+        this.setPhase("STREAM_END", assistantId);
         // Remove text blocks to prevent duplication with final block
         const assistantMsg = this.state.assistantMessages.find(m => m.id === assistantId);
         if (assistantMsg) {
@@ -1840,7 +1999,7 @@ export class ChatService {
         // P5.2 T3/T4: Trigger FIRST_TOKEN event on first chunk
         if (!firstTokenReceived && chunk.trim()) {
           firstTokenReceived = true;
-          this.setPhase("FIRST_TOKEN");
+          this.setPhase("FIRST_TOKEN", assistantId);
         }
 
         if (finalClass === null) {
@@ -1875,6 +2034,41 @@ export class ChatService {
     }
     logger.warn("output_interpreter", "final_answer_also_non_plain", { classification: finalClass, preview: finalBuffer.slice(0, 80) });
     return "⚠️ Unable to generate a final summary. Please try again.";
+  }
+
+  // PART 5: Controlled fallback generation - ensures proper phase transitions
+  private async generateFallbackResponse(sessionId: string, assistantId: string, id: string): Promise<void> {
+    logger.warn("chat_service", "fallback_triggered", { sessionId, assistantId });
+
+    // PART 5: Transition to finalizing before generating fallback
+    if (this.sessionId === sessionId) {
+      this.setPhase("STREAM_END", id);
+    }
+
+    const fallbackText = "Unable to generate response. Please try again.";
+
+    // PART 5: Commit fallback as assistant message
+    await sessionDatabase.updateMessage(assistantId, {
+      deliveryStatus: "delivered",
+      text: fallbackText,
+      isPartial: false,
+      refusal: true,
+      metrics: { finishReason: "fallback", responseTimeMs: Date.now() - (this.state.responseStart || Date.now()) } as any
+    });
+
+    await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered" });
+    await sessionDatabase.removeOutgoing(id);
+
+    if (this.sessionId === sessionId) {
+      this.state.messages = this.state.messages.map((m) => {
+        if (m.id === id) return { ...m, deliveryStatus: "delivered" };
+        if (m.id === assistantId) {
+          return { ...m, deliveryStatus: "delivered", text: fallbackText, isPartial: false, refusal: true };
+        }
+        return m;
+      });
+      this.notify();
+    }
   }
 
   private async generateRecoveryResponse(input: {
@@ -1973,7 +2167,7 @@ export class ChatService {
             return m;
           });
           // P5.2 T11: Set ERROR phase on health check failure
-          this.setPhase("ERROR");
+          this.setPhase("ERROR", id);
         }
         return;
       }
@@ -1998,7 +2192,7 @@ export class ChatService {
           return m;
         });
         // P5.2 T11: Set ERROR phase on health check exception
-        this.setPhase("ERROR");
+        this.setPhase("ERROR", id);
       }
       return;
     }
@@ -2035,7 +2229,6 @@ export class ChatService {
     const attempt = item.attempts + 1;
     await sessionDatabase.updateOutgoing(id, { status: "in_flight", attempts: attempt, lastError: undefined });
     await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered", deliveryError: undefined });
-    await sessionDatabase.updateMessage(`${id}-assistant`, { deliveryStatus: "pending", deliveryError: undefined, isPartial: true, refusal: false });
 
     const sessionId = item.sessionId;
     const messages = (await persistenceService.loadChat(sessionId)) ?? [];
@@ -2044,22 +2237,74 @@ export class ChatService {
     if (userIdx >= 0) {
       messages[userIdx] = { ...messages[userIdx], deliveryStatus: "delivered", deliveryError: undefined };
     }
-    const assistantIdx = messages.findIndex((m) => m.id === `${id}-assistant`);
-    if (assistantIdx >= 0) {
+    
+    // PART 1: Assistant Message Guarantee - Create assistant message IMMEDIATELY in state.messages
+    const assistantId = `${id}-assistant`;
+    const assistantIdx = messages.findIndex((m) => m.id === assistantId);
+    
+    // Create assistant message if it doesn't exist
+    if (assistantIdx < 0) {
+      const newAssistantMessage: ChatMessage = {
+        id: assistantId,
+        sessionId,
+        from: "knez",
+        createdAt: new Date().toISOString(),
+        deliveryStatus: "pending",
+        isPartial: true,
+        refusal: false,
+        text: ""
+      };
+      messages.push(newAssistantMessage);
+      // PART 1: Insert into persistence AFTER state.messages update
+      await sessionDatabase.updateMessage(assistantId, { deliveryStatus: "pending", isPartial: true, refusal: false, text: "" });
+      logger.info("chat_service", "assistant_created", { assistantId, sessionId });
+    } else {
       messages[assistantIdx] = { ...messages[assistantIdx], deliveryStatus: "pending", deliveryError: undefined, refusal: false, isPartial: true, text: "" };
+      await sessionDatabase.updateMessage(assistantId, { deliveryStatus: "pending", isPartial: true, refusal: false, text: "" });
     }
 
+    // PART 1: Insert into in-memory state.messages IMMEDIATELY
     if (this.sessionId === sessionId) {
-      this.state.messages = messages;
+      // PART 8: Merge instead of blind overwrite to prevent race conditions
+      // Merge: prefer loaded messages but keep any existing messages not in loaded
+      const mergedMessages: ChatMessage[] = [];
+      const seenIds = new Set<string>();
+      
+      // First, add all loaded messages
+      for (const msg of messages) {
+        mergedMessages.push(msg);
+        seenIds.add(msg.id);
+      }
+      
+      // Then, add any existing messages not in loaded (e.g., messages added during this request)
+      for (const msg of this.state.messages) {
+        if (!seenIds.has(msg.id)) {
+          mergedMessages.push(msg);
+          seenIds.add(msg.id);
+        }
+      }
+      
+      this.state.messages = mergedMessages;
+      
+      // PART 1: CRITICAL ASSERTION - Assistant message MUST exist in state before streaming
+      const assistantInState = this.state.messages.find(m => m.id === assistantId);
+      if (!assistantInState) {
+        logger.error("chat_service", "assistant_not_in_state_critical", { assistantId, messageCount: this.state.messages.length });
+        throw new Error("Assistant message not initialized in state.messages before streaming");
+      }
+      logger.info("chat_service", "assistant_in_state_verified", { 
+        assistantId, 
+        messageCount: this.state.messages.length
+      });
       // P5.2 T8: Readiness checks before USER_SEND
       await this.ensureSessionExists(sessionId);
       const existing = await sessionDatabase.getSession(sessionId);
       if (!existing) {
         logger.error("chat_service", "session_not_initialized", { sessionId });
-        this.setPhase("ERROR");
+        this.setPhase("ERROR", id);
         return;
       }
-      this.setPhase("USER_SEND");
+      this.setPhase("USER_SEND", id);
     }
 
     const searchContext = await this.buildSearchContext({
@@ -2068,7 +2313,6 @@ export class ChatService {
       forceContext
     });
 
-    const assistantId = `${id}-assistant`;
     const completionMessages = this.buildCompletionMessages(messages, id, assistantId, searchContext);
     const injected = await memoryInjectionService.inject(completionMessages as any, { sessionId, userText: item.text });
     const priorSig = this.lastMcpSignatureBySessionId.get(sessionId);
@@ -2080,7 +2324,7 @@ export class ChatService {
 
     // Transition to model_thinking immediately after initial setup to prevent "Sending prompt..." from lingering
     if (this.sessionId === sessionId) {
-      this.setPhase("MODEL_CALL_START");
+      this.setPhase("MODEL_CALL_START", id);
     }
 
     let modelId: string | undefined;
@@ -2153,10 +2397,9 @@ export class ChatService {
           toolExecutionTime = Date.now() - toolLoopStart;
         } catch (mcpErr) {
           logger.warn("mcp_execution", "tool_execution_failed", { error: String(mcpErr) });
-          processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
-          if (processedText.startsWith("\u26a0")) {
-            throw new AppError("KNEZ_STREAM_EMPTY", processedText);
-          }
+          // PART 5: Use controlled fallback instead of recovery response
+          await this.generateFallbackResponse(sessionId, assistantId, id);
+          throw new AppError("KNEZ_STREAM_EMPTY", "Tool execution failed");
         }
 
         if (!processedText.trim()) {
@@ -2206,7 +2449,7 @@ export class ChatService {
             return m;
           });
           this.state.currentStreamId = null;
-          this.setPhase("STREAM_END");
+          this.setPhase("STREAM_END", id);
         }
         // FIX B: Cleanup stream ownership
         this.streamController.end(assistantId, streamId!);
@@ -2220,24 +2463,49 @@ export class ChatService {
         toolChoice: support === "supported" && toolsForModel.length ? "auto" : "none"
       });
 
+      // PART 2: Single Stream Enforcement - Block duplicate streams BEFORE creating streamId
+      if (this.activeStream?.assistantId === assistantId) {
+        logger.warn("chat_service", "duplicate_stream_blocked", { assistantId, existingStreamId: this.activeStream.streamId, requestId: id });
+        throw new Error("Duplicate stream blocked: stream already active for this assistant message");
+      }
+
       streamId = newMessageId();
       const controller = new AbortController();
       this.activeDelivery = { sessionId, outgoingId: id, assistantId, controller, stopRequested: false };
+      
+      // PART 2: Track active stream IMMEDIATELY after creating streamId
+      this.activeStream = { streamId, assistantId, requestId: id };
+      logger.info("chat_service", "stream_started_tracked", { streamId, assistantId, requestId: id });
+      
+      // PART 5: Mark stream as started to disable fallback streams
+      this.streamStarted = true;
+      logger.info("chat_service", "stream_started_flag_set", { streamId, assistantId });
+      
       // FIX B: Enforce stream ownership for normal streaming path
       if (!this.streamController.start(assistantId, streamId)) {
         throw new Error("Cannot start stream - ownership conflict");
       }
       if (this.sessionId === sessionId) {
         this.state.currentStreamId = streamId;
-        this.setPhase("MODEL_CALL_START");
+        this.setPhase("MODEL_CALL_START", id);
       }
 
       logger.info("streaming", "stream_start", { streamId, sessionId, assistantId });
 
       // T5: First-token watchdog — abort stream if no token received within 20s
       firstTokenTimer = window.setTimeout(() => {
-        logger.warn("streaming", "first_token_timeout", { streamId, assistantId });
-        controller.abort();
+        // PART 5: If stream has already started, disable fallback stream
+        if (this.streamStarted) {
+          logger.warn("chat_service", "first_token_timeout_stream_already_started", { streamId, assistantId });
+          // PART 6: Finalize with fallback content instead of starting new stream
+          void this.generateFallbackResponse(sessionId, assistantId, id);
+        } else {
+          logger.warn("streaming", "first_token_timeout", { streamId, assistantId });
+          // PART 6 FIX: Abort stream first to prevent KNEZ client fallback
+          controller.abort();
+          // Then generate fallback response
+          void this.generateFallbackResponse(sessionId, assistantId, id);
+        }
       }, 20000);
 
       // ─── P2.6 PHASES 1-5: buffer → classify → route ──────────────────────
@@ -2245,6 +2513,22 @@ export class ChatService {
       let outputClass: OutputClass | null = null;
 
       for await (const chunk of knezClient.chatCompletionsStream(injectedMessages as any, sessionId, { signal: controller.signal, onMeta })) {
+        // PART 3: Stream Ownership Validation - Validate stream ownership before processing
+        if (this.activeStream?.streamId !== streamId) {
+          logger.warn("chat_service", "stream_ignored_ownership_mismatch_stream", { 
+            incomingStreamId: streamId, 
+            activeStreamId: this.activeStream?.streamId 
+          });
+          return;
+        }
+        if (this.activeStream?.assistantId !== assistantId) {
+          logger.warn("chat_service", "stream_ignored_ownership_mismatch_assistant", { 
+            incomingAssistantId: assistantId, 
+            activeAssistantId: this.activeStream?.assistantId 
+          });
+          return;
+        }
+        
         if (streamId !== this.state.currentStreamId) {
           logger.warn("streaming", "stream_aborted_mismatch", { streamId, currentStreamId: this.state.currentStreamId });
           return;
@@ -2306,24 +2590,29 @@ export class ChatService {
             toolExecutionTime = Date.now() - toolLoopStart;
           } catch (mcpErr) {
             logger.warn("mcp_execution", "tool_execution_failed", { toolName: interp.toolCall.name, error: String(mcpErr) });
-            processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
+            // PART 5: Use controlled fallback instead of recovery response
+            await this.generateFallbackResponse(sessionId, assistantId, id);
           }
         } else {
-          processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
+          // PART 5: Use controlled fallback for invalid tool calls
+          await this.generateFallbackResponse(sessionId, assistantId, id);
         }
       } else if (outputClass === "system_payload") {
         logger.warn("output_interpreter", "system_payload_blocked", { preview: interpretBuffer.slice(0, 80) });
-        processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
+        // PART 5: Use controlled fallback for system payloads
+        await this.generateFallbackResponse(sessionId, assistantId, id);
       } else {
         if (outputClass === "tool_call") {
           logger.info("output_interpreter", "tool_call_mcp_disabled", { preview: interpretBuffer.slice(0, 80) });
         }
-        processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
+        // PART 5: Use controlled fallback for unhandled output classes
+        await this.generateFallbackResponse(sessionId, assistantId, id);
       }
 
       if (!processedText.trim()) {
-        logger.error("response_guarantee", "empty_response_after_recovery", { sessionId, assistantId });
-        processedText = "⚠️ Failed to generate response. The AI did not produce a valid output.";
+        logger.error("response_guarantee", "empty_response_after_processing", { sessionId, assistantId });
+        // PART 5: Use controlled fallback for empty responses
+        await this.generateFallbackResponse(sessionId, assistantId, id);
       }
 
       const responseTimeMs = Date.now() - responseStart;
@@ -2355,7 +2644,7 @@ export class ChatService {
         });
         if (streamId === this.state.currentStreamId) {
           this.state.currentStreamId = null;
-          this.setPhase("STREAM_END");
+          this.setPhase("STREAM_END", assistantId);
         }
       }
 
@@ -2477,14 +2766,33 @@ export class ChatService {
         });
       }
     } finally {
+      // PART 2: Guaranteed cleanup - always execute regardless of errors
+
       // ADD 5: Release request lock
       this.releaseRequestLock(item.sessionId, id);
+
+      // PART 2: Clear active stream ownership
+      if (streamId) {
+        this.streamController.end(assistantId || `${id}-assistant`, streamId);
+      }
+      
+      // PART 2: Clear active stream tracking
+      if (this.activeStream?.requestId === id) {
+        logger.info("chat_service", "active_stream_cleared", { streamId: this.activeStream.streamId, assistantId: this.activeStream.assistantId });
+        this.activeStream = null;
+      }
+      
+      // PART 5: Reset stream started flag
+      if (this.streamStarted) {
+        logger.info("chat_service", "stream_started_flag_reset", { requestId: id });
+        this.streamStarted = false;
+      }
 
       // ADD 7: Ensure final response is in FINAL state
       if (assistantId) {
         void this.ensureFinalResponse(assistantId);
       }
-      
+
       if (this.activeDelivery?.sessionId === sessionId && this.activeDelivery?.outgoingId === id) {
         this.activeDelivery = null;
       }
@@ -2497,7 +2805,13 @@ export class ChatService {
       if (this.sessionId === sessionId) {
         if (streamId !== undefined && streamId === this.state.currentStreamId) {
           this.state.currentStreamId = null;
-          this.setPhase("STREAM_END");
+          this.setPhase("STREAM_END", id);
+        }
+        // PART 2: Ensure phase is not stuck in thinking/streaming
+        const currentPhase = this.phaseManager?.getPhase() as ChatPhase ?? this.state.phase;
+        if (currentPhase === "thinking" || currentPhase === "streaming") {
+          logger.warn("chat_service", "phase_stuck_resetting", { currentPhase });
+          this.setPhase("STREAM_END", id);
         }
       }
     }
@@ -2577,8 +2891,11 @@ export class ChatService {
               return toolExecutionService.resolveNamespacedName("taqwin", "web_intelligence");
             })());
           if (!namespaced) throw new Error("mcp_tool_not_found");
-          const exec = await withTimeout(toolExecutionService.executeNamespacedTool(namespaced, toolArgs, { timeoutMs: 1200 }), Math.min(1200, timeLeftMs()));
-          if (!exec.ok) throw new Error(`${exec.error.code}:${exec.error.message}`);
+          // NEW: Use ToolExecutionBridge for tool execution (with fallback for timeout)
+          const exec = this.toolExecutionBridge ?
+            await withTimeout(this.toolExecutionBridge.executeTool(namespaced, toolArgs), Math.min(1200, timeLeftMs())) :
+            await withTimeout(toolExecutionService.executeNamespacedTool(namespaced, toolArgs, { timeoutMs: 1200 }), Math.min(1200, timeLeftMs()));
+          if (!exec.ok) throw new Error(`UNKNOWN:${exec.error || 'Unknown error'}`);
           await emitToolAuditMessage("web_intelligence", toolArgs, "succeeded", { durationMs: Math.round(performance.now() - t0) });
           const text = extractMcpText(exec.result);
           const parsed = safeJsonParseLocal<any>(text);
@@ -2620,8 +2937,11 @@ export class ChatService {
             return toolExecutionService.resolveNamespacedName("taqwin", "web_intelligence");
           })());
         if (!namespaced) throw new Error("mcp_tool_not_found");
-        const exec = await withTimeout(toolExecutionService.executeNamespacedTool(namespaced, toolArgs, { timeoutMs: 1200 }), Math.min(1200, timeLeftMs()));
-        if (!exec.ok) throw new Error(`${exec.error.code}:${exec.error.message}`);
+        // NEW: Use ToolExecutionBridge for tool execution (with fallback for timeout)
+        const exec = this.toolExecutionBridge ?
+          await withTimeout(this.toolExecutionBridge.executeTool(namespaced, toolArgs), Math.min(1200, timeLeftMs())) :
+          await withTimeout(toolExecutionService.executeNamespacedTool(namespaced, toolArgs, { timeoutMs: 1200 }), Math.min(1200, timeLeftMs()));
+        if (!exec.ok) throw new Error(`UNKNOWN:${exec.error || 'Unknown error'}`);
         await emitToolAuditMessage("web_intelligence", toolArgs, "succeeded", { durationMs: Math.round(performance.now() - t0) });
         const text = extractMcpText(exec.result);
         const parsed = safeJsonParseLocal<any>(text);

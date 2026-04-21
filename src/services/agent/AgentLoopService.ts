@@ -46,7 +46,7 @@ export interface AgentLoopConfig {
 
 export class AgentLoopService {
   private config: AgentLoopConfig = {
-    maxSteps: 5,
+    maxSteps: 10,
     maxRetries: 2,
     timeoutMs: 30000
   };

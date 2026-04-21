@@ -817,6 +817,9 @@ impl McpHostRuntime {
     }
 
     pub fn start(&self, cfg: McpStdioServerConfig) -> Result<McpRuntimeStatus, String> {
+        // NOTE: Rust McpHostRuntime is a singleton - only ONE server can run at a time.
+        // For multiple concurrent stdio servers, use McpStdioClient (TypeScript-based) instead.
+        // HTTP servers (McpHttpClient) are not affected by this limitation.
         self.stop().ok();
         *self.last_error.lock().unwrap() = None;
         {

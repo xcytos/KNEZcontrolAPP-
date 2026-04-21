@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { logger } from "../services/LogService";
+import { logger } from "../services/utils/LogService";
 import { getMcpAuthority } from "./authority";
 
 function isTauriRuntime(): boolean {

@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { knezClient } from "../../services/KnezClient";
+import { knezClient } from "../../services/knez/KnezClient";
 import { KnowledgeBaseView } from "./KnowledgeBaseView";
 import { useStatus } from "../../contexts/useStatus";
 import { EventSourcedMemoryView } from "./EventSourcedMemoryView";
-import { getMemoryEventSourcingService, MemoryState } from "../../services/MemoryEventSourcingService";
+import { getMemoryEventSourcingService, MemoryState } from "../../services/memory/storage/MemoryEventSourcingService";
 
-import { persistenceService } from '../../services/PersistenceService'
+import { persistenceService } from '../../services/infrastructure/persistence/PersistenceService'
 export const MemoryExplorer: React.FC<{ sessionId: string | null; readOnly: boolean }> = ({ sessionId, readOnly }) => {
   const { online } = useStatus();
   const [memories, setMemories] = useState<any[]>([]);

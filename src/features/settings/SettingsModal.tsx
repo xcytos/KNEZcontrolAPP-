@@ -3,8 +3,8 @@ import { Cpu, Database, Link2, Settings, WifiOff } from "lucide-react";
 import { ConnectionPage } from "./ConnectionPage";
 import { HealthProbeStatus, SystemStatus } from "../system/useSystemOrchestrator";
 import { useStatus } from "../../contexts/useStatus";
-import { sessionDatabase } from "../../services/SessionDatabase";
-import { getKeepAliveEnabled, setKeepAliveEnabled } from "../../services/Preferences";
+import { sessionDatabase } from "../../services/session/SessionDatabase";
+import { getKeepAliveEnabled, setKeepAliveEnabled } from "../../services/infrastructure/config/Preferences";
 import { backendHasLiveMetrics, isBackendHealthyStatus, selectPrimaryBackend } from "../../utils/health";
 
 type PageId = "overview" | "connection";

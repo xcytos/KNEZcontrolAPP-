@@ -9,8 +9,9 @@ import { extractServerInputRefs, listInputsById, substituteServerInputRefs } fro
 import type { McpToolDefinition } from "../../services/McpTypes";
 import { knezClient } from "../../services/KnezClient";
 import { getMcpAuthority } from "../authority";
-import { logger } from "../../services/LogService";
+import { logger, LogLevel } from "../../services/LogService";
 import { classifyMcpError } from "../McpErrorTaxonomy";
+import { MCP_LOG_METHODS, MCP_LOG_CATEGORIES } from "./McpLoggingConstants";
 
 export type McpInspectorLifecycle = "IDLE" | "STARTING" | "INITIALIZED" | "LISTING_TOOLS" | "READY" | "ERROR";
 
@@ -394,6 +395,8 @@ export class McpInspectorService {
       try {
         await s.client.stop();
       } catch {}
+      // Wait a bit for the process to fully stop
+      await new Promise(resolve => setTimeout(resolve, 100));
       s.state = "IDLE";
       s.initializedAt = null;
       s.initializeDurationMs = null;
@@ -404,12 +407,23 @@ export class McpInspectorService {
       s.lastError = null;
       this.emit();
       if (!s.server.enabled) throw new Error("mcp_server_disabled");
-      if (s.client.getDebugState().running) return;
+      // Check if client is still running after stop delay
+      if (s.client.getDebugState().running) {
+        // Force another stop attempt if still running
+        try {
+          await s.client.stop();
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch {}
+        if (s.client.getDebugState().running) {
+          throw new Error("mcp_process_stuck");
+        }
+      }
       s.state = "STARTING";
       this.emit();
       const cfg = await this.resolveInputsForServer(this.toServerConfig(s.server));
       await s.client.startWithConfig(cfg);
       s.state = "IDLE";
+      s.toolsCacheAt = null; // Force tool cache invalidation on server restart
       this.emit();
     });
   }
@@ -642,6 +656,12 @@ export class McpInspectorService {
       }
       if (!s.toolsCacheAt || s.tools.length === 0) {
         const startedAt = performance.now();
+        const category = MCP_LOG_CATEGORIES.PREFIX_LOCAL(serverId);
+        
+        await logger.writeServerLog(serverId, LogLevel.INFO, category, MCP_LOG_METHODS.LIST_TOOLS, {
+          message: "Listing tools..."
+        });
+        
         s.state = "LISTING_TOOLS";
         s.toolsPending = true;
         this.emit();
@@ -656,6 +676,12 @@ export class McpInspectorService {
             s.toolsPending = false;
             s.lastError = "mcp_server_no_tools";
             this.emit();
+            
+            await logger.writeServerLog(serverId, LogLevel.ERROR, category, MCP_LOG_METHODS.LIST_TOOLS, {
+              message: "No tools returned",
+              durationMs: s.toolsListDurationMs
+            });
+            
             throw new Error("mcp_server_no_tools");
           }
           s.tools = tools;
@@ -666,12 +692,26 @@ export class McpInspectorService {
           s.toolsPending = false;
           s.lastError = null;
           this.emit();
+          
+          await logger.writeServerLog(serverId, LogLevel.INFO, category, MCP_LOG_METHODS.LIST_TOOLS, {
+            message: `Got ${tools.length} tools`,
+            tools: tools.map((t: any) => t.name),
+            durationMs: s.toolsListDurationMs
+          });
+          
         } catch (e: any) {
           s.toolsListDurationMs = Math.round(performance.now() - startedAt);
           s.state = "ERROR";
           s.toolsPending = false;
           s.lastError = String(e?.message ?? e);
           this.emit();
+          
+          await logger.writeServerLog(serverId, LogLevel.ERROR, category, MCP_LOG_METHODS.LIST_TOOLS, {
+            message: "Failed to list tools",
+            error: String(e?.message ?? e),
+            durationMs: s.toolsListDurationMs
+          });
+          
           throw e;
         }
       }
@@ -679,6 +719,15 @@ export class McpInspectorService {
         throw new Error(`mcp_tool_not_found:${name}`);
       }
       const startedAt = performance.now();
+      const category = MCP_LOG_CATEGORIES.PREFIX_LOCAL(serverId);
+      
+      // Log tool call start with arguments
+      await logger.writeServerLog(serverId, LogLevel.INFO, category, MCP_LOG_METHODS.CALL_TOOL, {
+        message: `Calling tool: ${name}`,
+        tool: name,
+        args: args
+      });
+      
       this.emitMcpEvent("tool_call_started", {
         server_id: serverId,
         tool: name,
@@ -698,6 +747,15 @@ export class McpInspectorService {
         const durationMs = Math.round(performance.now() - startedAt);
         s.lastOkAt = Date.now();
         this.emit();
+        
+        // Log tool call result
+        await logger.writeServerLog(serverId, LogLevel.INFO, category, MCP_LOG_METHODS.CALL_TOOL, {
+          message: `Tool call succeeded: ${name}`,
+          tool: name,
+          durationMs,
+          result: res
+        });
+        
         this.emitMcpEvent("tool_call_completed", {
           server_id: serverId,
           tool: name,
@@ -719,6 +777,16 @@ export class McpInspectorService {
       } catch (e: any) {
         const durationMs = Math.round(performance.now() - startedAt);
         const classified = classifyMcpError(e);
+        
+        // Log tool call failure
+        await logger.writeServerLog(serverId, LogLevel.ERROR, category, MCP_LOG_METHODS.CALL_TOOL, {
+          message: `Tool call failed: ${name}`,
+          tool: name,
+          durationMs,
+          error: classified.message,
+          errorCode: classified.code
+        });
+        
         this.emitMcpEvent("tool_call_failed", {
           server_id: serverId,
           tool: name,

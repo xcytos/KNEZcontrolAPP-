@@ -3,7 +3,7 @@ import type { McpInspectorLifecycle, McpInspectorServerStatus } from "./inspecto
 import { mcpInspectorService } from "./inspector/McpInspectorService";
 import type { McpToolDefinition } from "../services/McpTypes";
 import { getMcpAuthority, type McpAuthority } from "./authority";
-import { logger } from "../services/LogService";
+import { logger } from "../services/utils/LogService";
 
 function isTauriRuntime(): boolean {
   const w = window as any;
@@ -66,6 +66,7 @@ export class McpOrchestrator {
   private autoStartInFlight = new Set<string>();
   private autoStartBackoffUntilByServerId = new Map<string, number>();
   private autoStartAttemptsByServerId = new Map<string, number>();
+  private crashHistory: Map<string, Array<{ timestamp: number; reason: string }>> = new Map();
 
   constructor() {
     mcpInspectorService.subscribe(() => {
@@ -116,7 +117,24 @@ export class McpOrchestrator {
   }
 
   async restartServer(serverId: string): Promise<void> {
+    // Reset restart attempts on manual restart
+    this.autoStartAttemptsByServerId.delete(serverId);
+    this.autoStartBackoffUntilByServerId.delete(serverId);
     await mcpInspectorService.restart(serverId);
+  }
+
+  recordCrash(serverId: string, reason: string): void {
+    const history = this.crashHistory.get(serverId) ?? [];
+    history.push({ timestamp: Date.now(), reason });
+    // Keep last 10 crashes
+    if (history.length > 10) {
+      history.shift();
+    }
+    this.crashHistory.set(serverId, history);
+  }
+
+  getCrashHistory(serverId: string): Array<{ timestamp: number; reason: string }> {
+    return this.crashHistory.get(serverId) ?? [];
   }
 
   async handshake(serverId: string, opts?: { toolsListTimeoutMs?: number }): Promise<McpToolDefinition[]> {
@@ -277,9 +295,16 @@ export class McpOrchestrator {
         .catch((e: any) => {
           const attempts = (this.autoStartAttemptsByServerId.get(s.serverId) ?? 0) + 1;
           this.autoStartAttemptsByServerId.set(s.serverId, attempts);
-          const delayMs = Math.min(60000, 2000 * Math.pow(2, Math.min(6, attempts - 1)));
+          // Max 3 restart attempts as per TICKET-004
+          if (attempts >= 3) {
+            logger.error("mcp", "MCP server max restart attempts reached, giving up", { serverId: s.serverId, attempts });
+            return;
+          }
+          const delayMs = Math.min(16000, 2000 * Math.pow(2, Math.min(3, attempts - 1)));
           this.autoStartBackoffUntilByServerId.set(s.serverId, Date.now() + delayMs);
-          logger.warn("mcp", "MCP auto-start failed", { serverId: s.serverId, error: String(e?.message ?? e), delayMs });
+          // Record crash for tracking
+          this.recordCrash(s.serverId, String(e?.message ?? e));
+          logger.warn("mcp", "MCP auto-start failed", { serverId: s.serverId, error: String(e?.message ?? e), delayMs, attempts });
         })
         .finally(() => {
           this.autoStartInFlight.delete(s.serverId);
