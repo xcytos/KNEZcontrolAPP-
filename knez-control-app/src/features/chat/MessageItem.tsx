@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ChatMessage } from '../../domain/DataContracts';
 import { AgentTrace } from '../../services/agent/AgentTracer';
 import { parseMessageContent, formatMarkdown, copyToClipboard } from './ChatUtils';
+import { RotateCcw, Edit, Square, Copy } from 'lucide-react';
 
 const CodeBlock: React.FC<{ language: string; content: string }> = ({ language, content }) => {
   const [copied, setCopied] = useState(false);
@@ -83,6 +84,8 @@ const MessageItemInner: React.FC<{
   const [thoughtsOpen, setThoughtsOpen] = useState(false);
   const [toolDetailsOpen, setToolDetailsOpen] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(false);
+  const [requestOpen, setRequestOpen] = useState(false);
+  const [responseOpen, setResponseOpen] = useState(false);
 
   const parts = parseMessageContent(msg.text);
   // const hasThink = parts.some(p => p.type === 'think');
@@ -355,32 +358,78 @@ const MessageItemInner: React.FC<{
                           <span className="text-zinc-300">{msg.toolCall.mcpLatencyMs}ms</span>
                         </div>
                       )}
-                      <div>
-                        <div className="text-[10px] font-mono text-zinc-500 mb-1">REQUEST</div>
-                        <div className="max-w-full overflow-x-auto">
-                          <pre className="text-[10px] text-zinc-300 bg-zinc-900/50 p-2 rounded border border-zinc-800 whitespace-pre-wrap break-all word-break-all">
-                            {JSON.stringify(msg.toolCall.args, null, 2)}
-                          </pre>
-                        </div>
-                      </div>
-                      {msg.toolCall.status === "succeeded" && msg.toolCall.result !== undefined && (
-                        <div>
-                          <div className="text-[10px] font-mono text-zinc-500 mb-1">OUTPUT</div>
-                          <div className="max-w-full overflow-x-auto">
-                            <pre className="text-[10px] text-zinc-300 bg-zinc-900/50 p-2 rounded border border-zinc-800 whitespace-pre-wrap break-all word-break-all">
-                              {typeof msg.toolCall.result === 'string' ? msg.toolCall.result : JSON.stringify(msg.toolCall.result, null, 2)}
-                            </pre>
+                      
+                      {/* Collapsible REQUEST Section */}
+                      <div className="border border-zinc-800 rounded-lg overflow-hidden">
+                        <button
+                          onClick={() => setRequestOpen(!requestOpen)}
+                          className="w-full flex items-center justify-between px-3 py-2 bg-zinc-900/50 hover:bg-zinc-800/50 transition-colors"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-mono text-zinc-400 font-medium">REQUEST</span>
+                            <span className="text-[10px] text-zinc-600">
+                              {Object.keys(msg.toolCall.args || {}).length} fields
+                            </span>
                           </div>
+                          <span className="text-[10px] text-zinc-500">{requestOpen ? '▼' : '▶'}</span>
+                        </button>
+                        {requestOpen && (
+                          <div className="p-2 border-t border-zinc-800">
+                            <div className="max-w-full overflow-x-auto">
+                              <pre className="text-[10px] text-zinc-300 bg-zinc-950/50 p-2 rounded border border-zinc-800 whitespace-pre-wrap break-all word-break-all">
+                                {JSON.stringify(msg.toolCall.args, null, 2)}
+                              </pre>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Collapsible RESPONSE Section */}
+                      {(msg.toolCall.status === "succeeded" && msg.toolCall.result !== undefined) && (
+                        <div className="border border-zinc-800 rounded-lg overflow-hidden">
+                          <button
+                            onClick={() => setResponseOpen(!responseOpen)}
+                            className="w-full flex items-center justify-between px-3 py-2 bg-zinc-900/50 hover:bg-zinc-800/50 transition-colors"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-mono text-zinc-400 font-medium">RESPONSE</span>
+                              <span className="text-[10px] text-green-400">success</span>
+                            </div>
+                            <span className="text-[10px] text-zinc-500">{responseOpen ? '▼' : '▶'}</span>
+                          </button>
+                          {responseOpen && (
+                            <div className="p-2 border-t border-zinc-800">
+                              <div className="max-w-full overflow-x-auto">
+                                <pre className="text-[10px] text-zinc-300 bg-zinc-950/50 p-2 rounded border border-zinc-800 whitespace-pre-wrap break-all word-break-all">
+                                  {typeof msg.toolCall.result === 'string' ? msg.toolCall.result : JSON.stringify(msg.toolCall.result, null, 2)}
+                                </pre>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
+                      
+                      {/* ERROR Section */}
                       {msg.toolCall.status === "failed" && msg.toolCall.error && (
-                        <div>
-                          <div className="text-[10px] font-mono text-red-400 mb-1">ERROR</div>
-                          <div className="max-w-full overflow-x-auto">
-                            <pre className="text-[10px] text-red-300 bg-red-900/10 p-2 rounded border border-red-900/30 whitespace-pre-wrap break-all word-break-all">
-                              {msg.toolCall.error}
-                            </pre>
-                          </div>
+                        <div className="border border-red-900/30 rounded-lg overflow-hidden bg-red-900/5">
+                          <button
+                            onClick={() => setResponseOpen(!responseOpen)}
+                            className="w-full flex items-center justify-between px-3 py-2 bg-red-900/10 hover:bg-red-900/20 transition-colors"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-mono text-red-400 font-medium">ERROR</span>
+                            </div>
+                            <span className="text-[10px] text-red-400">{responseOpen ? '▼' : '▶'}</span>
+                          </button>
+                          {responseOpen && (
+                            <div className="p-2 border-t border-red-900/30">
+                              <div className="max-w-full overflow-x-auto">
+                                <pre className="text-[10px] text-red-300 bg-red-950/30 p-2 rounded border border-red-900/30 whitespace-pre-wrap break-all word-break-all">
+                                  {msg.toolCall.error}
+                                </pre>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -503,37 +552,44 @@ const MessageItemInner: React.FC<{
             </span>
            )}
            
-           {(isHovered || copied) && (
+           {(isHovered || copied || msg.deliveryStatus === "failed" || msg.metrics?.finishReason === "stopped" || msg.isPartial) && (
               <div className="flex items-center gap-2 transition-opacity duration-200">
-                 <button onClick={handleCopy} className="text-[10px] hover:text-zinc-300 px-1.5 py-0.5 rounded hover:bg-zinc-800 transition-colors" title="Copy">
-                    {copied ? "Copied" : "Copy"}
+                 <button onClick={handleCopy} className="flex items-center gap-1 text-[10px] hover:text-zinc-300 px-2 py-1 rounded hover:bg-zinc-800 transition-colors" title="Copy">
+                    <Copy size={12} />
+                    <span>{copied ? "Copied" : "Copy"}</span>
                  </button>
                  {!readOnly && (
                     <>
                       {msg.from === "user" && onEdit && (
-                        <button 
-                          onClick={() => onEdit(msg.id)} 
-                          className="text-[10px] hover:text-blue-400 px-1.5 py-0.5 rounded hover:bg-zinc-800 transition-colors"
+                        <button
+                          onClick={() => onEdit(msg.id)}
+                          className="flex items-center gap-1 text-[10px] hover:text-blue-400 px-2 py-1 rounded hover:bg-zinc-800 transition-colors"
+                          title="Edit message"
                         >
-                          Edit
+                          <Edit size={12} />
+                          <span>Edit</span>
                         </button>
                       )}
                       {msg.from !== "user" && (
                         <>
                           {(msg.isPartial || msg.deliveryStatus === "pending" || msg.deliveryStatus === "queued") && onStop && (
-                            <button 
-                              onClick={() => onStop(msg.id)} 
-                              className="text-[10px] hover:text-red-400 px-1.5 py-0.5 rounded hover:bg-zinc-800 transition-colors"
+                            <button
+                              onClick={() => onStop(msg.id)}
+                              className="flex items-center gap-1 text-[10px] hover:text-red-400 px-2 py-1 rounded hover:bg-zinc-800 transition-colors"
+                              title="Stop generation"
                             >
-                              Stop
+                              <Square size={12} />
+                              <span>Stop</span>
                             </button>
                           )}
                           {(msg.deliveryStatus === "failed" || msg.metrics?.finishReason === "stopped") && onRetry && (
-                            <button 
-                              onClick={() => onRetry(msg.id)} 
-                              className="text-[10px] hover:text-blue-400 px-1.5 py-0.5 rounded hover:bg-zinc-800 transition-colors"
+                            <button
+                              onClick={() => onRetry(msg.id)}
+                              className="flex items-center gap-1 text-[10px] hover:text-blue-400 px-2 py-1 rounded hover:bg-zinc-800 transition-colors"
+                              title="Retry message"
                             >
-                              Retry
+                              <RotateCcw size={12} />
+                              <span>Retry</span>
                             </button>
                           )}
                         </>

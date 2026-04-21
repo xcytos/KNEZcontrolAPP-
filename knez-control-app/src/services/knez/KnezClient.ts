@@ -213,6 +213,8 @@ import { logger } from  '../utils/LogService';
 
 async function safeRequest<T>(fn: () => Promise<T>, context: string): Promise<T> {
   const MAX_RETRIES = 3;
+  const BASE_DELAY_MS = 1000;
+  const MAX_DELAY_MS = 10000;
 
   for (let i = 0; i < MAX_RETRIES; i++) {
     try {
@@ -222,7 +224,12 @@ async function safeRequest<T>(fn: () => Promise<T>, context: string): Promise<T>
 
       if (i === MAX_RETRIES - 1) throw e;
 
-      await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+      // Exponential backoff with jitter
+      const exponentialDelay = Math.min(BASE_DELAY_MS * Math.pow(2, i), MAX_DELAY_MS);
+      const jitter = Math.random() * 200; // Add up to 200ms jitter
+      const delay = exponentialDelay + jitter;
+
+      await new Promise(r => setTimeout(r, delay));
     }
   }
   throw new Error("safeRequest: unexpected exit");
@@ -416,6 +423,38 @@ export class KnezClient {
     }
     const events = (await resp.json()) as any[];
     return Array.isArray(events) && events.length > 0;
+  }
+
+  async getOllamaStatus(): Promise<{ reachable: boolean; models: string[]; error: string | null }> {
+    const url = `${this.baseUrl()}/system/ollama-status`;
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        throw new AppError("OLLAMA_STATUS_FAILED", `Ollama status check failed (${resp.status})`, { status: resp.status });
+      }
+      return await resp.json();
+    } catch (e: any) {
+      if (e instanceof AppError) throw e;
+      throw new AppError("OLLAMA_STATUS_FETCH_FAILED", `Failed to fetch ollama status: ${url}`, { url, reason: String(e?.message ?? e) });
+    }
+  }
+
+  async loadModel(model: string): Promise<{ success: boolean; loaded: boolean; error?: string }> {
+    const url = `${this.baseUrl()}/system/load-model`;
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model })
+      });
+      if (!resp.ok) {
+        throw new AppError("LOAD_MODEL_FAILED", `Load model failed (${resp.status})`, { status: resp.status });
+      }
+      return await resp.json();
+    } catch (e: any) {
+      if (e instanceof AppError) throw e;
+      throw new AppError("LOAD_MODEL_FETCH_FAILED", `Failed to load model: ${url}`, { url, reason: String(e?.message ?? e) });
+    }
   }
 
   async ensureSession(): Promise<string> {
