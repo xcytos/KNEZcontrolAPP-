@@ -91,7 +91,7 @@ export const ConnectionPage: React.FC<{
     try {
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      const h = await knezClient.health({ timeoutMs: 2000 });
+      const h = await knezClient.health({ timeoutMs: 4500 });
       setHealth(h);
       setStatus(isOverallHealthyStatus(h.status) ? "healthy" : "failed");
 
