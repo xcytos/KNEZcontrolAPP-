@@ -265,6 +265,8 @@ export const McpRegistryView: React.FC<{
   }, []);
 
   const runtimeById = useMemo(() => mcpOrchestrator.getSnapshot().servers, [tick]);
+  const config = useMemo(() => mcpInspectorService.getConfig(), [tick]);
+  const configServerIds = useMemo(() => new Set(Object.keys(config.normalized?.servers ?? {})), [config]);
   const localServerIds = useMemo(() => new Set(Object.keys(runtimeById)), [runtimeById]);
   const items = useMemo(() => {
     const knezItems = (snapshot as any)?.supported ? ((snapshot as any).items ?? []) : [];
@@ -275,6 +277,8 @@ export const McpRegistryView: React.FC<{
     }
     for (const s of Object.values(runtimeById)) {
       if (!s?.serverId) continue;
+      // Only show runtime servers if they exist in config (not deleted)
+      if (!configServerIds.has(s.serverId)) continue;
       if (byId.has(s.serverId)) continue;
       const status = (() => {
         const state = s?.state ?? "IDLE";
@@ -301,7 +305,7 @@ export const McpRegistryView: React.FC<{
     const out = Array.from(byId.values());
     out.sort((a, b) => String(a.id ?? "").localeCompare(String(b.id ?? "")));
     return out;
-  }, [snapshot, runtimeById]);
+  }, [snapshot, runtimeById, configServerIds]);
 
   if (!snapshot && Object.keys(runtimeById).length === 0) return <div className="p-8 text-center text-zinc-500">Loading MCP Registry...</div>;
   if (snapshot && !snapshot.supported && Object.keys(runtimeById).length === 0) {

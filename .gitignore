@@ -15,9 +15,7 @@ Thumbs.db
 # Trae IDE artifacts
 .trae/
 
-# User requested exclusion
-knez
-!KNEZ/
+
  
 .cache/
 coverage/
