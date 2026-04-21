@@ -197,23 +197,40 @@ Please regenerate corrected arguments in JSON format:
   }
 
   /**
-   * Parse tool call from model output (helper for arg regeneration)
+   * Parse tool call from model output using strict JSON parsing only
+   * Matches AgentOrchestrator.parseToolCall approach
    */
   private parseToolCall(modelOutput: string): { name: string; args: any } | null {
     const text = String(modelOutput ?? "").trim();
     if (!text) return null;
 
-    if (text.includes('"tool_call"')) {
-      try {
-        const parsed = JSON.parse(text);
-        if (parsed.tool_call) {
-          return { name: parsed.tool_call.name, args: parsed.tool_call.arguments };
-        }
-      } catch {
-        // Invalid JSON
+    // Helper: extract tool call from parsed JSON object
+    const extractFromParsed = (parsed: any): { name: string; args: any } | null => {
+      // Format 1: {"tool_call": {"name": "...", "arguments": {...}}}
+      if (parsed?.tool_call?.name) {
+        return { name: String(parsed.tool_call.name), args: parsed.tool_call.arguments ?? {} };
       }
+      // Format 2: {"function_call": {"name": "...", "arguments": "..."}} (OpenAI legacy)
+      if (parsed?.function_call?.name) {
+        const rawArgs = parsed.function_call.arguments;
+        const args = typeof rawArgs === "string" ? (JSON.parse(rawArgs) ?? {}) : (rawArgs ?? {});
+        return { name: String(parsed.function_call.name), args };
+      }
+      // Format 3: {"name": "...", "arguments": {...}} (bare format)
+      if (parsed?.name && typeof parsed.name === "string" && parsed.arguments !== undefined) {
+        return { name: parsed.name, args: parsed.arguments ?? {} };
+      }
+      return null;
+    };
+
+    // Strict: Try direct JSON parse of the entire text only
+    try {
+      const parsed = JSON.parse(text);
+      return extractFromParsed(parsed);
+    } catch {
+      // Invalid JSON - return null, don't try to fix it
+      return null;
     }
-    return null;
   }
 
   /**

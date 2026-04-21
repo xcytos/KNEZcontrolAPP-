@@ -1,8 +1,8 @@
 import React, { useState } from "react";
-import { knezClient, KnezInsight } from "../../services/KnezClient";
+import { knezClient, KnezInsight } from "../../services/knez/KnezClient";
 import { Sparkles } from "lucide-react";
-import { persistenceService } from "../../services/PersistenceService";
-import { sessionController } from "../../services/SessionController";
+import { persistenceService } from "../../services/infrastructure/persistence/PersistenceService";
+import { sessionController } from "../../services/session/SessionController";
 
 type Props = {
   sessionId: string | null;

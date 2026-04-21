@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { skillsRegistry } from '../../services/SkillsRegistry'
+import { skillsRegistry } from '../../services/infrastructure/config/SkillsRegistry'
 
 export const SkillsView: React.FC = () => {
   const [skills, setSkills] = useState(() => skillsRegistry.getSkills())

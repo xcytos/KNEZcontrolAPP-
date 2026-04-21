@@ -2,8 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useMcpInspector } from "./useMcpInspector";
 import type { McpTrafficEvent } from "../../../mcp/inspector/McpTraffic";
 import { mcpOrchestrator } from "../../../mcp/McpOrchestrator";
+import { logger } from "../../../services/LogService";
 
-type LogTab = "lifecycle" | "traffic" | "stdout" | "stderr" | "parse";
+type LogTab = "lifecycle" | "traffic" | "stdout" | "stderr" | "parse" | "app_logs" | "errors";
 
 function isTauriRuntime(): boolean {
   const w = window as any;
@@ -144,6 +145,8 @@ export const McpInspectorPanel: React.FC = () => {
   const [addServerText, setAddServerText] = useState("");
   const [addServerError, setAddServerError] = useState<string>("");
   const [inputDrafts, setInputDrafts] = useState<Record<string, string>>({});
+  const [serverLogs, setServerLogs] = useState<any[]>([]);
+  const [debugMode, setDebugMode] = useState(false);
 
   useEffect(() => {
     void svc.loadConfig();
@@ -194,6 +197,13 @@ export const McpInspectorPanel: React.FC = () => {
     }
   }, [selectedId, tools.length]);
 
+  useEffect(() => {
+    if (logTab === "app_logs" && selectedId) {
+      const logs = logger.getServerLogs(selectedId);
+      setServerLogs(logs);
+    }
+  }, [logTab, selectedId]);
+
   const traffic = useMemo(() => {
     if (!selectedId) return [];
     const all = svc.getTraffic(selectedId);
@@ -204,6 +214,8 @@ export const McpInspectorPanel: React.FC = () => {
           ? ["raw_stderr"]
           : logTab === "parse"
             ? ["parse_error"]
+        : logTab === "errors"
+          ? ["spawn_error", "parse_error", "process_closed"]
         : ["request", "response", "unsolicited", "process_closed", "spawn_error", "parse_error"];
     const filtered = all.filter((e) => selectedKinds.includes(e.kind));
     const q = logSearch.trim().toLowerCase();
@@ -220,29 +232,29 @@ export const McpInspectorPanel: React.FC = () => {
     let toolNames: string[] = [];
     for (const evt of all) {
       if (evt.kind === "spawn_error") {
-        entries.push({ at: evt.at, level: "error", text: `Spawn failed: ${evt.message}` });
+        entries.push({ at: evt.at, level: "error", text: `[${selectedId}] Spawn failed: ${evt.message}` });
       } else if (evt.kind === "process_closed") {
-        entries.push({ at: evt.at, level: evt.code === 0 ? "info" : "error", text: `Process exited (code=${String(evt.code ?? "null")})` });
+        entries.push({ at: evt.at, level: evt.code === 0 ? "info" : "error", text: `[${selectedId}] Process exited (code=${String(evt.code ?? "null")})` });
       } else if (evt.kind === "request" && (evt as any).method === "initialize") {
         if (!hasConnected) {
           const cmd = st?.command ? `${st.command} ${(st.args ?? []).join(" ")}`.trim() : selectedId;
-          entries.push({ at: evt.at, level: "info", text: `Connecting: ${cmd}` });
+          entries.push({ at: evt.at, level: "info", text: `[${selectedId}] Connecting: ${cmd}` });
         }
       } else if (evt.kind === "response" && !hasConnected) {
         const json = (evt as any).json;
         if (json?.result?.serverInfo || json?.result?.capabilities) {
           hasConnected = true;
           const pid = st?.pid ? ` PID=${st.pid}` : "";
-          entries.push({ at: evt.at, level: "info", text: `Connected.${pid}` });
+          entries.push({ at: evt.at, level: "info", text: `[${selectedId}] Connected.${pid}` });
         }
       } else if (evt.kind === "request" && (evt as any).method === "tools/list") {
-        entries.push({ at: evt.at, level: "info", text: "Listing tools..." });
+        entries.push({ at: evt.at, level: "info", text: `[${selectedId}] Listing tools...` });
       } else if (evt.kind === "response" && toolNames.length === 0) {
         const json = (evt as any).json;
         if (json?.result?.tools && Array.isArray(json.result.tools)) {
           toolNames = (json.result.tools as any[]).map((t: any) => String(t.name ?? "")).filter(Boolean);
           if (toolNames.length > 0) {
-            entries.push({ at: evt.at, level: "info", text: `Got ${toolNames.length} tools: ${toolNames.join(", ")}` });
+            entries.push({ at: evt.at, level: "info", text: `[${selectedId}] Got ${toolNames.length} tools: ${toolNames.join(", ")}` });
           }
         }
       } else if (evt.kind === "raw_stderr") {
@@ -252,10 +264,10 @@ export const McpInspectorPanel: React.FC = () => {
             const parsed = JSON.parse(text);
             if (parsed.message) {
               const level = String(parsed.level ?? "INFO").toLowerCase();
-              entries.push({ at: evt.at, level: level === "warning" || level === "warn" ? "warn" : level === "error" ? "error" : "info", text: `[${parsed.logger ?? "server"}] ${parsed.message}` });
+              entries.push({ at: evt.at, level: level === "warning" || level === "warn" ? "warn" : level === "error" ? "error" : "info", text: `[${selectedId}] [${parsed.logger ?? "server"}] ${parsed.message}` });
             }
           } catch {
-            entries.push({ at: evt.at, level: "info", text: text });
+            entries.push({ at: evt.at, level: "info", text: `[${selectedId}] ${text}` });
           }
         }
       }
@@ -278,6 +290,18 @@ export const McpInspectorPanel: React.FC = () => {
       el.scrollTop = el.scrollHeight;
     } catch {}
   }, [autoScroll, traffic.length, logTab, expandedLogId]);
+
+  const getStateBadgeColor = (state: string): string => {
+    switch (state) {
+      case "IDLE": return "bg-zinc-700 text-zinc-200";
+      case "STARTING": return "bg-yellow-700 text-yellow-100";
+      case "INITIALIZED": return "bg-blue-700 text-blue-100";
+      case "LISTING_TOOLS": return "bg-purple-700 text-purple-100";
+      case "READY": return "bg-green-700 text-green-100";
+      case "ERROR": return "bg-red-700 text-red-100";
+      default: return "bg-zinc-700 text-zinc-200";
+    }
+  };
 
   const mergeServerConfigIntoDraft = (draftRaw: string, insertRaw: string): string => {
     const parsedDraft = JSON.parse(draftRaw);
@@ -553,7 +577,12 @@ export const McpInspectorPanel: React.FC = () => {
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="font-mono text-[11px] text-zinc-200">{s.id}</div>
-                      <div className="text-[10px] text-zinc-500">{st?.state ?? "IDLE"}</div>
+                      <div
+                        className={`text-[10px] px-2 py-0.5 rounded ${getStateBadgeColor(st?.state ?? "IDLE")}`}
+                        title={st?.lastError ? `Error: ${st.lastError}` : `State: ${st?.state ?? "IDLE"}`}
+                      >
+                        {st?.state ?? "IDLE"}
+                      </div>
                     </div>
                     <div className="text-[10px] text-zinc-500 truncate">{s.type === "http" ? s.url : s.command}</div>
                   </button>
@@ -573,6 +602,28 @@ export const McpInspectorPanel: React.FC = () => {
               </div>
             )}
           </div>
+
+          {selectedId && (
+            <div className="mt-3 border-t border-zinc-800 pt-2">
+              <div className="text-xs font-semibold text-zinc-300 mb-2">Crash History</div>
+              {(() => {
+                const crashHistory = mcpOrchestrator.getCrashHistory(selectedId);
+                if (crashHistory.length === 0) {
+                  return <div className="text-xs text-zinc-500">No crashes recorded.</div>;
+                }
+                return (
+                  <div className="space-y-1 max-h-32 overflow-auto">
+                    {crashHistory.map((crash, idx) => (
+                      <div key={idx} className="text-[11px] text-zinc-400">
+                        <span className="text-zinc-500">{new Date(crash.timestamp).toLocaleTimeString()}</span>
+                        <span className="ml-2 text-red-400">{crash.reason}</span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
 
           {!selectedId || !selected ? (
             <div className="text-sm text-zinc-500">Select a server.</div>
@@ -787,12 +838,32 @@ export const McpInspectorPanel: React.FC = () => {
             </div>
 
             <div ref={logsSectionRef} className="border border-zinc-800 rounded p-2 bg-zinc-950">
-              <div className="flex items-center gap-2 mb-2">
+              <div className="flex items-center gap-2 mb-2 flex-wrap">
                 <button onClick={() => setLogTab("lifecycle")} className={`text-xs px-2 py-1 rounded ${logTab === "lifecycle" ? "bg-emerald-800 text-white" : "text-zinc-400 hover:text-white"}`}>Lifecycle</button>
                 <button onClick={() => setLogTab("traffic")} className={`text-xs px-2 py-1 rounded ${logTab === "traffic" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"}`}>Traffic</button>
                 <button onClick={() => setLogTab("stdout")} className={`text-xs px-2 py-1 rounded ${logTab === "stdout" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"}`}>Stdout</button>
                 <button onClick={() => setLogTab("stderr")} className={`text-xs px-2 py-1 rounded ${logTab === "stderr" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"}`}>Stderr</button>
                 <button onClick={() => setLogTab("parse")} className={`text-xs px-2 py-1 rounded ${logTab === "parse" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"}`}>Parse</button>
+                <button onClick={() => setLogTab("errors")} className={`text-xs px-2 py-1 rounded ${logTab === "errors" ? "bg-red-800 text-white" : "text-zinc-400 hover:text-white"}`}>Errors{traffic.length > 0 && <span className="ml-1 px-1.5 py-0.5 bg-red-600 rounded-full text-[10px]">{traffic.length}</span>}</button>
+                <button onClick={() => setLogTab("app_logs")} className={`text-xs px-2 py-1 rounded ${logTab === "app_logs" ? "bg-blue-800 text-white" : "text-zinc-400 hover:text-white"}`}>App Logs</button>
+                <label className="flex items-center gap-1 ml-2 text-[11px] text-zinc-400">
+                  <input
+                    type="checkbox"
+                    checked={debugMode}
+                    onChange={(e) => {
+                      setDebugMode(e.target.checked);
+                      // Call setDebugMode on the client if available
+                      if (selectedId) {
+                        const session = (svc as any).sessions?.get(selectedId);
+                        if (session?.client?.setDebugMode) {
+                          session.client.setDebugMode(e.target.checked);
+                        }
+                      }
+                    }}
+                    className="w-3 h-3"
+                  />
+                  Debug
+                </label>
                 <input
                   value={logSearch}
                   onChange={(e) => setLogSearch(e.target.value)}
@@ -841,6 +912,30 @@ export const McpInspectorPanel: React.FC = () => {
                           <span className={entry.level === "error" ? "text-red-200" : entry.level === "warn" ? "text-yellow-200" : "text-zinc-200"}>
                             {entry.text}
                           </span>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                ) : logTab === "app_logs" ? (
+                  serverLogs.length === 0 ? (
+                    <div className="text-xs text-zinc-500">No app logs yet for this server.</div>
+                  ) : (
+                    <div className="space-y-1">
+                      {serverLogs.map((entry, idx) => (
+                        <div key={idx} className="flex items-start gap-2 text-[11px] font-mono">
+                          <span className="text-zinc-600 shrink-0">{entry.timestamp}</span>
+                          <span className={entry.level === "ERROR" ? "text-red-300" : entry.level === "WARN" ? "text-yellow-300" : "text-emerald-300"}>
+                            {entry.level === "ERROR" ? "✗" : entry.level === "WARN" ? "⚠" : "✓"}
+                          </span>
+                          <span className="text-zinc-400 shrink-0">[{entry.category}]</span>
+                          <span className={entry.level === "ERROR" ? "text-red-200" : entry.level === "WARN" ? "text-yellow-200" : "text-zinc-200"}>
+                            {entry.message}
+                          </span>
+                          {entry.details && (
+                            <pre className="mt-1 text-[9px] text-zinc-500 whitespace-pre-wrap break-all">
+                              {JSON.stringify(entry.details, null, 2)}
+                            </pre>
+                          )}
                         </div>
                       ))}
                     </div>

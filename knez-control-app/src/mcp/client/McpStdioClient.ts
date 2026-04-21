@@ -1,11 +1,13 @@
 import { Command, Child } from "@tauri-apps/plugin-shell";
 import { McpToolDefinition } from "../../services/McpTypes";
-import { logger } from "../../services/LogService";
+import { logger, LogLevel } from "../../services/LogService";
 import { isStdioServer, type McpServerConfig, type McpStdioServerConfig } from "../config/McpHostConfig";
 import type { McpTrafficEvent } from "../inspector/McpTraffic";
 import { getMcpAuthority } from "../authority";
 import { classifyMcpTimeout } from "./classifyTimeout";
 import { inferInitializeTimeoutMs, inferStdioPreferredFraming } from "./stdioHeuristics";
+import { MCP_LOG_METHODS, MCP_LOG_CATEGORIES } from "../inspector/McpLoggingConstants";
+import { extractConnectionParams, formatJsonRpcPayload } from "../inspector/McpLoggingHelpers";
 
 type McpRequest = {
   jsonrpc: "2.0";
@@ -87,10 +89,16 @@ export class McpStdioClient {
         error: string | null;
       }
     | null = null;
+  private serverId: string | null = null;
+  private debugMode: boolean = false;
 
   private setRequestFraming(next: "content-length" | "line") {
     if (this.hasWrittenRequest) return;
     this.requestFraming = next;
+  }
+
+  setDebugMode(enabled: boolean) {
+    this.debugMode = enabled;
   }
 
   async start(programName: string): Promise<void> {
@@ -119,15 +127,19 @@ export class McpStdioClient {
       const stderrTail = this.stderrLines.slice(-12).join("");
       this.lastExitCode = typeof evt.code === "number" ? evt.code : null;
       this.lastCloseTail = stderrTail ? stderrTail.trim() : null;
-      this.lastError = `mcp_process_closed_${evt.code ?? "null"}${stderrTail ? `: ${stderrTail.trim()}` : ""}`;
+      // Distinguish between normal shutdown (code 0 or null after shutdown request) and crashes
+      const isNormalShutdown = evt.code === 0 || (evt.code === null && this.lastWrite !== null);
+      this.lastError = isNormalShutdown 
+        ? `mcp_process_shutdown_${evt.code ?? "null"}${stderrTail ? `: ${stderrTail.trim()}` : ""}`
+        : `mcp_process_crashed_${evt.code ?? "null"}${stderrTail ? `: ${stderrTail.trim()}` : ""}`;
       this.pushTraffic({ kind: "process_closed", at: Date.now(), code: this.lastExitCode });
-      const err = new Error(
-        `mcp_process_closed_${evt.code ?? "null"}${stderrTail ? `: ${stderrTail.trim()}` : ""}`
-      );
-      logger.error("mcp", "MCP process closed", { code: evt.code ?? null, stderrTail: stderrTail.trim() || null });
+      const err = new Error(this.lastError);
+      logger.error("mcp", isNormalShutdown ? "MCP process shutdown" : "MCP process crashed", { code: evt.code ?? null, stderrTail: stderrTail.trim() || null });
       for (const p of this.pending.values()) p.reject(err);
       this.pending.clear();
       this.child = null;
+      this.initializeCompleted = false;
+      this.initializedNotificationSent = false;
     });
     cmd.on("error", (err) => {
       const e = this.asMcpError(err);
@@ -158,12 +170,28 @@ export class McpStdioClient {
     }
     const ua = navigator.userAgent.toLowerCase();
     const isWin = ua.includes("windows");
-    
+
     if (!isStdioServer(server)) throw new Error("mcp_config_invalid_type: expected stdio");
     if (!server.command) throw new Error("mcp_config_missing_command");
-    
+
+    this.serverId = server.id;
+    const category = MCP_LOG_CATEGORIES.PREFIX_LOCAL(server.id);
+    const params = extractConnectionParams(server);
+
     const args = Array.isArray(server.args) ? server.args : [];
     const command = server.command;
+
+    // Log connection start
+    await logger.writeServerLog(server.id, LogLevel.INFO, category, MCP_LOG_METHODS.SERVER_START, {
+      message: "Connecting with config...",
+      ...params
+    });
+
+    // Log client start
+    await logger.writeServerLog(server.id, LogLevel.INFO, category, MCP_LOG_METHODS.CLIENT_START, {
+      message: "Start With StdioServerParameters",
+      ...params
+    });
 
     this.stdoutBuffer = new Uint8Array(0);
     this.stderrLines = [];
@@ -192,26 +220,48 @@ export class McpStdioClient {
         });
     cmd.stdout.on("data", (chunk) => this.onStdout(chunk));
     cmd.stderr.on("data", (chunk) => this.onStderr(chunk));
-    cmd.on("close", (evt) => {
+    cmd.on("close", async (evt) => {
       const stderrTail = this.stderrLines.slice(-12).join("");
       this.lastExitCode = typeof evt.code === "number" ? evt.code : null;
       this.lastCloseTail = stderrTail ? stderrTail.trim() : null;
-      this.lastError = `mcp_process_closed_${evt.code ?? "null"}${stderrTail ? `: ${stderrTail.trim()}` : ""}`;
+      // Distinguish between normal shutdown (code 0 or null after shutdown request) and crashes
+      const isNormalShutdown = evt.code === 0 || (evt.code === null && this.lastWrite !== null);
+      this.lastError = isNormalShutdown
+        ? `mcp_process_shutdown_${evt.code ?? "null"}${stderrTail ? `: ${stderrTail.trim()}` : ""}`
+        : `mcp_process_crashed_${evt.code ?? "null"}${stderrTail ? `: ${stderrTail.trim()}` : ""}`;
       this.pushTraffic({ kind: "process_closed", at: Date.now(), code: this.lastExitCode });
-      const err = new Error(
-        `mcp_process_closed_${evt.code ?? "null"}${stderrTail ? `: ${stderrTail.trim()}` : ""}`
-      );
-      logger.error("mcp", "MCP process closed", { code: evt.code ?? null, stderrTail: stderrTail.trim() || null });
+      
+      const category = this.serverId ? MCP_LOG_CATEGORIES.PREFIX_LOCAL(this.serverId) : MCP_LOG_CATEGORIES.GENERIC;
+      await logger.writeServerLog(this.serverId ?? "unknown", LogLevel.INFO, category, MCP_LOG_METHODS.CLIENT_STOP, {
+        message: "MCPClient#onClose",
+        code: evt.code,
+        isNormalShutdown,
+        stderrTail: stderrTail.trim() || null
+      });
+      await logger.writeServerLog(this.serverId ?? "unknown", LogLevel.INFO, category, MCP_LOG_METHODS.SERVER_STOP, {
+        message: "Disconnected.",
+        code: evt.code
+      });
+      
+      const err = new Error(this.lastError);
+      logger.error("mcp", isNormalShutdown ? "MCP process shutdown" : "MCP process crashed", { code: evt.code ?? null, stderrTail: stderrTail.trim() || null });
       for (const p of this.pending.values()) p.reject(err);
       this.pending.clear();
       this.child = null;
       this.initializeCompleted = false;
       this.initializedNotificationSent = false;
     });
-    cmd.on("error", (err) => {
+    cmd.on("error", async (err) => {
       const e = this.asMcpError(err);
       this.lastError = String(e?.message ?? e);
       this.pushTraffic({ kind: "spawn_error", at: Date.now(), message: this.lastError });
+      
+      const category = this.serverId ? MCP_LOG_CATEGORIES.PREFIX_LOCAL(this.serverId) : MCP_LOG_CATEGORIES.GENERIC;
+      await logger.writeServerLog(this.serverId ?? "unknown", LogLevel.ERROR, category, MCP_LOG_METHODS.SERVER_START, {
+        message: "MCPServerManager#onError",
+        error: this.lastError
+      });
+      
       logger.error("mcp", "MCP spawn error", { error: this.lastError });
       for (const p of this.pending.values()) p.reject(e);
       this.pending.clear();
@@ -221,6 +271,11 @@ export class McpStdioClient {
     });
     try {
       this.child = await cmd.spawn();
+      const category = this.serverId ? MCP_LOG_CATEGORIES.PREFIX_LOCAL(this.serverId) : MCP_LOG_CATEGORIES.GENERIC;
+      await logger.writeServerLog(this.serverId ?? "unknown", LogLevel.INFO, category, MCP_LOG_METHODS.SERVER_START, {
+        message: "Connected.",
+        pid: this.child.pid
+      });
       logger.info("mcp", "MCP process started", {
         programName: "cmd",
         serverId: server.id,
@@ -481,6 +536,18 @@ export class McpStdioClient {
     const id = (msg as any).id;
     const key = id === undefined || id === null ? null : String(id);
     const slot = key ? this.pending.get(key) : undefined;
+    
+    // Log JSON-RPC response payload in debug mode
+    if (this.debugMode && key) {
+      const category = this.serverId ? MCP_LOG_CATEGORIES.PREFIX_LOCAL(this.serverId) : MCP_LOG_CATEGORIES.GENERIC;
+      logger.writeServerLog(this.serverId ?? "unknown", LogLevel.DEBUG, category, MCP_LOG_METHODS.RESPONSE, {
+        message: `Received response: ${slot?.method ?? "unknown"}`,
+        id: key,
+        ok: !("error" in msg),
+        jsonrpc_payload: formatJsonRpcPayload(msg)
+      }).catch(() => {});
+    }
+    
     if (!slot) {
       this.pushTraffic({ kind: "unsolicited", at: Date.now(), id: key, ok: !("error" in msg), json: msg });
       if ("error" in msg) logger.warn("mcp", "MCP unsolicited error", { id: key, code: msg.error.code, message: msg.error.message });
@@ -540,6 +607,17 @@ export class McpStdioClient {
     const id = String(this.nextId++);
     const req: McpRequest = { jsonrpc: "2.0", id, method, params };
     this.pushTraffic({ kind: "request", at: Date.now(), id, method, json: req });
+    
+    // Log JSON-RPC request payload in debug mode
+    if (this.debugMode) {
+      const category = this.serverId ? MCP_LOG_CATEGORIES.PREFIX_LOCAL(this.serverId) : MCP_LOG_CATEGORIES.GENERIC;
+      await logger.writeServerLog(this.serverId ?? "unknown", LogLevel.DEBUG, category, MCP_LOG_METHODS.REQUEST, {
+        message: `Sending request: ${method}`,
+        id,
+        jsonrpc_payload: formatJsonRpcPayload(req)
+      });
+    }
+    
     const payload = this.buildPayload(req);
     const previewBytes = payload.slice(0, Math.min(160, payload.length));
     const preview = (() => {
@@ -663,12 +741,21 @@ export class McpStdioClient {
     const protocolVersions = ["2024-11-05", "1.0"];
     const initTimeoutMs = inferInitializeTimeoutMs({ command: this.lastConfig?.command ?? null, args: this.lastConfig?.args ?? null });
 
+    const category = this.serverId ? MCP_LOG_CATEGORIES.PREFIX_LOCAL(this.serverId) : MCP_LOG_CATEGORIES.GENERIC;
+
     let firstAttempt = true;
     let lastErr: any = null;
     for (const framing of framings) {
       for (const protocolVersion of protocolVersions) {
+        const attemptStartedAt = performance.now();
         try {
-          const attemptStartedAt = performance.now();
+          await logger.writeServerLog(this.serverId ?? "unknown", LogLevel.INFO, category, MCP_LOG_METHODS.INITIALIZE_ATTEMPT, {
+            message: "Initialize attempt starting",
+            framing: this.requestFraming,
+            protocolVersion,
+            timeoutMs: initTimeoutMs
+          });
+          
           if (!firstAttempt) await this.restartWithFraming(framing);
           firstAttempt = false;
           const params = {
@@ -677,6 +764,14 @@ export class McpStdioClient {
             clientInfo: { name: "knez-control-app", version: "dev" }
           };
           const res = await this.request("initialize", params, { timeoutMs: initTimeoutMs, stopOnTimeout: false, logTimeoutLevel: "debug" });
+          
+          await logger.writeServerLog(this.serverId ?? "unknown", LogLevel.INFO, category, MCP_LOG_METHODS.INITIALIZE, {
+            message: "Initialize succeeded",
+            framing: this.requestFraming,
+            protocolVersion,
+            attemptDurationMs: Math.round(performance.now() - attemptStartedAt)
+          });
+          
           logger.info("mcp", "MCP initialize ok", {
             framing: this.requestFraming,
             protocolVersion,
@@ -686,6 +781,13 @@ export class McpStdioClient {
           this.initializeCompleted = true;
           return res;
         } catch (e: any) {
+          await logger.writeServerLog(this.serverId ?? "unknown", LogLevel.ERROR, category, MCP_LOG_METHODS.INITIALIZE_ATTEMPT, {
+            message: "Initialize attempt failed",
+            framing: this.requestFraming,
+            protocolVersion,
+            error: String(e?.message ?? e),
+            attemptDurationMs: Math.round(performance.now() - attemptStartedAt)
+          });
           lastErr = e;
         }
       }

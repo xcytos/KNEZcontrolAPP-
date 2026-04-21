@@ -17,7 +17,7 @@ import {
   ChevronDown,
   ChevronRight
 } from 'lucide-react';
-import { tabErrorStore } from '../../services/TabErrorStore';
+import { tabErrorStore } from '../../services/infrastructure/error/TabErrorStore';
 import { features } from '../../config/features';
 import { Badge } from '../ui/core/Badge';
 
@@ -38,7 +38,7 @@ interface Category {
 
 export const Sidebar: FC<SidebarProps> = ({ activeView, onViewChange, tabErrors }) => {
   const [errors, setErrors] = useState(() => tabErrorStore.get());
-  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(() => new Set());
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(() => new Set(['ai-ops', 'dev-tools', 'observability', 'advanced']));
   useEffect(() => tabErrorStore.subscribe(setErrors), []);
   const mergedErrors = { ...errors, ...(tabErrors ?? {}) };
 

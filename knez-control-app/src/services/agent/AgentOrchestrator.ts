@@ -14,7 +14,6 @@ import { agentTracer } from "./AgentTracer";
 import { knezClient } from "../KnezClient";
 import { toolExposureService } from "../ToolExposureService";
 import { toolExecutionService } from "../ToolExecutionService";
-import { logger } from "../LogService";
 
 export interface AgentCallbacks {
   onThinking: (isThinking: boolean) => void;
@@ -32,7 +31,7 @@ export interface AgentOrchestratorConfig {
 export class AgentOrchestrator {
   private config: AgentOrchestratorConfig = {
     maxAgentTime: 20000, // 20 seconds
-    maxSteps: 5
+    maxSteps: 10
   };
 
   constructor(config?: Partial<AgentOrchestratorConfig>) {
@@ -115,34 +114,13 @@ export class AgentOrchestrator {
         }
 
         step++;
-      }
+    }
 
-      // T14: after navigation, auto-snapshot so generateFinalAnswer has page content
-      if (!directAnswerProvided) {
-        const toolHistory = context.toolHistory ?? [];
-        const lastTool = toolHistory[toolHistory.length - 1];
-        const isNavResult = lastTool && /browser_navigate$/.test(lastTool.name) && lastTool.success;
-        if (isNavResult) {
-          const snapTool = toolExposureService.getToolsForModel().find((t) => /browser_snapshot$/.test(t.name));
-          if (snapTool) {
-            try {
-              callbacks.onToolStart(snapTool.name, {});
-              const snapResult = await this.executeTool(sessionId, snapTool.name, {});
-              callbacks.onToolEnd(snapTool.name, snapResult, true);
-              agentContextManager.addToolToHistory(sessionId, {
-                name: snapTool.name,
-                args: {},
-                result: snapResult,
-                success: true,
-                timestamp: Date.now()
-              });
-            } catch { /* snapshot is best-effort */ }
-          }
-        }
-
-        const finalAnswer = await this.generateFinalAnswer(sessionId, context);
-        callbacks.onFinal(finalAnswer);
-      }
+    // Generate final answer from tool results
+    if (!directAnswerProvided) {
+      const finalAnswer = await this.generateFinalAnswer(sessionId, context, callbacks);
+      callbacks.onFinal(finalAnswer);
+    }
 
       // End trace
       agentTracer.endTrace(sessionId);
@@ -173,33 +151,19 @@ export class AgentOrchestrator {
 
     agentLoopService.incrementStep(sessionId);
 
-    // PRE-MODEL: step 0 — detect tool intent directly from user text, bypass model for clear actions
-    let toolCall: { name: string; args: any } | null = step === 0
-      ? this.detectToolIntent(userInput)
-      : null;
+    // Call model to get decision (MODEL = authority, SYSTEM = executor)
+    const modelOutput = await this.callModel(sessionId, userInput, context);
+
+    const toolCall = this.parseToolCall(modelOutput);
 
     if (!toolCall) {
-      // Call model to get decision
-      const modelOutput = await this.callModel(sessionId, userInput, context);
-
-      toolCall = this.parseToolCall(modelOutput);
-
-      if (!toolCall) {
-        // POST-MODEL: if model refused, try intent detection as fallback
-        if (this.isRefusal(modelOutput)) {
-          toolCall = this.detectToolIntent(userInput);
-        }
-
-        if (!toolCall) {
-          const cleanOutput = modelOutput.replace(/^\/plain_text\s*/i, "").trim();
-          // Don't surface refusal text — let generateFinalAnswer handle empty case instead
-          if (cleanOutput && !this.isRefusal(modelOutput)) {
-            callbacks.onFinal(cleanOutput);
-            return { shouldStop: true, retryCount: 0, directAnswerProvided: true };
-          }
-          return { shouldStop: true, retryCount: 0, directAnswerProvided: false };
-        }
+      const cleanOutput = modelOutput.replace(/^\/plain_text\s*/i, "").trim();
+      // Model returned plain text - surface it directly
+      if (cleanOutput) {
+        callbacks.onFinal(cleanOutput);
+        return { shouldStop: true, retryCount: 0, directAnswerProvided: true };
       }
+      return { shouldStop: true, retryCount: 0, directAnswerProvided: false };
     }
 
     // Security gate
@@ -376,13 +340,14 @@ ${contextSummary}
   }
 
   /**
-   * Parse tool call from model output
+   * Parse tool call from model output using strict JSON parsing only
+   * No regex hacks, no manual extraction, no fallback parsing
    */
   private parseToolCall(modelOutput: string): { name: string; args: any } | null {
     const text = String(modelOutput ?? "").trim();
     if (!text) return null;
 
-    // Helper: try to extract a tool call from a parsed JSON object
+    // Helper: extract tool call from parsed JSON object
     const extractFromParsed = (parsed: any): { name: string; args: any } | null => {
       // Format 1: {"tool_call": {"name": "...", "arguments": {...}}}
       if (parsed?.tool_call?.name) {
@@ -401,155 +366,14 @@ ${contextSummary}
       return null;
     };
 
-    // Helper: extract first complete JSON object from text
-    const extractJson = (src: string): any | null => {
-      const start = src.indexOf("{");
-      if (start === -1) return null;
-      let depth = 0;
-      for (let i = start; i < src.length; i++) {
-        if (src[i] === "{") depth++;
-        else if (src[i] === "}") {
-          depth--;
-          if (depth === 0) {
-            try { return JSON.parse(src.slice(start, i + 1)); } catch { return null; }
-          }
-        }
-      }
-      return null;
-    };
-
-    // 1. Try direct JSON parse of the whole text
+    // Strict: Try direct JSON parse of the entire text only
     try {
       const parsed = JSON.parse(text);
-      const result = extractFromParsed(parsed);
-      if (result) return result;
-    } catch { /* not valid JSON */ }
-
-    // 2. Try markdown code blocks (```json ... ```)
-    const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\s*```/);
-    if (codeBlockMatch) {
-      try {
-        const parsed = JSON.parse(codeBlockMatch[1].trim());
-        const result = extractFromParsed(parsed);
-        if (result) return result;
-      } catch { /* invalid JSON in code block */ }
+      return extractFromParsed(parsed);
+    } catch {
+      // Invalid JSON - return null, don't try to fix it
+      return null;
     }
-
-    // 3. Try extracting first JSON object from mixed text
-    const parsed = extractJson(text);
-    if (parsed) {
-      const result = extractFromParsed(parsed);
-      if (result) return result;
-    }
-
-    return null;
-  }
-
-  /**
-   * T06 — Detect model refusal phrases so we can fall back to intent detection
-   */
-  private isRefusal(output: string): boolean {
-    const REFUSALS = [
-      /\bi(?:'m| am)\s+unable\s+to\b/i,
-      /\bi\s+(?:cannot|can't)\s+(?:directly\s+)?(?:run|execute|use|access|browse|navigate|visit|open|perform)\b/i,
-      /\bi\s+don't\s+have\s+(?:the\s+)?(?:ability|access|capability|tools?)\s+to\b/i,
-      /\bi\s+(?:cannot|can't|am\s+not\s+able\s+to)\s+(?:access|browse|open|visit|navigate|use)\b/i,
-      /(?:directly|actually)\s+(?:run|execute|access|use)\s+(?:tools|MCP|browser|playwright)/i,
-      /\bnot\s+(?:able|capable)\s+to\s+(?:run|execute|browse|navigate|use)\b/i,
-    ];
-    return REFUSALS.some((r) => r.test(output));
-  }
-
-  /**
-   * T01-T04, T08, T12 — Detect tool intent from user message without relying on model
-   * Maps natural language patterns directly to tool+args
-   */
-  private detectToolIntent(userInput: string): { name: string; args: any } | null {
-    const tools = toolExposureService.getToolsForModel();
-    logger.info("intent_detection", "detect_attempt", { toolCount: tools.length, inputPreview: userInput.slice(0, 80) });
-    if (!tools.length) return null;
-
-    const input = userInput.trim();
-
-    // Helper: find tool by name-suffix pattern
-    const find = (pat: RegExp) => tools.find((t) => pat.test(t.name)) ?? null;
-
-    // Helper: normalise URL — prepend https:// when scheme is missing
-    const normalizeUrl = (raw: string): string => {
-      const u = raw.trim().replace(/[.,!?;:)'"]+$/, "");
-      return /^https?:\/\//i.test(u) ? u : `https://${u}`;
-    };
-
-    // ── NAVIGATION (navigate/go/open/visit/browse/load + URL or domain) ──────
-    const navVerb = /(?:navigate|go|open|visit|browse|load)\s+(?:to\s+)?/i;
-    const navMatch = input.match(new RegExp(navVerb.source + "([a-zA-Z0-9][^\\s,!?]+)", "i"));
-    const inlineUrl = input.match(/\bhttps?:\/\/[^\s]+/i);
-    const bareUrl   = input.match(/\b([a-zA-Z0-9][-a-zA-Z0-9.]+\.[a-z]{2,}(?:\/[^\s]*)?)\b/i);
-
-    if (navMatch || inlineUrl || bareUrl) {
-      const navTool = find(/browser_navigate$/);
-      if (navTool) {
-        const raw = navMatch?.[1] ?? inlineUrl?.[0] ?? bareUrl?.[1] ?? "";
-        if (raw) return { name: navTool.name, args: { url: normalizeUrl(raw) } };
-      }
-    }
-
-    // ── SCREENSHOT ────────────────────────────────────────────────────────────
-    if (/(?:take\s+(?:a\s+)?)?screenshot|capture\s+(?:the\s+)?(?:screen|page)/i.test(input)) {
-      const t = find(/browser_take_screenshot$/);
-      if (t) return { name: t.name, args: { type: "png" } };
-    }
-
-    // ── SNAPSHOT / accessibility ──────────────────────────────────────────────
-    if (/\bsnapshot\b|accessibility\s+snapshot|page\s+(?:content|structure)/i.test(input)) {
-      const t = find(/browser_snapshot$/);
-      if (t) return { name: t.name, args: {} };
-    }
-
-    // ── CLICK ─────────────────────────────────────────────────────────────────
-    const clickMatch = input.match(/(?:click|press|tap)\s+(?:on\s+)?(?:the\s+)?(.{2,60?}?)(?:\s+button|\s+link|\s+icon|\s+tab)?(?:\s*$|[.,!?])/i);
-    if (clickMatch) {
-      const t = find(/browser_click$/);
-      if (t) return { name: t.name, args: { selector: clickMatch[1].trim(), element: clickMatch[1].trim() } };
-    }
-
-    // ── TYPE / FILL ───────────────────────────────────────────────────────────
-    const typeMatch = input.match(/(?:type|enter|input)\s+["']?(.+?)["']?\s+in(?:to)?\s+(?:the\s+)?(.+)/i);
-    if (typeMatch) {
-      const t = find(/browser_type$/);
-      if (t) return { name: t.name, args: { ref: typeMatch[2].trim(), text: typeMatch[1].trim() } };
-    }
-
-    // ── GO BACK ───────────────────────────────────────────────────────────────
-    if (/\bgo\s+back\b/i.test(input)) {
-      const t = find(/browser_navigate_back$/);
-      if (t) return { name: t.name, args: {} };
-    }
-
-    // ── CLOSE ─────────────────────────────────────────────────────────────────
-    if (/close\s+(?:the\s+)?(?:browser|page|tab)/i.test(input)) {
-      const t = find(/browser_close$/);
-      if (t) return { name: t.name, args: {} };
-    }
-
-    // ── TAQWIN tool patterns (T12) ────────────────────────────────────────────
-    if (/(?:taqwin\s+)?(?:server\s+)?status|get\s+status/i.test(input)) {
-      const t = find(/get_server_status$/);
-      if (t) return { name: t.name, args: {} };
-    }
-    if (/(?:taqwin\s+)?(?:session|create\s+session|list\s+sessions?)/i.test(input) && !/screenshot/.test(input)) {
-      const t = find(/session$/);
-      if (t) return { name: t.name, args: { action: "list" } };
-    }
-    if (/(?:web\s+(?:search|intelligence|research)|search\s+(?:the\s+)?web)/i.test(input)) {
-      const t = find(/web_intelligence$/);
-      if (t) {
-        const q = input.replace(/(?:web\s+(?:search|intelligence|research)|search\s+(?:the\s+)?web)\s+(?:for\s+)?/i, "").trim();
-        return { name: t.name, args: { query: q || input } };
-      }
-    }
-
-    return null;
   }
 
   /**
@@ -613,19 +437,26 @@ ${contextSummary}
   /**
    * Generate final answer
    */
-  private async generateFinalAnswer(sessionId: string, context: AgentContext): Promise<string> {
+  private async generateFinalAnswer(sessionId: string, context: AgentContext, callbacks?: AgentCallbacks): Promise<string> {
     const toolHistory = context.toolHistory ?? [];
     if (toolHistory.length === 0) {
-      // No tools ran — model gave an empty response. Try a plain-text fallback call.
+      // No tools ran — model gave an empty response. Try a plain-text fallback call with streaming.
       try {
         const fallback = [
           { role: "system", content: "You are a helpful assistant. Reply in plain text only, no JSON, no tool calls." },
           { role: "user", content: context.currentGoal }
         ];
-        const data = await knezClient.chatCompletionsNonStreamRaw(fallback as any, sessionId);
-        const fc = String(data?.choices?.[0]?.message?.content ?? "")
-          .replace(/^\/plain_text\s*/i, "")
-          .trim();
+        let fullResponse = "";
+        const controller = new AbortController();
+        for await (const chunk of knezClient.chatCompletionsStream(fallback as any, sessionId, { signal: controller.signal })) {
+          if (chunk && !chunk.includes('"tool_call"') && !chunk.startsWith('{')) {
+            fullResponse += chunk;
+            if (callbacks?.onStreamingChunk) {
+              callbacks.onStreamingChunk(chunk);
+            }
+          }
+        }
+        const fc = fullResponse.replace(/^\/plain_text\s*/i, "").trim();
         if (fc) return fc;
       } catch {
         // fall through
@@ -652,8 +483,17 @@ ${contextSummary}
     ];
 
     try {
-      const data = await knezClient.chatCompletionsNonStreamRaw(messages as any, sessionId);
-      const content = String(data?.choices?.[0]?.message?.content ?? "").trim();
+      let fullResponse = "";
+      const controller = new AbortController();
+      for await (const chunk of knezClient.chatCompletionsStream(messages as any, sessionId, { signal: controller.signal })) {
+        if (chunk && !chunk.includes('"tool_call"') && !chunk.startsWith('{')) {
+          fullResponse += chunk;
+          if (callbacks?.onStreamingChunk) {
+            callbacks.onStreamingChunk(chunk);
+          }
+        }
+      }
+      const content = fullResponse.trim();
       return content || "Task completed. See tool execution results above.";
     } catch {
       // If synthesis call fails, return a concise fallback using last result

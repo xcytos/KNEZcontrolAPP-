@@ -1,8 +1,10 @@
 import { McpToolDefinition } from "../../services/McpTypes";
-import { logger } from "../../services/LogService";
+import { logger, LogLevel } from "../../services/LogService";
 import type { McpServerConfig } from "../config/McpHostConfig";
 import { classifyMcpTimeout } from "./classifyTimeout";
 import type { McpTrafficEvent } from "../inspector/McpTraffic";
+import { MCP_LOG_METHODS, MCP_LOG_CATEGORIES } from "../inspector/McpLoggingConstants";
+import { extractConnectionParams, formatJsonRpcPayload } from "../inspector/McpLoggingHelpers";
 
 type McpRequest = {
   jsonrpc: "2.0";
@@ -69,6 +71,12 @@ export class McpHttpClient {
         error: string | null;
       }
     | null = null;
+  private serverId: string | null = null;
+  private debugMode: boolean = false;
+
+  setDebugMode(enabled: boolean) {
+    this.debugMode = enabled;
+  }
 
   async startWithConfig(server: McpServerConfig): Promise<void> {
     if ((server as any)?.type !== "http") {
@@ -76,6 +84,23 @@ export class McpHttpClient {
     }
     const url = String((server as any)?.url ?? "").trim();
     if (!url) throw new Error("mcp_http_missing_url");
+
+    this.serverId = server.id;
+    const category = MCP_LOG_CATEGORIES.PREFIX_LOCAL(server.id);
+    const params = extractConnectionParams(server);
+
+    // Log connection start
+    await logger.writeServerLog(server.id, LogLevel.INFO, category, MCP_LOG_METHODS.SERVER_START, {
+      message: "Connecting with config...",
+      ...params
+    });
+
+    // Log client start
+    await logger.writeServerLog(server.id, LogLevel.INFO, category, MCP_LOG_METHODS.CLIENT_START, {
+      message: "Start With HttpServerParameters",
+      ...params
+    });
+
     this.url = url;
     this.headers = asRecord((server as any)?.headers);
     this.sessionId = null;
@@ -85,9 +110,24 @@ export class McpHttpClient {
     this.lastError = null;
     this.lastTimeout = null;
     this.lastWrite = null;
+
+    await logger.writeServerLog(server.id, LogLevel.INFO, category, MCP_LOG_METHODS.SERVER_START, {
+      message: "Connected.",
+      url: this.url
+    });
   }
 
   async stop(): Promise<void> {
+    const category = this.serverId ? MCP_LOG_CATEGORIES.PREFIX_LOCAL(this.serverId) : MCP_LOG_CATEGORIES.GENERIC;
+    
+    await logger.writeServerLog(this.serverId ?? "unknown", LogLevel.INFO, category, MCP_LOG_METHODS.CLIENT_STOP, {
+      message: "MCPClient#stop"
+    });
+    
+    await logger.writeServerLog(this.serverId ?? "unknown", LogLevel.INFO, category, MCP_LOG_METHODS.SERVER_STOP, {
+      message: "Disconnected."
+    });
+    
     this.url = null;
     this.headers = {};
     this.sessionId = null;
@@ -177,6 +217,16 @@ export class McpHttpClient {
     const id = String(this.nextId++);
     const req: McpRequest = { jsonrpc: "2.0", id, method, params };
     this.pushTraffic({ kind: "request", at: Date.now(), id, method, json: req });
+    
+    // Log JSON-RPC request payload in debug mode
+    if (this.debugMode) {
+      const category = this.serverId ? MCP_LOG_CATEGORIES.PREFIX_LOCAL(this.serverId) : MCP_LOG_CATEGORIES.GENERIC;
+      await logger.writeServerLog(this.serverId ?? "unknown", LogLevel.DEBUG, category, MCP_LOG_METHODS.REQUEST, {
+        message: `Sending request: ${method}`,
+        id,
+        jsonrpc_payload: formatJsonRpcPayload(req)
+      });
+    }
 
     const bodyText = JSON.stringify(req);
     const bytes = (() => {
@@ -257,6 +307,18 @@ export class McpHttpClient {
         if (contentType.includes("text/event-stream") && res.body) {
           await this.parseSse(res.body, (obj: any) => {
             const msgId = obj?.id === undefined || obj?.id === null ? null : String(obj.id);
+            
+            // Log JSON-RPC response payload in debug mode
+            if (this.debugMode && msgId) {
+              const category = this.serverId ? MCP_LOG_CATEGORIES.PREFIX_LOCAL(this.serverId) : MCP_LOG_CATEGORIES.GENERIC;
+              logger.writeServerLog(this.serverId ?? "unknown", LogLevel.DEBUG, category, MCP_LOG_METHODS.RESPONSE, {
+                message: `Received response: ${method}`,
+                id: msgId,
+                ok: !("error" in obj),
+                jsonrpc_payload: formatJsonRpcPayload(obj)
+              }).catch(() => {});
+            }
+            
             if (msgId) {
               const slot = this.pending.get(msgId);
               this.pushTraffic({
@@ -335,17 +397,38 @@ export class McpHttpClient {
   }
 
   async initialize(): Promise<any> {
+    const category = this.serverId ? MCP_LOG_CATEGORIES.PREFIX_LOCAL(this.serverId) : MCP_LOG_CATEGORIES.GENERIC;
     const protocolVersions = ["2024-11-05", "1.0"];
     let lastErr: any = null;
     for (const protocolVersion of protocolVersions) {
+      const attemptStartedAt = performance.now();
       try {
+        await logger.writeServerLog(this.serverId ?? "unknown", LogLevel.INFO, category, MCP_LOG_METHODS.INITIALIZE_ATTEMPT, {
+          message: "Initialize attempt starting",
+          protocolVersion,
+          url: this.url
+        });
         const params = {
           protocolVersion,
           capabilities: {},
           clientInfo: { name: "knez-control-app", version: "dev" },
         };
-        return await this.request("initialize", params, { timeoutMs: 8000, stopOnTimeout: false, logTimeoutLevel: "debug" });
+        const res = await this.request("initialize", params, { timeoutMs: 8000, stopOnTimeout: false, logTimeoutLevel: "debug" });
+        
+        await logger.writeServerLog(this.serverId ?? "unknown", LogLevel.INFO, category, MCP_LOG_METHODS.INITIALIZE, {
+          message: "Initialize succeeded",
+          protocolVersion,
+          attemptDurationMs: Math.round(performance.now() - attemptStartedAt)
+        });
+        
+        return res;
       } catch (e: any) {
+        await logger.writeServerLog(this.serverId ?? "unknown", LogLevel.ERROR, category, MCP_LOG_METHODS.INITIALIZE_ATTEMPT, {
+          message: "Initialize attempt failed",
+          protocolVersion,
+          error: String(e?.message ?? e),
+          attemptDurationMs: Math.round(performance.now() - attemptStartedAt)
+        });
         lastErr = e;
       }
     }
