@@ -1488,11 +1488,11 @@ export class ChatService {
                   const startedAt = new Date().toISOString();
                   const traceId = newMessageId();
                   const traceMessageId = `${assistantId}-tool-${step}-${i}`;
-                  const toolCallMessage: ToolCallMessage = { tool: toolName, args, status: "calling", startedAt };
+                  const toolCallMessage: ToolCallMessage = { tool: toolName, args, status: "pending", startedAt };
                   await this.persistToolTrace(sessionId, {
                     id: traceMessageId,
                     sessionId,
-                    from: "knez",
+                    from: "tool_execution" as any,
                     text: "",
                     createdAt: startedAt,
                     traceId,
@@ -1502,6 +1502,11 @@ export class ChatService {
                     replyToMessageId: assistantId,
                     correlationId: assistantId
                   });
+
+                  // Transition to running after short delay for UI update
+                  setTimeout(() => {
+                    this.updateToolTrace(sessionId, traceMessageId, { toolCall: { ...toolCallMessage, status: "running" } });
+                  }, 50);
 
                   let result: any;
                   let ok = false;
