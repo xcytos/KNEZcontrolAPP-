@@ -58,6 +58,7 @@ export const ConnectionPage: React.FC<{
   const [events, setEvents] = useState<KnezEvent[] | null>(null);
   const [mcp, setMcp] = useState<McpRegistrySnapshot | null>(null);
   const [message, setMessage] = useState("");
+  const [modelState, setModelState] = useState<"unloaded" | "loading" | "loaded">("unloaded");
   const w = window as any;
   const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
 
@@ -65,7 +66,67 @@ export const ConnectionPage: React.FC<{
     const profile = knezClient.getProfile();
     setEndpoint(profile.endpoint);
     if (profile.trustLevel === "verified") setMessage("Trusted KNEZ instance configured.");
+    checkModelState();
   }, []);
+
+  const checkModelState = async () => {
+    try {
+      const resp = await fetch("http://localhost:11434/api/tags", { signal: AbortSignal.timeout(3000) });
+      if (resp.ok) {
+        const data = await resp.json() as any;
+        const models = data?.models ?? [];
+        if (models.length > 0) {
+          setModelState("loaded");
+        } else {
+          setModelState("unloaded");
+        }
+      } else {
+        setModelState("unloaded");
+      }
+    } catch (e) {
+      // Connection refused or timeout means Ollama not running
+      setModelState("unloaded");
+    }
+  };
+
+  const handleLoadModel = async () => {
+    // First check if Ollama is running
+    try {
+      const healthCheck = await fetch("http://localhost:11434/api/tags", { signal: AbortSignal.timeout(3000) });
+      if (!healthCheck.ok) {
+        setMessage("Ollama is not running. Start the local stack first.");
+        return;
+      }
+    } catch {
+      setMessage("Ollama is not running. Start the local stack first.");
+      return;
+    }
+
+    setModelState("loading");
+    setMessage("Loading model into memory...");
+    try {
+      const resp = await fetch("http://localhost:11434/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "qwen2.5:7b-instruct-q4_K_M",
+          prompt: "hello",
+          stream: false
+        }),
+        signal: AbortSignal.timeout(60000)
+      });
+      if (resp.ok) {
+        setModelState("loaded");
+        setMessage("Model loaded successfully.");
+      } else {
+        setModelState("unloaded");
+        setMessage("Failed to load model.");
+      }
+    } catch (e) {
+      setModelState("unloaded");
+      setMessage("Failed to load model.");
+    }
+  };
 
   const profile = useMemo(() => {
     return knezClient.getProfile();
@@ -169,6 +230,12 @@ export const ConnectionPage: React.FC<{
             <span className="text-zinc-500">trust</span>
             <span className="font-mono">{profile.trustLevel}</span>
           </div>
+          <div className="flex items-center justify-between">
+            <span className="text-zinc-500">model</span>
+            <span className={`font-mono ${modelState === "loaded" ? "text-green-400" : modelState === "loading" ? "text-yellow-400" : "text-orange-400"}`}>
+              {modelState === "loading" ? "loading..." : modelState === "loaded" ? "loaded" : "unloaded"}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -214,6 +281,14 @@ export const ConnectionPage: React.FC<{
         >
           {status === "checking" ? "Checking..." : "Check Health"}
         </button>
+        {modelState === "unloaded" && (
+          <button
+            onClick={handleLoadModel}
+            className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white text-sm rounded transition-colors"
+          >
+            Load Model
+          </button>
+        )}
       </div>
 
       <div className="text-xs text-zinc-400 border border-zinc-800 rounded p-3 bg-zinc-950/40">

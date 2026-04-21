@@ -121,6 +121,7 @@ export function useSystemOrchestrator(onReady?: () => void) {
 
       // Warmup model to prevent first-request delay
       setOutput((prev) => prev + "\n[Ollama] Warming up model (qwen2.5:7b-instruct-q4_K_M)...");
+      setOutput((prev) => prev + "[Ollama] Sending warmup request to load model into memory...");
       try {
         const warmupResp = await fetch("http://localhost:11434/api/generate", {
           method: "POST",
@@ -129,21 +130,25 @@ export function useSystemOrchestrator(onReady?: () => void) {
             model: "qwen2.5:7b-instruct-q4_K_M",
             prompt: "hello",
             stream: false
-          })
+          }),
+          signal: AbortSignal.timeout(60000)
         });
         if (warmupResp.ok) {
-          setOutput((prev) => prev + "[Ollama] ✓ Model warmed up successfully.\n");
+          setOutput((prev) => prev + "[Ollama] ✓ Model warmed up successfully and loaded into memory.\n");
         } else {
           setOutput((prev) => prev + "[Ollama] ⚠ Model warmup request failed (will load on first request).\n");
         }
       } catch (e) {
-        setOutput((prev) => prev + "[Ollama] ⚠ Model warmup failed (will load on first request).\n");
+        setOutput((prev) => prev + `[Ollama] ⚠ Model warmup failed: ${String(e)} (will load on first request).\n`);
       }
 
       // Start KNEZ
       setOutput((prev) => prev + "\n[2/2] Starting KNEZ backend...");
-      setOutput((prev) => prev + "[KNEZ] Model: qwen2.5:7b-instruct-q4_K_M");
-      setOutput((prev) => prev + "[KNEZ] Endpoint: http://127.0.0.1:8000");
+      setOutput((prev) => prev + "[KNEZ] Configuration:");
+      setOutput((prev) => prev + "[KNEZ]   Model: qwen2.5:7b-instruct-q4_K_M");
+      setOutput((prev) => prev + "[KNEZ]   Endpoint: http://127.0.0.1:8000");
+      setOutput((prev) => prev + "[KNEZ]   Path: C:\\Users\\syemd\\Downloads\\ASSETS\\controlAPP\\KNEZ");
+      setOutput((prev) => prev + "[KNEZ] Spawning uvicorn process via Rust shell plugin...");
       const knezPath = "C:\\Users\\syemd\\Downloads\\ASSETS\\controlAPP\\KNEZ";
       const knezCommand = Command.create("cmd", [
         "/c",
@@ -185,12 +190,12 @@ export function useSystemOrchestrator(onReady?: () => void) {
         noOutputTimeoutRef.current = null;
       }
       noOutputTimeoutRef.current = window.setTimeout(() => {
-        setOutput((prev) => prev + "\n[KNEZ] No output yet. Still waiting for startup...");
+        setOutput((prev) => prev + "\n[KNEZ] No output yet. Still waiting for uvicorn startup...");
       }, 5000);
 
       childRef.current = await knezCommand.spawn();
-      setOutput((prev) => prev + "[KNEZ] Process spawned successfully.");
-      setOutput((prev) => prev + "[KNEZ] Waiting for uvicorn to initialize (5s delay before health check)...\n");
+      setOutput((prev) => prev + "[KNEZ] ✓ Process spawned successfully (PID: unknown)");
+      setOutput((prev) => prev + "[KNEZ] Waiting for uvicorn to initialize (5s grace period before health check)...\n");
 
       // Wait 5s before starting health checks to give KNEZ time to fully start
       setTimeout(() => verifyHealthLoop(), 5000);
