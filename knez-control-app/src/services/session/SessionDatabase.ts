@@ -1,6 +1,7 @@
 
 import Dexie, { Table } from 'dexie';
 import { ChatMessage, AssistantMessage, Block, MessageState } from '../../domain/DataContracts';
+import { logger } from '../utils/LogService';
 
 export interface Session {
   id: string;
@@ -122,6 +123,14 @@ export class SessionDatabase {
   }
 
   async saveMessages(sessionId: string, messages: ChatMessage[]): Promise<void> {
+     if (!sessionId) {
+       logger.error("session_database", "save_messages_failed", { error: "sessionId is null or undefined" });
+       return;
+     }
+     if (!messages || messages.length === 0) {
+       logger.warn("session_database", "save_messages_empty", { sessionId });
+       return;
+     }
      // Batch put
      const rows: StoredMessage[] = messages.map(m => ({
        id: m.id,
