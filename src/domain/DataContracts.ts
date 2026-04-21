@@ -311,7 +311,15 @@ export interface HealthBackend {
 
 export interface KnezHealthResponse {
   status: "ok" | string;
+  model: string;
   backends: HealthBackend[];
+  ollama?: {
+    reachable: boolean;
+  };
+  model_state?: {
+    state: "unloaded" | "loading" | "loaded";
+    last_loaded_at: number | null;
+  };
 }
 
 export interface McpRegistryItem {

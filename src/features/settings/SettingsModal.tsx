@@ -6,6 +6,7 @@ import { useStatus } from "../../contexts/useStatus";
 import { sessionDatabase } from "../../services/session/SessionDatabase";
 import { getKeepAliveEnabled, setKeepAliveEnabled } from "../../services/infrastructure/config/Preferences";
 import { backendHasLiveMetrics, isBackendHealthyStatus, selectPrimaryBackend } from "../../utils/health";
+import { Command } from "@tauri-apps/plugin-shell";
 
 type PageId = "overview" | "connection";
 
@@ -24,6 +25,20 @@ export const SettingsModal: React.FC<{
   systemHealthProbe: HealthProbeStatus;
   onForceStart?: (force?: boolean) => void;
 }> = ({ onClose, systemStatus, systemOutput, systemHealthProbe, onForceStart }) => {
+  const w = window as any;
+  const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
+
+  const handleStop = async () => {
+    if (!isTauri) return;
+    try {
+      const killOllama = Command.create("cmd", ["/c", "taskkill", "/F", "/IM", "ollama.exe"]);
+      await killOllama.spawn();
+      const killPython = Command.create("cmd", ["/c", "taskkill", "/F", "/IM", "python.exe"]);
+      await killPython.spawn();
+    } catch (e) {
+      console.error("Failed to stop processes:", e);
+    }
+  };
   const { online, isConnected, isDegraded, health, healthFresh, cognitiveState } = useStatus();
   const [page, setPage] = useState<PageId>("overview");
   const [dbOk, setDbOk] = useState<boolean | null>(null);
@@ -216,7 +231,7 @@ export const SettingsModal: React.FC<{
                 </div>
               </div>
             ) : (
-              <ConnectionPage systemStatus={systemStatus} systemOutput={systemOutput} systemHealthProbe={systemHealthProbe} onForceStart={onForceStart} />
+              <ConnectionPage systemStatus={systemStatus} systemOutput={systemOutput} systemHealthProbe={systemHealthProbe} onForceStart={onForceStart} onStop={handleStop} />
             )}
           </div>
         </div>

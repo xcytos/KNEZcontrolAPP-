@@ -14,7 +14,7 @@ import { chatService } from '../../services/ChatService';
 import { sessionDatabase } from '../../services/session/SessionDatabase';
 import { sessionController } from '../../services/session/SessionController';
 import { logger } from '../../services/utils/LogService';
-import { FolderOpen, History, Loader2, MessageSquarePlus, MoreVertical, Play, Search, Square, TerminalSquare, Puzzle, Sparkles, Zap, Bug, Database } from "lucide-react";
+import { FolderOpen, History, Loader2, MessageSquarePlus, MoreVertical, Play, Search, Square, TerminalSquare, Puzzle, Sparkles, Zap, Bug, Database, ArrowUp } from "lucide-react";
 import { SessionInspectorModal } from "./SessionInspectorModal";
 import { DebugPanel } from "./DebugPanel";
 import { useStatus } from "../../contexts/useStatus";
@@ -48,6 +48,9 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [phase, setPhase] = useState<"idle" | "sending" | "thinking" | "tool_running" | "streaming" | "finalizing" | "done" | "error">("idle");
   const [activeTools, setActiveTools] = useState<{ search: boolean }>({ search: false });
   const [searchProvider, setSearchProvider] = useState<"off" | "taqwin" | "proxy">("off");
+  const [insertAboveIdx, setInsertAboveIdx] = useState<number | null>(null);
+  const [insertValue, setInsertValue] = useState("");
+  const [isMounted, setIsMounted] = useState(true);
   // Manual approval removed - tools auto-approve
   // const [pendingToolApproval, setPendingToolApproval] = useState<ChatState["pendingToolApproval"]>(null);
   const [inputValue, setInputValue] = useState("");
@@ -55,7 +58,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [validating, setValidating] = useState(false);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [forkingMsgId, setForkingMsgId] = useState<string | null>(null);
-  
+
   // CP15
   const [sessionName, setSessionName] = useState<string>("");
   const [renameOpen, setRenameOpen] = useState(false);
@@ -106,6 +109,13 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     setVisibleCount(50);
   }, [sessionId]);
 
+  // Cleanup on unmount to prevent stale state updates
+  useEffect(() => {
+    return () => {
+      setIsMounted(false);
+    };
+  }, []);
+
   const hiddenCount = Math.max(0, messages.length - visibleCount);
   const visibleMessages = messages.slice(-visibleCount);
 
@@ -131,6 +141,23 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     return () => window.removeEventListener("chat-focus-message", onFocus);
   }, []);
 
+  // Load draft from localStorage on mount
+  useEffect(() => {
+    const savedDraft = localStorage.getItem('knez_chat_draft');
+    if (savedDraft && inputValue === "") {
+      setInputValue(savedDraft);
+    }
+  }, []);
+
+  // Auto-save draft to localStorage
+  useEffect(() => {
+    if (inputValue) {
+      localStorage.setItem('knez_chat_draft', inputValue);
+    } else {
+      localStorage.removeItem('knez_chat_draft');
+    }
+  }, [inputValue]);
+
   // Accessibility: Escape to close modals
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -140,6 +167,10 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         else if (renameOpen) setRenameOpen(false);
         else if (headerMenuOpen) setHeaderMenuOpen(false);
       }
+      if (e.ctrlKey && e.key === "k") {
+        // New session
+        // TODO: Implement new session logic
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -148,11 +179,13 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   // Sync with Service
   useEffect(() => {
     const unsub = chatService.subscribe((state) => {
-       setMessages(state.messages);
-       setAssistantMessages(state.assistantMessages);
-       setPhase(state.phase);
-       setActiveTools(state.activeTools);
-       setSearchProvider(state.searchProvider);
+      if (isMounted) {
+        setMessages(state.messages);
+        setAssistantMessages(state.assistantMessages);
+        setPhase(state.phase);
+        setActiveTools(state.activeTools);
+        setSearchProvider(state.searchProvider);
+      }
        // Manual approval removed - tools auto-approve
        // setPendingToolApproval(state.pendingToolApproval);
     });
@@ -773,36 +806,93 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
               });
 
               return mergedMessages.map((item, idx) => {
-                if (item.type === 'message') {
-                  return (
-                    <MessageItem
-                      key={item.data.id || idx}
-                      msg={item.data}
-                      onEdit={handleEdit}
-                      onStop={handleStop}
-                      onRetry={handleRetry}
-                      readOnly={readOnly}
-                    />
-                  );
-                } else {
-                  return (
-                    <div key={item.data.id} className="flex gap-3 max-w-full min-w-0">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs font-medium text-zinc-400">Assistant</span>
-                          <span className="text-[10px] text-zinc-600">{new Date(item.data.createdAt).toLocaleTimeString()}</span>
-                        </div>
-                        <div className="text-sm text-zinc-300">
-                          <AssistantMessageRenderer
-                            blocks={item.data.blocks}
-                            onApprovalApprove={() => {}}
-                            onApprovalReject={() => {}}
+                const isLast = idx === mergedMessages.length - 1;
+                const showArrow = !isLast && item.type === 'assistant' && phase === "idle";
+
+                return (
+                  <React.Fragment key={item.data.id || idx}>
+                    {showArrow && (
+                      <div className="flex justify-center my-2">
+                        <button
+                          type="button"
+                          onClick={() => setInsertAboveIdx(insertAboveIdx === idx ? null : idx)}
+                          className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-900/50 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600 text-xs transition-all"
+                          title="Insert message above"
+                        >
+                          <ArrowUp size={14} />
+                          <span>Add message above</span>
+                        </button>
+                      </div>
+                    )}
+                    {insertAboveIdx === idx && (
+                      <div className="flex justify-center my-2">
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            if (insertValue.trim()) {
+                              void chatService.sendMessage(insertValue, `[SYSTEM: Inserted above message ${idx}]`);
+                              setInsertValue("");
+                              setInsertAboveIdx(null);
+                            }
+                          }}
+                          className="flex gap-2 w-full max-w-2xl"
+                        >
+                          <input
+                            type="text"
+                            autoFocus
+                            value={insertValue}
+                            onChange={(e) => setInsertValue(e.target.value)}
+                            placeholder="Type a message to insert above..."
+                            className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 transition-all"
                           />
+                          <button
+                            type="submit"
+                            disabled={!insertValue.trim()}
+                            className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            Insert
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setInsertAboveIdx(null);
+                              setInsertValue("");
+                            }}
+                            className="px-4 py-2 rounded-lg text-sm font-medium bg-zinc-900 border border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:text-white transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </form>
+                      </div>
+                    )}
+                    {item.type === 'message' ? (
+                      <MessageItem
+                        key={item.data.id || idx}
+                        msg={item.data}
+                        onEdit={handleEdit}
+                        onStop={handleStop}
+                        onRetry={handleRetry}
+                        readOnly={readOnly}
+                      />
+                    ) : (
+                      <div className="flex gap-3 max-w-full min-w-0">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs font-medium text-zinc-400">Assistant</span>
+                            <span className="text-[10px] text-zinc-600">{new Date(item.data.createdAt).toLocaleTimeString()}</span>
+                          </div>
+                          <div className="text-sm text-zinc-300">
+                            <AssistantMessageRenderer
+                              blocks={item.data.blocks}
+                              onApprovalApprove={() => {}}
+                              onApprovalReject={() => {}}
+                            />
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                }
+                    )}
+                  </React.Fragment>
+                );
               });
             })()}
 
