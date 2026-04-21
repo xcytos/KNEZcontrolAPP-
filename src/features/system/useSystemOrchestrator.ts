@@ -66,7 +66,7 @@ export function useSystemOrchestrator(onReady?: () => void) {
     // Also checking __TAURI_IPC__ for v2.
     const w = window as any;
     const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
-    
+
     if (!isTauri) {
       setOutput((prev) => prev + "\n[Web Mode] Shell unavailable. Launch requires the desktop app.");
       setStatus("failed");
@@ -74,33 +74,75 @@ export function useSystemOrchestrator(onReady?: () => void) {
     }
 
     try {
-      setOutput((prev) => prev + "\n[Shell] Spawning start-local-stack...");
-      const command = Command.create("start-local-stack");
-      
-      command.on("close", (data) => {
-        setOutput((prev) => prev + `\n[Process exited with code ${data.code}]`);
+      // Direct Rust spawn instead of PowerShell script
+      setOutput((prev) => prev + "\n[Rust Spawn] Starting Ollama...");
+
+      // Start Ollama first
+      const ollamaCommand = Command.create("ollama", ["serve"]);
+      ollamaCommand.on("error", (error) => {
+        setOutput((prev) => prev + `\n[Ollama Error] ${error}`);
+      });
+      ollamaCommand.stdout.on("data", (line) => {
+        setOutput((prev) => prev + `[Ollama] ${line}\n`);
+      });
+      ollamaCommand.stderr.on("data", (line) => {
+        setOutput((prev) => prev + `[Ollama STDERR] ${line}\n`);
+      });
+
+      await ollamaCommand.spawn();
+      setOutput((prev) => prev + "\n[Rust Spawn] Ollama started. Waiting for readiness...");
+
+      // Wait for Ollama to be ready
+      let ollamaReady = false;
+      for (let i = 0; i < 20; i++) {
+        try {
+          const testResp = await fetch("http://localhost:11434/api/tags");
+          if (testResp.ok) {
+            ollamaReady = true;
+            setOutput((prev) => prev + "\n[Rust Spawn] Ollama is ready.");
+            break;
+          }
+        } catch {}
+        await new Promise(r => setTimeout(r, 1000));
+      }
+
+      if (!ollamaReady) {
+        setOutput((prev) => prev + "\n[Rust Spawn] Ollama failed to become ready.");
+        setStatus("failed");
+        return;
+      }
+
+      // Start KNEZ
+      setOutput((prev) => prev + "\n[Rust Spawn] Starting KNEZ...");
+      const knezPath = "C:\\Users\\syedm\\Downloads\\ASSETS\\controlAPP\\KNEZ";
+      const knezCommand = Command.create("python", [
+        "-m", "uvicorn",
+        "knez.knez_core.app:app",
+        "--app-dir", knezPath,
+        "--host", "127.0.0.1",
+        "--port", "8000"
+      ]);
+      knezCommand.on("close", (data) => {
+        setOutput((prev) => prev + `\n[KNEZ exited with code ${data.code}]`);
         if (data.code !== 0) setStatus("failed");
       });
-
-      command.on("error", (error) => {
-        setOutput((prev) => prev + `\n[Error] ${error}`);
+      knezCommand.on("error", (error) => {
+        setOutput((prev) => prev + `\n[KNEZ Error] ${error}`);
         setStatus("failed");
       });
-
-      command.stdout.on("data", (line) => {
+      knezCommand.stdout.on("data", (line) => {
         if (noOutputTimeoutRef.current !== null) {
           clearTimeout(noOutputTimeoutRef.current);
           noOutputTimeoutRef.current = null;
         }
-        setOutput((prev) => prev + line + "\n");
+        setOutput((prev) => prev + `[KNEZ] ${line}\n`);
       });
-
-      command.stderr.on("data", (line) => {
+      knezCommand.stderr.on("data", (line) => {
         if (noOutputTimeoutRef.current !== null) {
           clearTimeout(noOutputTimeoutRef.current);
           noOutputTimeoutRef.current = null;
         }
-        setOutput((prev) => prev + `[STDERR] ${line}\n`);
+        setOutput((prev) => prev + `[KNEZ STDERR] ${line}\n`);
       });
 
       if (noOutputTimeoutRef.current !== null) {
@@ -108,10 +150,10 @@ export function useSystemOrchestrator(onReady?: () => void) {
         noOutputTimeoutRef.current = null;
       }
       noOutputTimeoutRef.current = window.setTimeout(() => {
-        setOutput((prev) => prev + "\n[Shell] No output yet. Still waiting...");
+        setOutput((prev) => prev + "\n[Rust Spawn] No output yet. Still waiting...");
       }, 5000);
 
-      childRef.current = await command.spawn();
+      childRef.current = await knezCommand.spawn();
 
       // Wait 5s before starting health checks to give KNEZ time to fully start
       setTimeout(() => verifyHealthLoop(), 5000);

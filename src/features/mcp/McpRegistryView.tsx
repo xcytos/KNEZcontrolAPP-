@@ -812,7 +812,7 @@ export const McpRegistryView: React.FC<{
   );
 
   return (
-    <div className="p-6">
+    <div className="p-6 overflow-visible">
       <div className="flex justify-between items-center mb-4">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
@@ -889,7 +889,7 @@ export const McpRegistryView: React.FC<{
       </div>
 
       {tab === "registry" ? (
-        <div className="space-y-4">
+        <div className="space-y-4 overflow-visible">
           {Object.entries(groupedItems).map(([group, groupItems]) => {
             if (groupItems.length === 0) return null;
             
@@ -902,7 +902,7 @@ export const McpRegistryView: React.FC<{
               <div key={group}>
                 <GroupHeader name={groupName} count={groupItems.length} group={group} />
                 {!isCollapsed && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-2">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-2 overflow-visible">
                     {groupItems.map((item: any) => {
                       const server = runtimeById[item.id];
                       const toolCount = server?.tools?.length ?? 0;
@@ -920,7 +920,7 @@ export const McpRegistryView: React.FC<{
                                      'bg-zinc-800 text-zinc-500 border-zinc-700';
                       
                       return (
-                        <div key={item.id} className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden hover:border-zinc-700 transition-colors">
+                        <div key={item.id} className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-visible hover:border-zinc-700 transition-colors relative" style={{ zIndex: 10 }}>
                           {/* A4: Status indicator bar */}
                           <div className={`h-1 ${statusColor}`} />
                           
@@ -1000,7 +1000,7 @@ export const McpRegistryView: React.FC<{
                                 </button>
                                 
                                 {expanded === item.id && (
-                                  <div className="absolute right-0 top-full mt-1 w-48 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl" style={{ zIndex: 100 }}>
+                                  <div className="absolute right-0 top-full mt-1 w-48 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl" style={{ zIndex: 2000 }}>
                                     <div className="p-1">
                                       <button
                                         onClick={() => {
