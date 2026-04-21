@@ -258,6 +258,28 @@ export class KnezClient {
     }
     this.sessionId = sessionId;
     logger.info("knez_client", "Client initialized", { profile: this.profile.id });
+
+    // Fetch and log available models from Ollama
+    void this.fetchAndLogModels();
+  }
+
+  private async fetchAndLogModels(): Promise<void> {
+    try {
+      const resp = await fetch("http://localhost:11434/api/tags");
+      if (resp.ok) {
+        const data = await resp.json() as any;
+        const models = data?.models ?? [];
+        const modelNames = models.map((m: any) => m.name).join(", ");
+        logger.info("knez_client", "available_models_loaded", { count: models.length, models: modelNames });
+      }
+    } catch (e) {
+      // Silently ignore if Ollama not running - will be logged when health check runs
+      // Only log if it's not a connection refused error
+      const errMsg = String(e);
+      if (!errMsg.includes("ERR_CONNECTION_REFUSED") && !errMsg.includes("Failed to fetch")) {
+        logger.warn("knez_client", "failed_to_fetch_models", { error: errMsg });
+      }
+    }
   }
 
   private baseUrl(): string {

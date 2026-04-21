@@ -2835,8 +2835,8 @@ export class ChatService {
         // PART 2: Ensure phase is not stuck in thinking/streaming
         const currentPhase = this.phaseManager?.getPhase() as ChatPhase ?? this.state.phase;
         if (currentPhase === "thinking" || currentPhase === "streaming") {
-          logger.warn("chat_service", "phase_stuck_resetting", { currentPhase });
-          this.setPhase("STREAM_END", id);
+          logger.warn("chat_service", "phase_stuck_resetting_to_error", { currentPhase });
+          this.setPhase("ERROR", id);
         }
       }
     }

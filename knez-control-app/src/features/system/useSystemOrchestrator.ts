@@ -75,7 +75,8 @@ export function useSystemOrchestrator(onReady?: () => void) {
 
     try {
       // Direct Rust spawn instead of PowerShell script
-      setOutput((prev) => prev + "\n[Rust Spawn] Starting Ollama...");
+      setOutput((prev) => prev + "\n[1/2] Starting Ollama server...");
+      setOutput((prev) => prev + "[Ollama] Spawning ollama serve via Rust shell plugin...");
 
       // Start Ollama first using cmd scope
       const ollamaCommand = Command.create("cmd", ["/c", "ollama", "serve"]);
@@ -90,7 +91,8 @@ export function useSystemOrchestrator(onReady?: () => void) {
       });
 
       await ollamaCommand.spawn();
-      setOutput((prev) => prev + "\n[Rust Spawn] Ollama started. Waiting for readiness...");
+      setOutput((prev) => prev + "[Ollama] Process spawned successfully.");
+      setOutput((prev) => prev + "[Ollama] Waiting for API to become ready (polling /api/tags)...");
 
       // Wait for Ollama to be ready
       let ollamaReady = false;
@@ -99,35 +101,68 @@ export function useSystemOrchestrator(onReady?: () => void) {
           const testResp = await fetch("http://localhost:11434/api/tags");
           if (testResp.ok) {
             ollamaReady = true;
-            setOutput((prev) => prev + "\n[Rust Spawn] Ollama is ready.");
+            const data = await testResp.json() as any;
+            const models = data?.models ?? [];
+            const modelNames = models.map((m: any) => m.name).join(", ");
+            setOutput((prev) => prev + `[Ollama] API ready! Found ${models.length} model(s): ${modelNames || "none"}\n`);
+            setOutput((prev) => prev + "[Ollama] ✓ Ready to accept requests.\n");
             break;
           }
         } catch {}
+        setOutput((prev) => prev + `[Ollama] Waiting... (${i + 1}/20)`);
         await new Promise(r => setTimeout(r, 1000));
       }
 
       if (!ollamaReady) {
-        setOutput((prev) => prev + "\n[Rust Spawn] Ollama failed to become ready.");
+        setOutput((prev) => prev + "\n[Ollama] ✗ Failed to become ready after 20 attempts.");
         setStatus("failed");
         return;
       }
 
+      // Warmup model to prevent first-request delay
+      setOutput((prev) => prev + "\n[Ollama] Warming up model (qwen2.5:7b-instruct-q4_K_M)...");
+      try {
+        const warmupResp = await fetch("http://localhost:11434/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "qwen2.5:7b-instruct-q4_K_M",
+            prompt: "hello",
+            stream: false
+          })
+        });
+        if (warmupResp.ok) {
+          setOutput((prev) => prev + "[Ollama] ✓ Model warmed up successfully.\n");
+        } else {
+          setOutput((prev) => prev + "[Ollama] ⚠ Model warmup request failed (will load on first request).\n");
+        }
+      } catch (e) {
+        setOutput((prev) => prev + "[Ollama] ⚠ Model warmup failed (will load on first request).\n");
+      }
+
       // Start KNEZ
-      setOutput((prev) => prev + "\n[Rust Spawn] Starting KNEZ...");
-      const knezPath = "C:\\Users\\syedm\\Downloads\\ASSETS\\controlAPP\\KNEZ";
-      const knezCommand = Command.create("python", [
-        "-m", "uvicorn",
+      setOutput((prev) => prev + "\n[2/2] Starting KNEZ backend...");
+      setOutput((prev) => prev + "[KNEZ] Model: qwen2.5:7b-instruct-q4_K_M");
+      setOutput((prev) => prev + "[KNEZ] Endpoint: http://127.0.0.1:8000");
+      const knezPath = "C:\\Users\\syemd\\Downloads\\ASSETS\\controlAPP\\KNEZ";
+      const knezCommand = Command.create("cmd", [
+        "/c",
+        "set", "DEFAULT_MODEL=qwen2.5:7b-instruct-q4_K_M",
+        "&&",
+        "cd", "/d", knezPath,
+        "&&",
+        "python", "-m", "uvicorn",
         "knez.knez_core.app:app",
-        "--app-dir", knezPath,
+        "--app-dir", ".",
         "--host", "127.0.0.1",
         "--port", "8000"
       ]);
       knezCommand.on("close", (data) => {
-        setOutput((prev) => prev + `\n[KNEZ exited with code ${data.code}]`);
+        setOutput((prev) => prev + `\n[KNEZ] Process exited with code ${data.code}`);
         if (data.code !== 0) setStatus("failed");
       });
       knezCommand.on("error", (error) => {
-        setOutput((prev) => prev + `\n[KNEZ Error] ${error}`);
+        setOutput((prev) => prev + `\n[KNEZ] Error: ${error}`);
         setStatus("failed");
       });
       knezCommand.stdout.on("data", (line) => {
@@ -150,10 +185,12 @@ export function useSystemOrchestrator(onReady?: () => void) {
         noOutputTimeoutRef.current = null;
       }
       noOutputTimeoutRef.current = window.setTimeout(() => {
-        setOutput((prev) => prev + "\n[Rust Spawn] No output yet. Still waiting...");
+        setOutput((prev) => prev + "\n[KNEZ] No output yet. Still waiting for startup...");
       }, 5000);
 
       childRef.current = await knezCommand.spawn();
+      setOutput((prev) => prev + "[KNEZ] Process spawned successfully.");
+      setOutput((prev) => prev + "[KNEZ] Waiting for uvicorn to initialize (5s delay before health check)...\n");
 
       // Wait 5s before starting health checks to give KNEZ time to fully start
       setTimeout(() => verifyHealthLoop(), 5000);
