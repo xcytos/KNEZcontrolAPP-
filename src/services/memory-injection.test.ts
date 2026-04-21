@@ -5,8 +5,8 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { getMemoryLoaderService } from './MemoryLoaderService';
-import { getMemoryEventSourcingService } from './MemoryEventSourcingService';
+import { getMemoryLoaderService } from './memory/MemoryLoaderService';
+import { getMemoryEventSourcingService } from './memory/storage/MemoryEventSourcingService';
 import * as fs from 'fs';
 import * as path from 'path';
 

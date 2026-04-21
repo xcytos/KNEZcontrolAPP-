@@ -1,4 +1,4 @@
-import type { McpToolDefinition } from "../../services/McpTypes";
+import type { McpToolDefinition } from "../../services/mcp/McpTypes";
 import { mcpOrchestrator } from "../McpOrchestrator";
 
 function isTauriRuntime(): boolean {

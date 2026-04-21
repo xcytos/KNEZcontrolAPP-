@@ -1,4 +1,4 @@
 // Session services
-export { SessionDatabase } from './SessionDatabase';
-export { sessionController } from './SessionController';
+export { SessionDatabase } from '../session/SessionDatabase';
+export { sessionController } from '../session/SessionController';
 export { SessionIsolationHardener } from './SessionIsolationHardener';

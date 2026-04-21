@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { MemoryData } from '../../services/StaticMemoryLoader';
+import { MemoryData } from '../../services/memory/StaticMemoryLoader';
 
 type Props = {
   isOpen: boolean;

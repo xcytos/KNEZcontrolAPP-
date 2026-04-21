@@ -10,7 +10,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { getMemoryEventSourcingService, MemoryState } from '../../services/MemoryEventSourcingService';
+import { getMemoryEventSourcingService, MemoryState } from '../../services/memory/storage/MemoryEventSourcingService';
 
 export const LearningMistakesVisualization: React.FC = () => {
   const [learnings, setLearnings] = useState<MemoryState[]>([]);

@@ -5,8 +5,8 @@
 // T3: Self-Correcting Navigation — generates URL alternatives on failure.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { deduplicateAndExclude } from "../utils/arrayUtils";
-import { SLICE_LIMITS, TIMEOUT_CONFIG } from "../config/features";
+import { deduplicateAndExclude } from "../../utils/arrayUtils";
+import { SLICE_LIMITS, TIMEOUT_CONFIG } from "../../config/features";
 
 export interface ValidatedToolResult {
   isValid: boolean;

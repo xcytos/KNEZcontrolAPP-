@@ -5,7 +5,7 @@
 //     classification, remediation suggestions, effectiveness tracking.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getFallbackChain, fallbackManager } from "./FallbackStrategy";
+import { getFallbackChain, fallbackManager } from '../utils/FallbackStrategy';
 
 export type RetryStrategy = "same" | "modified_args" | "alternative_tool" | "fallback";
 

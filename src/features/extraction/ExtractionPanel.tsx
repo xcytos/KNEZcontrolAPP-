@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useToast } from '../../components/ui/Toast';
-import { extractionService } from '../../services/ExtractionService';
+import { extractionService } from '../../services/utils/ExtractionService';
 
 export const ExtractionPanel: React.FC = () => {
   const { showToast } = useToast();

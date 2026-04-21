@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Command } from "@tauri-apps/plugin-shell";
 import { taqwinMcpService } from "../../mcp/taqwin/TaqwinMcpService";
-import { McpToolDefinition } from "../../services/McpTypes";
-import { sessionController } from "../../services/SessionController";
-import { knezClient } from "../../services/KnezClient";
-import { logger } from "../../services/LogService";
+import { McpToolDefinition } from "../../services/mcp/McpTypes";
+import { sessionController } from '../../services/session/SessionController';
+import { knezClient } from '../../services/knez/KnezClient';
+import { logger } from '../../services/utils/LogService';
 import { mcpHostConfigService } from "../../mcp/config/McpHostConfigService";
 import { normalizeTaqwinMcpServer, parseMcpHostConfigJson, validateTaqwinMcpServer, isStdioServer } from "../../mcp/config/McpHostConfig";
 import { useTaqwinMcpStatus } from "../../hooks/useTaqwinMcpStatus";

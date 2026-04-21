@@ -13,8 +13,8 @@ import {
   PerceptionSnapshot,
   ActiveWindowInfo,
   KnowledgeDoc
-} from "../domain/DataContracts";
-import { AppError } from "../domain/Errors";
+} from '../../domain/DataContracts';
+import { AppError } from '../../domain/Errors';
 
 export type KnezMemoryRecord = {
   memory_id: string;
@@ -209,7 +209,7 @@ function newSessionId(): string {
 
 const testFailOnce = new Set<string>();
 
-import { logger } from "./utils/LogService";
+import { logger } from  '../utils/LogService';
 
 async function safeRequest<T>(fn: () => Promise<T>, context: string): Promise<T> {
   const MAX_RETRIES = 3;
@@ -661,22 +661,44 @@ export class KnezClient {
     const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
     try {
       const resp = await fetch(`${this.baseUrl()}/sessions/${sessionId}/resume_snapshot`, { signal: controller.signal });
-      if (!resp.ok) return null;
+      if (resp.status === 404) {
+        // TICKET-4: Expected when no snapshot exists — suppress console noise
+        logger.debug("knez_client", "resume_snapshot_not_found", { sessionId });
+        return null;
+      }
+      if (!resp.ok) {
+        logger.debug("knez_client", "resume_snapshot_error", { sessionId, status: resp.status });
+        return null;
+      }
       return await resp.json();
     } catch (e: any) {
       if (e?.name === "AbortError") {
         throw new AppError("KNEZ_TIMEOUT", "Resume snapshot timed out", { timeoutMs });
       }
-      throw e;
+      logger.debug("knez_client", "resume_snapshot_fetch_error", { sessionId, error: String(e) });
+      return null;
     } finally {
       clearTimeout(timeoutId);
     }
   }
 
   async getSessionLineageChain(sessionId: string): Promise<{ head: string; chain: any[] } | null> {
-    const resp = await fetch(`${this.baseUrl()}/sessions/${sessionId}/lineage`);
-    if (!resp.ok) return null;
-    return await resp.json();
+    try {
+      const resp = await fetch(`${this.baseUrl()}/sessions/${sessionId}/lineage`);
+      if (resp.status === 404) {
+        // TICKET-4: Expected when no lineage exists — suppress console noise
+        logger.debug("knez_client", "lineage_not_found", { sessionId });
+        return null;
+      }
+      if (!resp.ok) {
+        logger.debug("knez_client", "lineage_error", { sessionId, status: resp.status });
+        return null;
+      }
+      return await resp.json();
+    } catch (e: any) {
+      logger.debug("knez_client", "lineage_fetch_error", { sessionId, error: String(e) });
+      return null;
+    }
   }
 
   async getOperatorControls(): Promise<{ enabled: boolean, policies: any[] }> {
@@ -1083,9 +1105,12 @@ export class KnezClient {
               if (data === "[DONE]") {
                 clearTimeout(inactivityTimeoutId);
                 if (!yieldedAny) {
-                  logger.warn("knez_client", "STREAM FALLBACK: Backend not yielding delta.content, using simulated streaming");
+                  logger.warn("knez_client", "STREAM_FALLBACK_NONSTREAM", { message: "Stream [DONE] without delta.content, falling back to non-streaming" });
                   const final = await this.chatCompletionsNonStream(messages, sessionId, { onMeta: options?.onMeta });
-                  if (!final.trim()) throw new AppError("KNEZ_STREAM_EMPTY", "Stream ended with no content");
+                  if (!final.trim()) {
+                    logger.warn("knez_client", "STREAM_EMPTY_RESPONSE", { message: "Stream [DONE] and non-stream both returned no content — allowing empty response" });
+                    return;
+                  }
                   // Simulate streaming by chunking
                   const chunkSize = 50;
                   for (let i = 0; i < final.length; i += chunkSize) {
@@ -1115,15 +1140,26 @@ export class KnezClient {
               if (delta) {
                 yieldedAny = true;
                 yield delta;
+                continue;
+              }
+              // Fallback: some backends return content in message.content instead of delta.content
+              const messageContent = (parsed as any)?.choices?.[0]?.message?.content;
+              if (messageContent) {
+                logger.warn("knez_client", "STREAM_FALLBACK_MESSAGE_CONTENT", { message: "Backend yielded message.content instead of delta.content — using fallback extraction" });
+                yieldedAny = true;
+                yield messageContent;
               }
             }
           }
         }
         clearTimeout(inactivityTimeoutId);
         if (!yieldedAny) {
-          logger.warn("knez_client", "STREAM FALLBACK: Stream ended without delta.content, using simulated streaming");
+          logger.warn("knez_client", "STREAM_FALLBACK_NONSTREAM", { message: "Stream ended without delta.content, falling back to non-streaming" });
           const final = await this.chatCompletionsNonStream(messages, sessionId, { onMeta: options?.onMeta });
-          if (!final.trim()) throw new AppError("KNEZ_STREAM_EMPTY", "Stream ended with no content");
+          if (!final.trim()) {
+            logger.warn("knez_client", "STREAM_EMPTY_RESPONSE", { message: "Stream and non-stream both returned no content — allowing empty response" });
+            return;
+          }
           // Simulate streaming by chunking
           const chunkSize = 50;
           for (let i = 0; i < final.length; i += chunkSize) {

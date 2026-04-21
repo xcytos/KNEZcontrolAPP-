@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { mcpOrchestrator } from "../../mcp/McpOrchestrator";
-import type { McpToolDefinition } from "../../services/McpTypes";
-import { logger } from "../../services/LogService";
+import type { McpToolDefinition } from "../../services/mcp/McpTypes";
+import { logger } from '../../services/utils/LogService';
 import { Badge } from "../../components/ui/core/Badge";
 import { Button } from "../../components/ui/core/Button";
 import { Input } from "../../components/ui/core/Input";

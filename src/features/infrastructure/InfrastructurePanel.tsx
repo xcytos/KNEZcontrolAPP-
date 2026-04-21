@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { AuditResult, KnezHealthResponse } from "../../domain/DataContracts";
-import { knezClient } from "../../services/KnezClient";
+import { knezClient } from '../../services/knez/KnezClient';
 import { SystemPanel } from "../system/SystemPanel";
 import { HealthProbeStatus, SystemStatus } from "../system/useSystemOrchestrator";
 import { PerformancePanel } from "../performance/PerformancePanel";

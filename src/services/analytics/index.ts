@@ -1,3 +1,3 @@
 // Analytics services
-export { analytics } from './AnalyticsService';
-export { exportDiagnosticsBundle } from './DiagnosticsService';
+export { analytics } from '../analytics/AnalyticsService';
+export { exportDiagnosticsBundle } from '../analytics/DiagnosticsService';

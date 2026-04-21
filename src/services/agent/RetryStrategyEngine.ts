@@ -3,7 +3,7 @@
  * Determines retry strategy based on failure type and context
  */
 
-import { knezClient } from "../KnezClient";
+import { knezClient } from "../knez/KnezClient";
 
 export interface RetryStrategy {
   shouldRetry: boolean;

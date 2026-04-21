@@ -1,5 +1,5 @@
-import { logger } from "../utils/LogService";
-import { knezClient } from "../KnezClient";
+import { logger } from '../utils/LogService';
+import { knezClient } from "../knez/KnezClient";
 import { redactAny } from "../../utils/redact";
 import { sessionDatabase } from "../session/SessionDatabase";
 

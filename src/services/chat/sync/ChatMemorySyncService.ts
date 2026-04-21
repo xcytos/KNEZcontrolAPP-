@@ -5,8 +5,8 @@
  * Provides candidates for memory injection based on chat patterns.
  */
 
-import { sessionDatabase, Session, StoredMessage } from './session/SessionDatabase';
-import { MemoryEventSourcingService } from './MemoryEventSourcingService';
+import { sessionDatabase, Session, StoredMessage } from '../../session/SessionDatabase';
+import { MemoryEventSourcingService } from '../../memory/storage/MemoryEventSourcingService';
 import { v4 as uuidv4 } from 'uuid';
 
 export interface MemoryCandidate {

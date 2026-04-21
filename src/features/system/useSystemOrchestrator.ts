@@ -1,8 +1,8 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Command, Child } from "@tauri-apps/plugin-shell";
-import { knezClient } from "../../services/KnezClient";
+import { knezClient } from '../../services/knez/KnezClient';
 import { isOverallHealthyStatus } from "../../utils/health";
-import { logger } from "../../services/LogService";
+import { logger } from '../../services/utils/LogService';
 
 export type SystemStatus = "idle" | "starting" | "running" | "failed" | "degraded";
 

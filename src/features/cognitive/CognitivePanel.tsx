@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { knezClient } from '../../services/KnezClient';
+import { knezClient } from '../../services/knez/KnezClient';
 import { CognitiveState } from '../../domain/DataContracts';
 
 type Tab = "overview" | "governance" | "influence" | "taqwin";

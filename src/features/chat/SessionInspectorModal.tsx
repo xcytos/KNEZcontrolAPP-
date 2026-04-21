@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { knezClient } from "../../services/KnezClient";
-import { sessionDatabase } from "../../services/SessionDatabase";
+import { knezClient } from '../../services/knez/KnezClient';
+import { sessionDatabase } from '../../services/session/SessionDatabase';
 import { useToast } from "../../components/ui/Toast";
-import { exportSessionBundle } from "../../services/DiagnosticsService";
-import { sessionController } from "../../services/SessionController";
+import { exportSessionBundle } from "../../services/analytics/DiagnosticsService";
+import { sessionController } from '../../services/session/SessionController';
 
 export const SessionInspectorModal: React.FC<{
   isOpen: boolean;

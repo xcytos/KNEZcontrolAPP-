@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { knezClient } from '../../services/KnezClient';
+import { knezClient } from '../../services/knez/KnezClient';
 import { useToast } from '../../components/ui/Toast';
 import { InfluenceContract } from '../../domain/DataContracts';
 import { readTextFile, BaseDirectory } from '@tauri-apps/plugin-fs';

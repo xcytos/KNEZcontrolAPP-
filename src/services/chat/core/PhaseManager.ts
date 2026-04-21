@@ -13,16 +13,18 @@ export type ChatPhase =
   | "streaming"
   | "tool_running"
   | "completed"
-  | "failed";
+  | "failed"
+  | "error";
 
 const VALID_TRANSITIONS: Record<ChatPhase, ChatPhase[]> = {
   idle: ["sending"],
-  sending: ["thinking", "failed"],
-  thinking: ["streaming", "tool_running", "failed"],
-  streaming: ["streaming", "completed", "failed"],
-  tool_running: ["thinking", "streaming", "failed"],
+  sending: ["thinking", "failed", "error"],
+  thinking: ["streaming", "tool_running", "failed", "error"],
+  streaming: ["streaming", "completed", "failed", "error"],
+  tool_running: ["thinking", "streaming", "failed", "error"],
   completed: ["idle"],
-  failed: ["idle"]
+  failed: ["idle"],
+  error: ["idle"]
 };
 
 export class PhaseManager {
@@ -41,6 +43,11 @@ export class PhaseManager {
     }
 
     const validTransitions = VALID_TRANSITIONS[this.currentPhase];
+    if (!validTransitions) {
+      logger.error("phase_manager", "invalid_current_phase", { sessionId: this.sessionId, currentPhase: this.currentPhase, message: "Valid transitions map missing for current phase - race condition detected" });
+      this.currentPhase = newPhase;
+      return;
+    }
     if (!validTransitions.includes(newPhase)) {
       logger.warn("phase_manager", "invalid_transition", { 
         sessionId: this.sessionId, 

@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { testRunner, TestResult } from '../../services/testing/TestRunner';
 import { useStatus } from '../../contexts/useStatus';
 import { useSystemOrchestrator } from '../system/useSystemOrchestrator';
-import { clearTestSessions, getRecommendedFixes } from '../../services/utils/Troubleshooter';
+// TODO: Troubleshooter file missing - need to implement clearTestSessions and getRecommendedFixes
+// import { clearTestSessions, getRecommendedFixes } from '../../services/utils/Troubleshooter';
 import { Button } from '../../components/ui/core/Button';
 import { Badge } from '../../components/ui/core/Badge';
 import { Card } from '../../components/ui/core/Card';
@@ -10,7 +11,6 @@ import { Card } from '../../components/ui/core/Card';
 export const TestPanel: React.FC = () => {
   const [results, setResults] = useState<TestResult[]>([]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
-  const [busyFixId, setBusyFixId] = useState<string | null>(null);
 
   const { forceCheck, online } = useStatus();
   const { launchAndConnect } = useSystemOrchestrator(async () => {
@@ -120,28 +120,8 @@ export const TestPanel: React.FC = () => {
                     <div className="mt-4 border-t border-zinc-800 pt-4">
                       <div className="text-xs font-mono text-zinc-500 mb-2">Recommended fixes</div>
                       <div className="flex flex-wrap gap-2">
-                        {getRecommendedFixes(r.id, {
-                          forceCheck,
-                          launchAndConnect,
-                          clearTestSessions
-                        }).map((fix) => (
-                          <Button
-                            key={fix.id}
-                            onClick={async () => {
-                              setBusyFixId(fix.id);
-                              try {
-                                await fix.run();
-                              } finally {
-                                setBusyFixId(null);
-                              }
-                            }}
-                            disabled={busyFixId !== null}
-                            variant="secondary"
-                            size="xs"
-                          >
-                            {busyFixId === fix.id ? "Applying..." : fix.label}
-                          </Button>
-                        ))}
+                        {/* TODO: Troubleshooter file missing - need to implement getRecommendedFixes */}
+                        <span className="text-xs text-zinc-500 italic">Fix recommendations temporarily disabled</span>
                       </div>
                     </div>
                   )}

@@ -1,2 +1,2 @@
 // Governance services
-export { GovernanceService } from './GovernanceService';
+export { GovernanceService } from '../governance/GovernanceService';

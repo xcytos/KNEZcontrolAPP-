@@ -1,7 +1,7 @@
 import { mcpOrchestrator, type ServerRuntime } from "../../mcp/McpOrchestrator";
-import type { McpToolDefinition } from "../McpTypes";
+import type { McpToolDefinition } from '../mcp/McpTypes';
 import type { McpAuthority } from "../../mcp/authority";
-import { logger } from "../utils/LogService";
+import { logger } from '../utils/LogService';
 
 export type ToolRiskLevel = "low" | "medium" | "high";
 

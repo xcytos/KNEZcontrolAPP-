@@ -9,8 +9,8 @@
  * - Learning 73-74: Data Deduplication for binary storage
  */
 
-import { getMemoryEventSourcingService, MemoryState } from './MemoryEventSourcingService';
-import { getMemoryCompressionService } from './MemoryCompressionService';
+import { getMemoryEventSourcingService, MemoryState } from '../storage/MemoryEventSourcingService';
+import { getMemoryCompressionService } from '../compression/MemoryCompressionService';
 
 export interface SerializationFormat {
   format: 'json' | 'binary' | 'protobuf' | 'msgpack';

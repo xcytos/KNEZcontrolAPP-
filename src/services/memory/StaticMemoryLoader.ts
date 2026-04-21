@@ -7,7 +7,7 @@
  * Supported formats: .md (default), .json, .txt
  */
 
-import { getMemoryEventSourcingService } from './MemoryEventSourcingService';
+import { getMemoryEventSourcingService } from './storage/MemoryEventSourcingService';
 
 export interface MemoryData {
   type: 'learning' | 'mistake' | 'decision' | 'pattern';

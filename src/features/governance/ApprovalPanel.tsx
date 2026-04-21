@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { knezClient } from "../../services/KnezClient";
-import { logger } from "../../services/LogService";
+import { knezClient } from '../../services/knez/KnezClient';
+import { logger } from '../../services/utils/LogService';
 
 export const ApprovalPanel: React.FC = () => {
   const [approvals, setApprovals] = useState<any[]>([]);

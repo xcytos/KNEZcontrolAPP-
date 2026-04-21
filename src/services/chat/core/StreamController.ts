@@ -11,7 +11,7 @@ export class StreamController {
   private activeAssistantId: string | null = null;
   private sessionId: string;
 
-  constructor(sessionId: string) {
+  constructor(sessionId: string = "") {
     this.sessionId = sessionId;
   }
 
@@ -73,10 +73,25 @@ export class StreamController {
     return this.activeStreamId === streamId;
   }
 
-  getActiveStream(): { streamId: string; assistantId: string } | null {
-    if (!this.activeStreamId || !this.activeAssistantId) {
-      return null;
+  getActiveStream(): string | null {
+    return this.activeStreamId;
+  }
+
+  append(_messageId: string, activeStreamId: string | null): boolean {
+    if (!activeStreamId) return true;
+    return this.activeStreamId === activeStreamId;
+  }
+
+  start(assistantId: string, streamId: string): boolean {
+    try {
+      this.startStream(streamId, assistantId);
+      return true;
+    } catch {
+      return false;
     }
-    return { streamId: this.activeStreamId, assistantId: this.activeAssistantId };
+  }
+
+  end(_assistantId: string, streamId: string): void {
+    this.endStream(streamId);
   }
 }

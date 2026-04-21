@@ -1,7 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import type { McpInspectorLifecycle, McpInspectorServerStatus } from "./inspector/McpInspectorService";
 import { mcpInspectorService } from "./inspector/McpInspectorService";
-import type { McpToolDefinition } from "../services/McpTypes";
+import type { McpToolDefinition } from "../services/mcp/McpTypes";
 import { getMcpAuthority, type McpAuthority } from "./authority";
 import { logger } from "../services/utils/LogService";
 

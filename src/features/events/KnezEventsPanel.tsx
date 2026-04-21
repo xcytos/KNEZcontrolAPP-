@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { knezClient } from "../../services/KnezClient";
+import { knezClient } from '../../services/knez/KnezClient';
 import { KnezEvent } from "../../domain/DataContracts";
 
 type Severity = "DEBUG" | "INFO" | "WARN" | "ERROR";

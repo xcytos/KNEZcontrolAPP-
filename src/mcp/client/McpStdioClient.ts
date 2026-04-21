@@ -1,6 +1,6 @@
 import { Command, Child } from "@tauri-apps/plugin-shell";
-import { McpToolDefinition } from "../../services/McpTypes";
-import { logger, LogLevel } from "../../services/LogService";
+import { McpToolDefinition } from "../../services/mcp/McpTypes";
+import { logger, LogLevel } from '../../services/utils/LogService';
 import { isStdioServer, type McpServerConfig, type McpStdioServerConfig } from "../config/McpHostConfig";
 import type { McpTrafficEvent } from "../inspector/McpTraffic";
 import { getMcpAuthority } from "../authority";

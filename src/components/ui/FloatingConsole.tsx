@@ -2,8 +2,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Command, Child } from "@tauri-apps/plugin-shell";
 import { TerminalSquare } from "lucide-react";
-import { logger, LogEntry } from "../../services/LogService";
-import { exportDiagnosticsBundle } from "../../services/DiagnosticsService";
+import { logger, LogEntry } from '../../services/utils/LogService';
+import { exportDiagnosticsBundle } from "../../services/analytics/DiagnosticsService";
 
 type Tab = "logs" | "mcp" | "terminal";
 

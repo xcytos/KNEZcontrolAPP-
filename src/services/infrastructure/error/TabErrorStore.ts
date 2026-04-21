@@ -1,5 +1,5 @@
-import { logger } from "./utils/LogService";
-import type { View } from "../components/layout/Sidebar";
+import { logger } from "../../utils/LogService";
+import type { View } from "../../../components/layout/Sidebar";
 
 type TabErrors = Partial<Record<View, boolean>>;
 

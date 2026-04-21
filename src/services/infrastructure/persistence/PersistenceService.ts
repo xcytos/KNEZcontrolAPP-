@@ -1,7 +1,7 @@
 
-import { sessionDatabase } from './session/SessionDatabase';
-import { ChatMessage } from '../domain/DataContracts';
-import { logger } from './utils/LogService';
+import { sessionDatabase } from '../../session/SessionDatabase';
+import { ChatMessage } from '../../../domain/DataContracts';
+import { logger } from '../../utils/LogService';
 
 export class PersistenceService {
   

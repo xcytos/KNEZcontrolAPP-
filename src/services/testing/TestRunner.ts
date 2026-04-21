@@ -3,7 +3,7 @@ import { chatService } from "../ChatService";
 import { persistenceService } from "../infrastructure/persistence/PersistenceService";
 import { sessionController } from "../session/SessionController";
 import { sessionDatabase } from "../session/SessionDatabase";
-import { logger } from "../utils/LogService";
+import { logger } from '../utils/LogService';
 import { TIMEOUT_CONFIG } from "../../config/features";
 
 export interface TestResult {

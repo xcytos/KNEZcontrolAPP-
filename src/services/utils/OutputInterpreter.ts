@@ -4,7 +4,7 @@
 // Phase 3: Schema validation and strict canonical type enforcement
 // T3: JSON Repair and Recovery integration
 
-import { repairJson, extractJsonFragment } from "./JsonRepair";
+import { repairJson, extractJsonFragment } from '../utils/JsonRepair';
 
 export type OutputClass = "plain_text" | "tool_call" | "system_payload" | "invalid_fragment";
 

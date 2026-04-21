@@ -1,4 +1,4 @@
-import { PresenceState } from "../domain/DataContracts";
+import { PresenceState } from '../domain/DataContracts';
 
 export type PresenceEventKind =
   | "app_opened"

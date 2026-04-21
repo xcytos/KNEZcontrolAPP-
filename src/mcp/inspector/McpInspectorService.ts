@@ -6,10 +6,10 @@ import { mcpHostConfigService } from "../config/McpHostConfigService";
 import type { McpConfigIssue, McpServerConfig, NormalizedMcpConfig, NormalizedMcpServerConfig } from "../config/McpHostConfig";
 import { normalizeMcpConfig } from "../config/McpHostConfig";
 import { extractServerInputRefs, listInputsById, substituteServerInputRefs } from "../config/McpInputs";
-import type { McpToolDefinition } from "../../services/McpTypes";
-import { knezClient } from "../../services/KnezClient";
+import type { McpToolDefinition } from "../../services/mcp/McpTypes";
+import { knezClient } from '../../services/knez/KnezClient';
 import { getMcpAuthority } from "../authority";
-import { logger, LogLevel } from "../../services/LogService";
+import { logger, LogLevel } from '../../services/utils/LogService';
 import { classifyMcpError } from "../McpErrorTaxonomy";
 import { MCP_LOG_METHODS, MCP_LOG_CATEGORIES } from "./McpLoggingConstants";
 

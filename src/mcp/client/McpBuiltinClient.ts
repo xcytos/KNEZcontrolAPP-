@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { McpToolDefinition } from "../../services/McpTypes";
+import type { McpToolDefinition } from "../../services/mcp/McpTypes";
 import type { McpTrafficEvent } from "../inspector/McpTraffic";
-import { logger } from "../../services/LogService";
+import { logger } from '../../services/utils/LogService';
 
 const BUILTIN_SERVER_INFO = {
   name: "tauri-ui",

@@ -1,18 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChatMessage, AssistantMessage } from "../../domain/DataContracts";
 import { AssistantMessageRenderer } from "./blocks/AssistantMessageRenderer";
-import { knezClient } from "../../services/KnezClient";
+import { knezClient } from '../../services/knez/KnezClient';
 import { MessageItem } from "./MessageItem";
-import { getMemoryEventSourcingService } from "../../services/MemoryEventSourcingService";
-import { MemoryData } from "../../services/StaticMemoryLoader";
+import { getMemoryEventSourcingService } from '../../services/memory/storage/MemoryEventSourcingService';
+import { MemoryData } from "../../services/memory/StaticMemoryLoader";
 // import { exportChat } from "./ChatUtils";
 import { useToast } from "../../components/ui/Toast";
 // import { PerceptionPanel } from "../perception/PerceptionPanel";
 import { VoiceInput } from "../voice/VoiceInput";
 // import { observe } from "../../utils/observer";
-import { chatService } from "../../services/ChatService";
-import { sessionDatabase } from "../../services/SessionDatabase";
-import { sessionController } from "../../services/SessionController";
+import { chatService } from '../../services/ChatService';
+import { sessionDatabase } from '../../services/session/SessionDatabase';
+import { sessionController } from '../../services/session/SessionController';
+import { logger } from '../../services/utils/LogService';
 import { FolderOpen, History, Loader2, MessageSquarePlus, MoreVertical, Play, Search, Square, TerminalSquare, Puzzle, Sparkles, Zap, Bug, Database } from "lucide-react";
 import { SessionInspectorModal } from "./SessionInspectorModal";
 import { DebugPanel } from "./DebugPanel";
@@ -22,7 +23,7 @@ import { features } from "../../config/features";
 import { useTaqwinActivationStatus } from "../../hooks/useTaqwinActivationStatus";
 import { ChatTerminalPane } from "./ChatTerminalPane";
 import { Command, Child } from "@tauri-apps/plugin-shell";
-import { toolExposureService } from "../../services/ToolExposureService";
+import { toolExposureService } from "../../services/mcp/ToolExposureService";
 import { mcpOrchestrator } from "../../mcp/McpOrchestrator";
 import { HistoryModal } from "./modals/HistoryModal";
 import { ForkModal } from "./modals/ForkModal";
@@ -97,7 +98,9 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const exposedAllowedCount = useMemo(() => toolExposureService.getToolsForModel().length, [toolExposureTick]);
   const runtimeById = useMemo(() => mcpOrchestrator.getSnapshot().servers, [mcpTick]);
   const [toolPanelError, setToolPanelError] = useState<string | null>(null);
-  
+  const [isSending, setIsSending] = useState(false);
+  const sendDebounceRef = useRef<number | null>(null);
+
   // Reset visible count when session changes
   useEffect(() => {
     setVisibleCount(50);
@@ -165,12 +168,26 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   }, [sessionId]);
 
   const handleSend = async (e?: React.FormEvent) => {
-    e?.preventDefault();
+    if (e) e.preventDefault();
     if (!inputValue.trim()) return;
+    if (readOnly) return;
+    if (isSending) {
+      logger.warn("chat_pane", "send_blocked_already_sending", { message: "Message send blocked - already sending" });
+      return;
+    }
+
+    // Clear any pending debounce
+    if (sendDebounceRef.current !== null) {
+      clearTimeout(sendDebounceRef.current);
+    }
+
+    // Set isSending immediately to block concurrent sends
+    setIsSending(true);
 
     // T4+T8: Gate send on KNEZ online status
     if (!online) {
       showToast("KNEZ not ready. Please wait for connection.", "warning");
+      setIsSending(false);
       return;
     }
 
@@ -234,13 +251,20 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         void chatService.sendMessage(inputValue);
       }
     }
-    
+
     // UI clears immediately, service handles logic
     setInputValue("");
     setIsAtBottom(true);
     setValidating(true);
     setTimeout(() => setValidating(false), 2000);
   };
+
+  // Reset isSending when phase changes to idle
+  useEffect(() => {
+    if (phase === "idle") {
+      setIsSending(false);
+    }
+  }, [phase]);
 
   const handleEdit = (id: string) => {
     const msg = messages.find(m => m.id === id);
@@ -546,7 +570,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                <div className="text-[10px] text-zinc-500 font-mono">ID: {sessionId?.substring(0,8)}...</div>
             </div>
          </div>
-         <div className="flex items-center gap-2">
+         <div className="flex items-center gap-2" style={{ zIndex: 1000, position: 'relative' }}>
             <div className="flex items-center border border-zinc-800 rounded-md overflow-hidden bg-zinc-950/40">
               <button
                 type="button"
@@ -604,7 +628,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                 <MoreVertical size={18} />
               </button>
               {headerMenuOpen && (
-                <div className="absolute right-0 mt-2 w-52 rounded-lg border border-zinc-800 bg-zinc-950 shadow-xl overflow-hidden z-50">
+                <div className="absolute right-0 mt-2 w-52 rounded-lg border border-zinc-800 bg-zinc-950 shadow-xl overflow-hidden" style={{ zIndex: 2000 }}>
                   <button
                     type="button"
                     onClick={() => {

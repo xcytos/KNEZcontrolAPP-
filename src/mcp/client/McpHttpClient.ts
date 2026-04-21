@@ -1,5 +1,5 @@
-import { McpToolDefinition } from "../../services/McpTypes";
-import { logger, LogLevel } from "../../services/LogService";
+import { McpToolDefinition } from "../../services/mcp/McpTypes";
+import { logger, LogLevel } from '../../services/utils/LogService';
 import type { McpServerConfig } from "../config/McpHostConfig";
 import { classifyMcpTimeout } from "./classifyTimeout";
 import type { McpTrafficEvent } from "../inspector/McpTraffic";
