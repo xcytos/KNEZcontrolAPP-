@@ -3,7 +3,7 @@
 //     for better performance when tools are called repeatedly with same args.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { TIMEOUT_CONFIG } from '../config/features';
+import { TIMEOUT_CONFIG } from '../../config/features';
 
 export interface CacheEntry {
   tool: string;

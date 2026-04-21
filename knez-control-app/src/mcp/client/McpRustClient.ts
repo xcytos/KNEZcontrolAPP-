@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { McpToolDefinition } from "../../services/McpTypes";
+import type { McpToolDefinition } from "../../services/mcp/McpTypes";
 import type { McpTrafficEvent } from "../inspector/McpTraffic";
 import { isStdioServer, type McpServerConfig } from "../config/McpHostConfig";
 

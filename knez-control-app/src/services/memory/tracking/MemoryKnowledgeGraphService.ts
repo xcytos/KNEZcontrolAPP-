@@ -11,7 +11,7 @@
  */
 
 import Database from 'better-sqlite3';
-import { getMemoryEventSourcingService } from './MemoryEventSourcingService';
+import { getMemoryEventSourcingService } from '../storage/MemoryEventSourcingService';
 
 export interface GraphNode {
   id: string;

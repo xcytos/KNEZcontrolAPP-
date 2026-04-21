@@ -2,14 +2,14 @@
 import { knezClient } from "./knez/KnezClient";
 import { extractionService } from "./utils/ExtractionService";
 import { persistenceService } from "./infrastructure/persistence/PersistenceService";
-import { ChatMessage, ToolCallMessage, AssistantMessage, Block, MessageState } from "../domain/DataContracts";
-import { AppError, asErrorMessage } from "../domain/Errors";
-import { observe } from "../utils/observer";
+import { ChatMessage, ToolCallMessage, AssistantMessage, Block, MessageState } from '../domain/DataContracts';
+import { AppError, asErrorMessage } from '../domain/Errors';
+import { observe } from '../utils/observer';
 import { sessionDatabase } from "./session/SessionDatabase";
 import { sessionController } from "./session/SessionController";
-import { logger } from "./utils/LogService";
+import { logger } from './utils/LogService';
 import { tabErrorStore } from "./infrastructure/error/TabErrorStore";
-import { selectPrimaryBackend } from "../utils/health";
+import { selectPrimaryBackend } from '../utils/health';
 import { toolExposureService } from "./mcp/ToolExposureService";
 import { mcpOrchestrator } from "../mcp/McpOrchestrator";
 import { toolExecutionService } from "./mcp/ToolExecutionService";
@@ -110,6 +110,9 @@ export class ChatService {
   private messageStore: MessageStore | null = null;
   private requestController: RequestController | null = null;
   private phaseManager: PhaseManager | null = null;
+
+  // TICKET-2: Cached health check to reduce timeouts
+  private lastHealthCheck: { result: { status: string } | null; timestamp: number } | null = null;
   // NOTE: responseAssembler intentionally unused - deferred until block-based message architecture migration
   // @ts-ignore - Intentionally unused (deferred integration)
   private responseAssembler: ResponseAssembler | null = null;
@@ -335,6 +338,23 @@ export class ChatService {
   }
 
   // Helper to reset to idle
+  // TICKET-2: Cached health check with 5-second TTL
+  private async checkHealthCached(): Promise<{ status: string } | null> {
+    const now = Date.now();
+    if (this.lastHealthCheck && (now - this.lastHealthCheck.timestamp) < 5000) {
+      logger.debug("chat_service", "health_check_cache_hit", { age: now - this.lastHealthCheck.timestamp, status: this.lastHealthCheck.result?.status });
+      return this.lastHealthCheck.result;
+    }
+    try {
+      const health = await knezClient.health({ timeoutMs: 5000 });
+      this.lastHealthCheck = { result: health, timestamp: now };
+      return health;
+    } catch (err) {
+      this.lastHealthCheck = { result: null, timestamp: now };
+      return null;
+    }
+  }
+
   private resetToIdle(): void {
     // NEW: Use PhaseManager to reset to idle
     if (this.phaseManager) {
@@ -1325,7 +1345,7 @@ export class ChatService {
     });
 
     if (!finalOutput.trim()) {
-      throw new AppError("KNEZ_STREAM_EMPTY", "Agent produced no output — model returned an empty response");
+      logger.warn("chat_service", "run_prompt_tool_loop_empty_output", { sessionId, assistantId, message: "Model returned empty response — allowing empty output" });
     }
     return finalOutput;
   }
@@ -2145,7 +2165,8 @@ export class ChatService {
 
     try {
       // T4: Pre-flight health check — block if KNEZ is not ready
-      const health = await knezClient.health({ timeoutMs: 2000 });
+      // TICKET-2: Increase timeout to 5000ms and use cached result if fresh
+      const health = await this.checkHealthCached();
       if (!health || health.status !== "ok") {
         logger.warn("chat", "pre_flight_health_check_failed", { sessionId: item.sessionId, health });
         const errorMsg = "KNEZ not ready. Please wait for connection.";
@@ -2169,6 +2190,8 @@ export class ChatService {
           // P5.2 T11: Set ERROR phase on health check failure
           this.setPhase("ERROR", id);
         }
+        // TICKET-3: Always release request lock on early return
+        this.releaseRequestLock(item.sessionId, id);
         return;
       }
     } catch (healthErr) {
@@ -2194,6 +2217,8 @@ export class ChatService {
         // P5.2 T11: Set ERROR phase on health check exception
         this.setPhase("ERROR", id);
       }
+      // TICKET-3: Always release request lock on early return
+      this.releaseRequestLock(item.sessionId, id);
       return;
     }
 

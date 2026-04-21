@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { knezClient } from '../../services/KnezClient';
+import { knezClient } from '../../services/knez/KnezClient';
 
 export const ReplayPane: React.FC<{ sessionId: string | null }> = ({ sessionId }) => {
   const [replay, setReplay] = useState<any | null>(null);

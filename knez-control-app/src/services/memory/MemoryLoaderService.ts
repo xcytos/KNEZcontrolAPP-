@@ -12,7 +12,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { getMemoryEventSourcingService } from './MemoryEventSourcingService';
+import { getMemoryEventSourcingService } from './storage/MemoryEventSourcingService';
 
 export interface MemoryData {
   type: 'learning' | 'mistake' | 'decision' | 'pattern';

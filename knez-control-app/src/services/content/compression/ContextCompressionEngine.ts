@@ -3,7 +3,7 @@
 //     key extraction, and temporal decay. Manages token budget dynamically.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { TIMEOUT_CONFIG } from '../config/features';
+import { TIMEOUT_CONFIG } from '../../../config/features';
 
 export interface CompressionStrategy {
   name: string;

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Modal } from '../../../components/ui/core/Modal';
 import { ChatMessage } from '../../../domain/DataContracts';
-import { sessionDatabase } from '../../../services/SessionDatabase';
+import { sessionDatabase } from '../../../services/session/SessionDatabase';
 
 interface AuditModalProps {
   isOpen: boolean;

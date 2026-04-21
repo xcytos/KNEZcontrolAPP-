@@ -5,7 +5,7 @@ import App from "./App";
 import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import "./utils/observer"; // Initialize observer
 import "./mcp/rustEventBridge";
-import { governanceService } from "./services/GovernanceService";
+import { governanceService } from "./services/governance/GovernanceService";
 
 // Initialize governance service
 void governanceService.getSnapshot().catch(() => null);

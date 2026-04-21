@@ -10,8 +10,8 @@
  */
 
 import React, { useEffect, useState, useRef } from 'react';
-import { getMemoryKnowledgeGraphService, GraphNode, GraphEdge, GraphCluster } from '../../services/MemoryKnowledgeGraphService';
-import { getMemoryEventSourcingService } from '../../services/MemoryEventSourcingService';
+import { getMemoryKnowledgeGraphService, GraphNode, GraphEdge, GraphCluster } from '../../services/memory/tracking/MemoryKnowledgeGraphService';
+import { getMemoryEventSourcingService } from '../../services/memory/storage/MemoryEventSourcingService';
 
 interface MemoryGraphVisualizationProps {
   onNodeClick?: (nodeId: string) => void;

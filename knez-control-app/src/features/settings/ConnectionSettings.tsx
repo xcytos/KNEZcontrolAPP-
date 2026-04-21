@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ChatService } from "../../services/ChatService";
-import { knezClient } from "../../services/KnezClient";
+import { ChatService } from '../../services/ChatService';
+import { knezClient } from '../../services/knez/KnezClient';
 import { KnezConnectionProfile, KnezHealthResponse, McpRegistrySnapshot } from "../../domain/DataContracts";
 
 import { SystemPanel } from "../system/SystemPanel";

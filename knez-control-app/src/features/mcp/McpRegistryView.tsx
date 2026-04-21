@@ -1,14 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { McpRegistrySnapshot } from '../../domain/DataContracts';
-import { knezClient } from '../../services/KnezClient';
+import { knezClient } from '../../services/knez/KnezClient';
 import { useToast } from '../../components/ui/Toast';
-import { logger } from '../../services/LogService';
+import { logger } from '../../services/utils/LogService';
 import { McpInspectorPanel } from './inspector/McpInspectorPanel';
 import { McpToolExecutorPanel } from './McpToolExecutorPanel';
 import { mcpInspectorService } from '../../mcp/inspector/McpInspectorService';
 import { mcpOrchestrator } from '../../mcp/McpOrchestrator';
 import { extractImportedMcpConfig } from '../../mcp/config/importMcpServers';
-import { Settings, Trash2, Activity } from 'lucide-react';
+import { Settings, Trash2, Activity, MoreVertical, Check, X, AlertCircle, Clock, Zap, ChevronDown, ChevronRight } from 'lucide-react';
 
 const RawConfigModal: React.FC<{
   isOpen: boolean;
@@ -250,8 +250,6 @@ export const McpRegistryView: React.FC<{
   const [toggling, setToggling] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [restarting, setRestarting] = useState<string | null>(null);
-  const [refreshingTools, setRefreshingTools] = useState<string | null>(null);
-  const [toolDetails, setToolDetails] = useState<{ serverId: string; tool: any } | null>(null);
   const [tick, setTick] = useState(0);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -259,6 +257,7 @@ export const McpRegistryView: React.FC<{
   const [editingServerId, setEditingServerId] = useState<string>("");
   const [editingServerConfig, setEditingServerConfig] = useState<string>("");
   const [rawConfig, setRawConfig] = useState<string>("");
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     void mcpInspectorService.loadConfig();
@@ -389,74 +388,6 @@ export const McpRegistryView: React.FC<{
       showToast(`Restart failed: ${String(e?.message ?? e)}`, "error");
     } finally {
       setRestarting(null);
-    }
-  };
-
-  const persistLocalServerPatch = async (id: string, patch: Record<string, any>) => {
-    const currentCfg = mcpInspectorService.getConfig();
-    const inputs = mcpInspectorService.getInputs();
-    const servers = mcpInspectorService.getServers();
-    const serverMap: Record<string, any> = {};
-    for (const s of servers) {
-      if (s.id === id) {
-        serverMap[s.id] = { ...s, ...patch, id };
-      } else {
-        serverMap[s.id] = s;
-      }
-    }
-    const payload = {
-      schema_version: currentCfg.normalized?.schema_version ?? "1",
-      inputs,
-      servers: serverMap
-    };
-    await mcpInspectorService.saveConfig(JSON.stringify(payload, null, 2));
-  };
-
-  const handleToggleStartOnBoot = async (id: string, next: boolean) => {
-    if (!localServerIds.has(id)) return;
-    try {
-      await persistLocalServerPatch(id, { start_on_boot: next });
-      showToast(`start_on_boot=${next ? "true" : "false"} for ${id}`, "success");
-    } catch (e: any) {
-      showToast(`Failed to update start_on_boot: ${String(e?.message ?? e)}`, "error");
-    }
-  };
-
-  const handleRefreshTools = async (id: string) => {
-    if (!localServerIds.has(id)) return;
-    setRefreshingTools(id);
-    try {
-      await mcpOrchestrator.refreshTools(id, { waitForResult: true, timeoutMs: 60000 });
-      showToast(`Refreshed tools for ${id}`, "success");
-    } catch (e: any) {
-      showToast(`Refresh tools failed: ${String(e?.message ?? e)}`, "error");
-    } finally {
-      setRefreshingTools(null);
-    }
-  };
-
-  const handleStartNow = async (id: string) => {
-    if (!localServerIds.has(id)) return;
-    try {
-      const issues = (mcpInspectorService.getConfig().issuesByServerId?.[id] ?? []).filter((it: any) => it?.level === "error");
-      if (issues.length) {
-        showToast(`Cannot start ${id}: ${issues[0]?.message ?? "invalid_config"}`, "error");
-        return;
-      }
-      await mcpOrchestrator.ensureStarted(id);
-      showToast(`Started ${id}`, "success");
-    } catch (e: any) {
-      showToast(`Start failed: ${String(e?.message ?? e)}`, "error");
-    }
-  };
-
-  const handleStopNow = async (id: string) => {
-    if (!localServerIds.has(id)) return;
-    try {
-      await mcpOrchestrator.stopServer(id);
-      showToast(`Stopped ${id}`, "success");
-    } catch (e: any) {
-      showToast(`Stop failed: ${String(e?.message ?? e)}`, "error");
     }
   };
 
@@ -801,29 +732,137 @@ export const McpRegistryView: React.FC<{
     }
   };
 
+  // Calculate global health summary for A5
+  const globalStats = useMemo(() => {
+    const activeServers = items.filter((item: any) => item.status === 'active').length;
+    const totalTools = items.reduce((sum: number, item: any) => {
+      return sum + (runtimeById[item.id]?.tools?.length ?? 0);
+    }, 0);
+    const errorServers = items.filter((item: any) => item.status === 'error').length;
+    const startingServers = items.filter((item: any) => item.status === 'starting').length;
+    return { activeServers, totalTools, errorServers, startingServers };
+  }, [items, runtimeById, tick]);
+
+  // Format timestamp for A1
+  const formatTimestamp = (ts: number | null) => {
+    if (!ts) return 'Never';
+    const date = new Date(ts);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    return date.toLocaleDateString();
+  };
+
+  // A6: Group servers by category
+  const groupedItems = useMemo(() => {
+    const groups: Record<string, any[]> = {
+      local: [],
+      remote: [],
+      experimental: []
+    };
+    
+    items.forEach((item: any) => {
+      const isLocal = localServerIds.has(item.id);
+      // Experimental servers can be identified by tags or naming convention
+      const isExperimental = item.id?.toLowerCase().includes('experimental') || 
+                           item.id?.toLowerCase().includes('test') ||
+                           (item as any).tags?.includes('experimental');
+      
+      if (isExperimental) {
+        groups.experimental.push(item);
+      } else if (isLocal) {
+        groups.local.push(item);
+      } else {
+        groups.remote.push(item);
+      }
+    });
+    
+    return groups;
+  }, [items, localServerIds]);
+
+  const toggleGroup = (group: string) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(group)) {
+        next.delete(group);
+      } else {
+        next.add(group);
+      }
+      return next;
+    });
+  };
+
+  const GroupHeader = ({ name, count, group }: { name: string; count: number; group: string }) => (
+    <button
+      onClick={() => toggleGroup(group)}
+      className="w-full flex items-center gap-2 px-2 py-2 text-left hover:bg-zinc-800 transition-colors rounded"
+    >
+      {collapsedGroups.has(group) ? (
+        <ChevronRight size={16} className="text-zinc-500" />
+      ) : (
+        <ChevronDown size={16} className="text-zinc-500" />
+      )}
+      <span className="text-sm font-medium text-zinc-300">{name}</span>
+      <span className="text-xs text-zinc-500">({count})</span>
+    </button>
+  );
+
   return (
     <div className="p-6">
       <div className="flex justify-between items-center mb-4">
-        <div className="flex items-center gap-2">
-          <h2 className="text-xl font-bold text-zinc-100">MCP Registry</h2>
-          <button
-            onClick={() => setTab("registry")}
-            className={`text-xs px-2 py-1 rounded ${tab === "registry" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"}`}
-          >
-            Registry
-          </button>
-          <button
-            onClick={() => setTab("inspector")}
-            className={`text-xs px-2 py-1 rounded ${tab === "inspector" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"}`}
-          >
-            Inspector
-          </button>
-          <button
-            onClick={() => setTab("executor")}
-            className={`text-xs px-2 py-1 rounded ${tab === "executor" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"}`}
-          >
-            Executor
-          </button>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl font-bold text-zinc-100">MCP Registry</h2>
+            <button
+              onClick={() => setTab("registry")}
+              className={`text-xs px-2 py-1 rounded ${tab === "registry" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"}`}
+            >
+              Registry
+            </button>
+            <button
+              onClick={() => setTab("inspector")}
+              className={`text-xs px-2 py-1 rounded ${tab === "inspector" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"}`}
+            >
+              Inspector
+            </button>
+            <button
+              onClick={() => setTab("executor")}
+              className={`text-xs px-2 py-1 rounded ${tab === "executor" ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"}`}
+            >
+              Executor
+            </button>
+          </div>
+          {/* A5: Global health summary */}
+          <div className="flex items-center gap-4 text-xs">
+            <div className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full bg-green-500" />
+              <span className="text-zinc-400">Active: </span>
+              <span className="font-mono text-zinc-200">{globalStats.activeServers}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Zap size={12} className="text-zinc-500" />
+              <span className="text-zinc-400">Tools: </span>
+              <span className="font-mono text-zinc-200">{globalStats.totalTools}</span>
+            </div>
+            {globalStats.errorServers > 0 && (
+              <div className="flex items-center gap-1.5">
+                <AlertCircle size={12} className="text-red-500" />
+                <span className="text-zinc-400">Errors: </span>
+                <span className="font-mono text-red-400">{globalStats.errorServers}</span>
+              </div>
+            )}
+            {globalStats.startingServers > 0 && (
+              <div className="flex items-center gap-1.5">
+                <Clock size={12} className="text-amber-500" />
+                <span className="text-zinc-400">Starting: </span>
+                <span className="font-mono text-amber-400">{globalStats.startingServers}</span>
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <button 
@@ -850,316 +889,187 @@ export const McpRegistryView: React.FC<{
       </div>
 
       {tab === "registry" ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {items?.map((item) => (
-            <div key={item.id} className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 relative overflow-hidden">
-              <div className={`absolute top-0 left-0 w-1 h-full ${
-                item.status === 'active' ? 'bg-green-500' : item.status === 'starting' ? 'bg-amber-500' : item.status === 'error' ? 'bg-red-500' : 'bg-zinc-700'
-              }`} />
-              
-              <div className="pl-3">
-                <div className="flex justify-between items-start mb-3">
-                  <div className="min-w-0 flex-1 mr-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div className="font-mono text-sm text-zinc-200 break-all">{item.id}</div>
-                      {runtimeById[item.id]?.tools ? (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] border bg-zinc-900 text-zinc-400 border-zinc-800 flex-none">
-                          tools={String(runtimeById[item.id]?.tools?.length ?? 0)}
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="text-xs text-zinc-500">{item.provider}</div>
-                    <div className="mt-1 flex items-center gap-2 flex-wrap">
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] border ${
-                        localServerIds.has(item.id) ? "bg-blue-900/20 text-blue-300 border-blue-900/50" : "bg-zinc-900 text-zinc-500 border-zinc-800"
-                      }`}>
-                        local_config={String(localServerIds.has(item.id))}
-                      </span>
-                      {runtimeById[item.id]?.pid ? (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] border bg-zinc-900 text-zinc-400 border-zinc-800">
-                          pid={String(runtimeById[item.id]?.pid)}
-                        </span>
-                      ) : null}
-                      {runtimeById[item.id]?.lastError ? (
-                        <div className="mt-2 p-2 bg-red-900/30 border border-red-800 rounded text-xs text-red-200 break-all">
-                          <div className="font-semibold text-red-400 mb-1">Error</div>
-                          <div className="text-red-300">{String(runtimeById[item.id]?.lastError)}</div>
-                          {runtimeById[item.id]?.lastError?.includes("mcp_server_no_tools") ? (
-                            <div className="mt-1 text-yellow-300">💡 Check server configuration and package name</div>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      {runtimeById[item.id]?.state ? (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] border bg-zinc-900 text-zinc-400 border-zinc-800">
-                          state={String(runtimeById[item.id]?.state)}
-                        </span>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
-                    item.status === 'active'
-                      ? 'bg-green-900/30 text-green-400'
-                      : item.status === 'starting'
-                        ? 'bg-amber-900/30 text-amber-300'
-                        : item.status === 'error'
-                          ? 'bg-red-900/30 text-red-300'
-                          : 'bg-zinc-800 text-zinc-500'
-                  }`}>
-                    {item.status}
-                  </div>
-                </div>
-
-                <div className="mb-4">
-                  <div className="text-[10px] text-zinc-500 mb-1 uppercase tracking-wider">Capabilities</div>
-                  <div className="flex flex-wrap gap-1">
-                    {item.capabilities?.map((cap: string) => (
-                      <span key={cap} className="px-1.5 py-0.5 bg-zinc-800 text-zinc-400 text-[10px] rounded border border-zinc-700">
-                        {cap}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex justify-between items-center mt-4 pt-3 border-t border-zinc-800">
-                  <div className="text-[10px] text-zinc-600">
-                     Health: {item.status === 'active' ? 'Operational' : item.status === 'starting' ? 'Connecting' : item.status === 'error' ? 'Error' : 'Offline'}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => {
-                        mcpInspectorService.setSelectedId(item.id);
-                        setTab("inspector");
-                      }}
-                      className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
-                    >
-                      Inspect
-                    </button>
-                    <button
-                      onClick={() => {
-                        mcpInspectorService.setSelectedId(item.id);
-                        setTab("inspector");
-                        void mcpInspectorService.handshake(item.id, { toolsListTimeoutMs: 60000 }).catch(() => {});
-                        setTimeout(() => window.dispatchEvent(new CustomEvent("mcp-inspector-focus-logs")), 200);
-                      }}
-                      className="text-xs px-3 py-1.5 rounded bg-emerald-900 text-emerald-300 hover:bg-emerald-800 transition-colors flex items-center gap-1"
-                    >
-                      <Activity size={12} />
-                      Logs
-                    </button>
-                    <button
-                      onClick={() => handleOpenEditModal(item.id)}
-                      className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDeleteServer(item.id)}
-                      className="text-xs px-3 py-1.5 rounded bg-red-900 text-red-300 hover:bg-red-800 transition-colors flex items-center gap-1"
-                    >
-                      <Trash2 size={12} />
-                      Delete
-                    </button>
-                    {!localServerIds.has(item.id) && (
-                      <button
-                        onClick={() => handleAddToLocalConfig(item.id)}
-                        className="text-xs px-3 py-1.5 rounded bg-green-700 text-white hover:bg-green-600 transition-colors"
-                      >
-                        + Add to Local Config
-                      </button>
-                    )}
-                    {localServerIds.has(item.id) ? (
-                      <button
-                        onClick={() => handleRestart(item.id)}
-                        disabled={restarting === item.id}
-                        className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors disabled:opacity-50"
-                      >
-                        {restarting === item.id ? "..." : "Restart"}
-                      </button>
-                    ) : null}
-                    <button
-                      onClick={() => setExpanded((prev) => (prev === item.id ? null : item.id))}
-                      className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
-                    >
-                      {expanded === item.id ? "▾" : "▸"} Tools
-                    </button>
-                    <button
-                      onClick={() => handleToggle(item.id, item.status || 'inactive')}
-                      disabled={toggling === item.id}
-                      className={`text-xs px-3 py-1.5 rounded transition-colors ${
-                         item.status === 'active' || item.status === 'starting' || item.status === 'error'
-                         ? 'bg-zinc-800 text-zinc-400 hover:text-red-400 hover:bg-zinc-700' 
-                         : 'bg-blue-600 text-white hover:bg-blue-500'
-                      }`}
-                    >
-                      {toggling === item.id ? (
-                        <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      ) : item.status === 'active' || item.status === 'starting' || item.status === 'error' ? 'Disable' : 'Enable'}
-                    </button>
-                  </div>
-                </div>
-
-                {expanded === item.id && (
-                  <div className="mt-3 text-xs text-zinc-400 space-y-2">
-                    {localServerIds.has(item.id) ? (
-                      <div className="flex items-center justify-between gap-3 border border-zinc-800 bg-zinc-950/40 rounded p-2">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleStartNow(item.id)}
-                            className="text-[11px] px-2 py-1 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
-                          >
-                            Start
-                          </button>
-                          <button
-                            onClick={() => handleStopNow(item.id)}
-                            className="text-[11px] px-2 py-1 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
-                          >
-                            Stop
-                          </button>
-                          <button
-                            onClick={() => handleRefreshTools(item.id)}
-                            disabled={refreshingTools === item.id}
-                            className="text-[11px] px-2 py-1 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:opacity-50"
-                          >
-                            {refreshingTools === item.id ? "..." : "Refresh tools"}
-                          </button>
-                        </div>
-                        <label className="flex items-center gap-2 text-[11px] text-zinc-300 select-none">
-                          <span className="text-zinc-500">start_on_boot</span>
-                          <input
-                            type="checkbox"
-                            checked={Boolean(runtimeById[item.id]?.start_on_boot)}
-                            onChange={(e) => void handleToggleStartOnBoot(item.id, e.target.checked)}
-                          />
-                        </label>
-                      </div>
-                    ) : null}
-                    <div className="flex justify-between">
-                      <span className="text-zinc-500">enabled</span>
-                      <span className="font-mono text-zinc-200">{String((item as any).enabled ?? (item.status === "active"))}</span>
-                    </div>
-                    {runtimeById[item.id] ? (
-                      <div className="space-y-2">
-                        <div className="flex justify-between">
-                          <span className="text-zinc-500">state</span>
-                          <span className="font-mono text-zinc-200">{String(runtimeById[item.id]?.state ?? "unknown")}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-zinc-500">type</span>
-                          <span className="font-mono text-zinc-200">{String(runtimeById[item.id]?.type ?? "unknown")}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-zinc-500">framing</span>
-                          <span className="font-mono text-zinc-200">{String(runtimeById[item.id]?.framing ?? "unknown")}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-zinc-500">generation</span>
-                          <span className="font-mono text-zinc-200">{String(runtimeById[item.id]?.generation ?? 0)}</span>
-                        </div>
-                        {runtimeById[item.id]?.lastOkAt ? (
-                          <div className="flex justify-between">
-                            <span className="text-zinc-500">last_ok</span>
-                            <span className="font-mono text-zinc-200">{new Date(Number(runtimeById[item.id]?.lastOkAt)).toLocaleString()}</span>
-                          </div>
-                        ) : null}
-                        {runtimeById[item.id]?.initializeDurationMs !== null && runtimeById[item.id]?.initializeDurationMs !== undefined ? (
-                          <div className="flex justify-between">
-                            <span className="text-zinc-500">init_ms</span>
-                            <span className="font-mono text-zinc-200">{String(runtimeById[item.id]?.initializeDurationMs)}</span>
-                          </div>
-                        ) : null}
-                        {runtimeById[item.id]?.toolsListDurationMs !== null && runtimeById[item.id]?.toolsListDurationMs !== undefined ? (
-                          <div className="flex justify-between">
-                            <span className="text-zinc-500">tools_list_ms</span>
-                            <span className="font-mono text-zinc-200">{String(runtimeById[item.id]?.toolsListDurationMs)}</span>
-                          </div>
-                        ) : null}
-                        <div className="flex justify-between">
-                          <span className="text-zinc-500">tools_cached</span>
-                          <span className="font-mono text-zinc-200">{String(runtimeById[item.id]?.tools?.length ?? 0)}</span>
-                        </div>
-                        {runtimeById[item.id]?.configSource ? (
-                          <div className="flex justify-between">
-                            <span className="text-zinc-500">config_source</span>
-                            <span className="font-mono text-zinc-400 text-xs">{runtimeById[item.id]?.configSource}</span>
-                          </div>
-                        ) : null}
-                        {runtimeById[item.id]?.toolsCacheAt ? (
-                          <div className="flex justify-between">
-                            <span className="text-zinc-500">tools_cache_age_s</span>
-                            <span className="font-mono text-zinc-200">
-                              {Math.max(0, Math.round((Date.now() - Number(runtimeById[item.id]?.toolsCacheAt ?? 0)) / 1000))}
-                            </span>
-                          </div>
-                        ) : null}
-                        {(runtimeById[item.id]?.tools?.length ?? 0) > 0 ? (
-                          <div className="border border-zinc-800 bg-zinc-950/40 rounded p-2">
-                            <div className="text-[10px] text-zinc-500 mb-2 uppercase tracking-wider">Tools</div>
-                            <div className="space-y-1">
-                              {runtimeById[item.id]?.tools?.slice(0, 30).map((t: any) => (
-                                <div
-                                  key={String(t?.name ?? "")}
-                                  className={`flex items-center gap-1 rounded border ${
-                                    runtimeById[item.id]?.state === "READY"
-                                      ? "border-zinc-800 bg-zinc-950/30"
-                                      : "border-zinc-900 bg-zinc-950/20 opacity-60"
-                                  }`}
-                                >
-                                  <button
-                                    type="button"
-                                    onClick={() => setToolDetails({ serverId: String(item.id), tool: t })}
-                                    className="flex-1 text-left px-2 py-1 hover:bg-zinc-900/60 rounded-l transition-colors"
-                                  >
-                                    <div className="font-mono text-[11px] text-zinc-200 break-all">{String(t?.name ?? "")}</div>
-                                    {t?.description ? <div className="text-[11px] text-zinc-500 break-words">{String(t.description)}</div> : null}
-                                  </button>
-                                  {runtimeById[item.id]?.state === "READY" && (
-                                    <button
-                                      type="button"
-                                      title="Open in Executor"
-                                      onClick={() => {
-                                        window.dispatchEvent(new CustomEvent("mcp-executor-open-tool", { detail: { serverId: String(item.id), toolName: String(t?.name ?? "") } }));
-                                        setTab("executor");
-                                      }}
-                                      className="flex-none px-2 py-1 text-[10px] text-blue-400 hover:text-blue-300 hover:bg-blue-900/20 rounded-r transition-colors border-l border-zinc-800"
-                                    >
-                                      ▶
-                                    </button>
-                                  )}
+        <div className="space-y-4">
+          {Object.entries(groupedItems).map(([group, groupItems]) => {
+            if (groupItems.length === 0) return null;
+            
+            const isCollapsed = collapsedGroups.has(group);
+            const groupName = group === 'local' ? 'Local Servers' : 
+                              group === 'remote' ? 'Remote Servers' : 
+                              'Experimental Servers';
+            
+            return (
+              <div key={group}>
+                <GroupHeader name={groupName} count={groupItems.length} group={group} />
+                {!isCollapsed && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-2">
+                    {groupItems.map((item: any) => {
+                      const server = runtimeById[item.id];
+                      const toolCount = server?.tools?.length ?? 0;
+                      const lastHealth = server?.lastOkAt ? formatTimestamp(Number(server.lastOkAt)) : 'Never';
+                      const hasError = server?.lastError;
+                      const isLocal = localServerIds.has(item.id);
+                      
+                      // A4: Status color system
+                      const statusColor = item.status === 'active' ? 'bg-green-500' : 
+                                        item.status === 'starting' ? 'bg-amber-500' : 
+                                        item.status === 'error' ? 'bg-red-500' : 'bg-zinc-600';
+                      const statusBg = item.status === 'active' ? 'bg-green-900/20 text-green-400 border-green-900/50' : 
+                                     item.status === 'starting' ? 'bg-amber-900/20 text-amber-400 border-amber-900/50' : 
+                                     item.status === 'error' ? 'bg-red-900/20 text-red-400 border-red-900/50' : 
+                                     'bg-zinc-800 text-zinc-500 border-zinc-700';
+                      
+                      return (
+                        <div key={item.id} className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden hover:border-zinc-700 transition-colors">
+                          {/* A4: Status indicator bar */}
+                          <div className={`h-1 ${statusColor}`} />
+                          
+                          <div className="p-4">
+                            {/* A1: Minimal card header with server name and status */}
+                            <div className="flex justify-between items-start mb-3">
+                              <div className="min-w-0 flex-1">
+                                <div className="font-mono text-sm text-zinc-200 break-all mb-1">{item.id}</div>
+                                <div className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold border ${statusBg}`}>
+                                  {item.status === 'active' ? 'ACTIVE' : 
+                                   item.status === 'starting' ? 'STARTING' : 
+                                   item.status === 'error' ? 'ERROR' : 
+                                   item.status === 'inactive' ? 'STOPPED' : item.status.toUpperCase()}
                                 </div>
-                              ))}
+                              </div>
+                              {/* A4: Error indicator */}
+                              {hasError && (
+                                <div className="flex items-center gap-1 text-red-400" title={String(server.lastError)}>
+                                  <AlertCircle size={14} />
+                                </div>
+                              )}
+                            </div>
+
+                            {/* A1: Tool count and last health timestamp */}
+                            <div className="flex items-center gap-4 text-xs text-zinc-500 mb-4">
+                              <div className="flex items-center gap-1.5">
+                                <Zap size={12} />
+                                <span>{toolCount} tools</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <Clock size={12} />
+                                <span>{lastHealth}</span>
+                              </div>
+                            </div>
+
+                            {/* A2: Inline actions (restart, enable/disable) */}
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                {isLocal && (
+                                  <button
+                                    onClick={() => handleRestart(item.id)}
+                                    disabled={restarting === item.id}
+                                    className="text-xs px-2 py-1 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors disabled:opacity-50"
+                                    title="Restart server"
+                                  >
+                                    {restarting === item.id ? '...' : 'Restart'}
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => handleToggle(item.id, item.status || 'inactive')}
+                                  disabled={toggling === item.id}
+                                  className={`text-xs px-2 py-1 rounded transition-colors ${
+                                    item.status === 'active' || item.status === 'starting' || item.status === 'error'
+                                    ? 'bg-zinc-800 text-zinc-400 hover:text-red-400 hover:bg-zinc-700' 
+                                    : 'bg-blue-600 text-white hover:bg-blue-500'
+                                  }`}
+                                  title={item.status === 'active' || item.status === 'starting' || item.status === 'error' ? 'Disable' : 'Enable'}
+                                >
+                                  {toggling === item.id ? (
+                                    <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                  ) : item.status === 'active' || item.status === 'starting' || item.status === 'error' ? (
+                                    <X size={12} />
+                                  ) : (
+                                    <Check size={12} />
+                                  )}
+                                </button>
+                              </div>
+                              
+                              {/* A2: Secondary dropdown (inspect, logs, config, delete) */}
+                              <div className="relative" style={{ zIndex: 50 }}>
+                                <button
+                                  onClick={() => setExpanded((prev) => (prev === item.id ? null : item.id))}
+                                  className="text-xs p-1.5 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
+                                  title="More options"
+                                >
+                                  <MoreVertical size={14} />
+                                </button>
+                                
+                                {expanded === item.id && (
+                                  <div className="absolute right-0 top-full mt-1 w-48 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl" style={{ zIndex: 100 }}>
+                                    <div className="p-1">
+                                      <button
+                                        onClick={() => {
+                                          mcpInspectorService.setSelectedId(item.id);
+                                          setTab("inspector");
+                                          setExpanded(null);
+                                        }}
+                                        className="w-full text-left text-xs px-3 py-2 rounded text-zinc-300 hover:bg-zinc-800 transition-colors"
+                                      >
+                                        Inspect
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          mcpInspectorService.setSelectedId(item.id);
+                                          setTab("inspector");
+                                          void mcpInspectorService.handshake(item.id, { toolsListTimeoutMs: 60000 }).catch(() => {});
+                                          setTimeout(() => window.dispatchEvent(new CustomEvent("mcp-inspector-focus-logs")), 200);
+                                          setExpanded(null);
+                                        }}
+                                        className="w-full text-left text-xs px-3 py-2 rounded text-zinc-300 hover:bg-zinc-800 transition-colors flex items-center gap-2"
+                                      >
+                                        <Activity size={12} />
+                                        View Logs
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          handleOpenEditModal(item.id);
+                                          setExpanded(null);
+                                        }}
+                                        className="w-full text-left text-xs px-3 py-2 rounded text-zinc-300 hover:bg-zinc-800 transition-colors"
+                                      >
+                                        Edit Config
+                                      </button>
+                                      {!isLocal && (
+                                        <button
+                                          onClick={() => {
+                                            handleAddToLocalConfig(item.id);
+                                            setExpanded(null);
+                                          }}
+                                          className="w-full text-left text-xs px-3 py-2 rounded text-zinc-300 hover:bg-zinc-800 transition-colors"
+                                        >
+                                          + Add to Local Config
+                                        </button>
+                                      )}
+                                      <div className="border-t border-zinc-800 my-1" />
+                                      <button
+                                        onClick={() => {
+                                          handleDeleteServer(item.id);
+                                          setExpanded(null);
+                                        }}
+                                        className="w-full text-left text-xs px-3 py-2 rounded text-red-400 hover:bg-red-900/20 transition-colors flex items-center gap-2"
+                                      >
+                                        <Trash2 size={12} />
+                                        Delete
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {!!(item as any).updated_at && (
-                      <div className="flex justify-between">
-                        <span className="text-zinc-500">updated_at</span>
-                        <span className="font-mono text-zinc-200">
-                          {new Date(Number((item as any).updated_at) * 1000).toLocaleString()}
-                        </span>
-                      </div>
-                    )}
-                    {!!(item as any).last_error && (
-                      <div className="border border-red-900/40 bg-red-900/10 rounded p-2 text-red-300 whitespace-pre-wrap break-words">
-                        {String((item as any).last_error)}
-                      </div>
-                    )}
-                    {String(item.id ?? "")
-                      .toLowerCase()
-                      .includes("chrome") &&
-                    String(item.id ?? "")
-                      .toLowerCase()
-                      .includes("devtools") ? (
-                      <div className="border border-zinc-800 bg-zinc-950/40 rounded p-2 text-zinc-300 whitespace-pre-wrap break-words">
-                        Requires Node.js 20.19+ and Chrome stable. Add --no-usage-statistics (and optionally --no-performance-crux) to disable telemetry.
-                      </div>
-                    ) : null}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : tab === "inspector" ? (
         <McpInspectorPanel />
@@ -1187,31 +1097,6 @@ export const McpRegistryView: React.FC<{
         serverId={editingServerId}
         initialConfig={editingServerConfig}
       />
-      {toolDetails ? (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" role="dialog" aria-modal="true">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-lg w-full max-w-3xl shadow-xl flex flex-col max-h-[90vh] mx-4">
-            <div className="flex justify-between items-center p-4 border-b border-zinc-800">
-              <div className="min-w-0">
-                <div className="text-xs text-zinc-500">Tool Details</div>
-                <div className="font-mono text-sm text-zinc-100 break-all">{String(toolDetails.tool?.name ?? "")}</div>
-                <div className="text-xs text-zinc-500 mt-1">server={String(toolDetails.serverId)}</div>
-              </div>
-              <button onClick={() => setToolDetails(null)} className="text-zinc-400 hover:text-white" aria-label="Close">✕</button>
-            </div>
-            <div className="p-4 overflow-auto space-y-3">
-              {toolDetails.tool?.description ? (
-                <div className="text-sm text-zinc-300 whitespace-pre-wrap break-words">{String(toolDetails.tool.description)}</div>
-              ) : (
-                <div className="text-sm text-zinc-500">No description.</div>
-              )}
-              <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Input Schema</div>
-              <pre className="text-xs bg-zinc-950 border border-zinc-800 rounded p-3 overflow-auto text-zinc-300">
-                {JSON.stringify(toolDetails.tool?.inputSchema ?? { type: "object", properties: {} }, null, 2)}
-              </pre>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 };

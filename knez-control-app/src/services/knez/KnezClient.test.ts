@@ -11,7 +11,7 @@ vi.mock("./LogService", () => {
   };
 });
 
-import { KnezClient } from "./KnezClient";
+import { KnezClient } from '../knez/KnezClient';
 
 describe("KnezClient", () => {
   beforeEach(() => {

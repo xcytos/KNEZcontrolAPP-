@@ -102,46 +102,78 @@ knez-control-app/
 │   │   ├── useTaqwinActivationStatus.ts
 │   │   └── useTaqwinMcpStatus.ts
 │   │
-│   ├── services/                  # Service layer (45+ services)
-│   │   ├── ChatService.ts         # Chat state management
-│   │   ├── KnezClient.ts          # KNEZ backend API client
-│   │   ├── SessionDatabase.ts     # IndexedDB session storage
-│   │   ├── SessionController.ts   # Session lifecycle management
-│   │   ├── McpTypes.ts            # MCP type definitions
-│   │   ├── ToolExecutionService.ts # Tool execution logic
-│   │   ├── ToolExposureService.ts # Tool catalog management
-│   │   ├── GovernanceService.ts   # Governance enforcement
-│   │   ├── McpOrchestrator.ts     # MCP server orchestration
-│   │   ├── MemoryEventSourcingService.ts
-│   │   ├── MemoryBackupService.ts
-│   │   ├── MemoryCompressionService.ts
-│   │   ├── MemoryCRDTService.ts
-│   │   ├── MemoryBloomFilterService.ts
-│   │   ├── MemoryBinarySerializationService.ts
-│   │   ├── AnalyticsService.ts
-│   │   ├── DiagnosticsService.ts
-│   │   ├── ErrorClassifier.ts
-│   │   ├── FallbackStrategy.ts
-│   │   ├── GracefulDegradation.ts
-│   │   ├── LatencyOptimizer.ts
-│   │   ├── LogService.ts
-│   │   ├── JsonRepair.ts
-│   │   ├── DeterminismTestSuite.ts
-│   │   ├── ExecutionGraphTracker.ts
-│   │   ├── FailurePatternLearner.ts
-│   │   ├── IncrementalResultBuilder.ts
-│   │   ├── IntentClarification.ts
-│   │   ├── ContextCompressionEngine.ts
-│   │   ├── DOMAwarenessInjector.ts
-│   │   ├── ContentExtractionHeuristics.ts
-│   │   ├── EventBasedUIProtocol.ts
-│   │   ├── ExtractionService.ts
-│   │   ├── KnezProfiles.ts        # Connection profile management
-│   │   ├── StaticMemoryLoader.ts  # Static memory data loader
-│   │   ├── agent/                 # Agent-related services
+│   ├── services/                  # Service layer (modularized)
+│   │   ├── ChatService.ts         # Central chat orchestrator
+│   │   ├── chat/                  # Chat subsystem
+│   │   │   ├── core/              # Chat core infrastructure
+│   │   │   │   ├── StreamController.ts    # Stream ownership + validation
+│   │   │   │   ├── ResponseAssembler.ts   # Assistant response assembly
+│   │   │   │   ├── MessageStore.ts        # Message state management
+│   │   │   │   └── RequestController.ts   # Request lifecycle control
+│   │   │   └── sync/              # Chat memory synchronization
+│   │   │       └── ChatMemorySyncService.ts
+│   │   ├── knez/                  # KNEZ backend integration
+│   │   │   └── KnezClient.ts      # HTTP client for KNEZ API
+│   │   ├── mcp/                   # MCP tool system
+│   │   │   ├── McpTypes.ts        # MCP type definitions
+│   │   │   ├── ToolExecutionService.ts  # Tool execution logic
+│   │   │   ├── ToolExposureService.ts   # Tool catalog management
+│   │   │   ├── ToolResultValidator.ts   # Tool result validation
+│   │   │   └── McpOrchestrator.ts       # MCP server orchestration (re-export)
+│   │   ├── session/               # Session management
+│   │   │   ├── SessionDatabase.ts     # IndexedDB session storage
+│   │   │   └── SessionController.ts   # Session lifecycle management
+│   │   ├── memory/                # Memory subsystem
+│   │   │   ├── storage/
+│   │   │   │   └── MemoryEventSourcingService.ts
+│   │   │   ├── tracking/
+│   │   │   │   └── MemoryKnowledgeGraphService.ts
+│   │   │   ├── persistence/
+│   │   │   │   ├── MemoryBackupService.ts
+│   │   │   │   ├── MemoryCompressionService.ts
+│   │   │   │   ├── MemoryCRDTService.ts
+│   │   │   │   ├── MemoryBloomFilterService.ts
+│   │   │   │   └── MemoryBinarySerializationService.ts
+│   │   │   └── MemoryInjectionService.ts
+│   │   ├── agent/                 # Agent execution services
+│   │   │   ├── AgentOrchestrator.ts
+│   │   │   ├── AgentLoopService.ts
+│   │   │   ├── AgentContext.ts
+│   │   │   ├── LoopController.ts
+│   │   │   ├── RetryStrategyEngine.ts
+│   │   │   ├── ExecutionSandbox.ts
+│   │   │   ├── ToolResultNormalizer.ts
+│   │   │   ├── SecurityLayer.ts
 │   │   │   ├── AgentTracer.ts
+│   │   │   ├── FailureClassifier.ts
 │   │   │   └── AgentRuntime.ts
-│   │   └── ... (additional services)
+│   │   ├── governance/            # Governance enforcement
+│   │   │   └── GovernanceService.ts
+│   │   ├── analytics/             # Diagnostics and analytics
+│   │   │   └── DiagnosticsService.ts
+│   │   ├── testing/               # Test execution
+│   │   │   └── TestRunner.ts
+│   │   ├── infrastructure/        # Infrastructure services
+│   │   │   ├── persistence/
+│   │   │   │   └── PersistenceService.ts
+│   │   │   └── error/
+│   │   │       └── TabErrorStore.ts
+│   │   ├── utils/                 # Utility services
+│   │   │   ├── LogService.ts
+│   │   │   ├── ExtractionService.ts
+│   │   │   ├── ErrorClassifier.ts
+│   │   │   ├── FallbackStrategy.ts
+│   │   │   ├── GracefulDegradation.ts
+│   │   │   ├── LatencyOptimizer.ts
+│   │   │   ├── RetryStrategy.ts
+│   │   │   ├── TimeoutConfig.ts
+│   │   │   ├── JsonRepair.ts
+│   │   │   ├── OutputInterpreter.ts
+│   │   │   ├── redact.ts
+│   │   │   ├── health.ts
+│   │   │   └── observer.ts
+│   │   ├── KnezProfiles.ts        # Connection profile management
+│   │   └── StaticMemoryLoader.ts  # Static memory data loader
 │   │
 │   ├── mcp/                       # MCP integration
 │   │   ├── McpOrchestrator.ts     # MCP orchestration (main)
@@ -566,7 +598,7 @@ type McpAuthority = {
 
 ### ChatService.ts
 
-**Purpose**: Central chat state management and business logic
+**Purpose**: Central chat orchestrator coordinating all chat subsystems
 
 **State Structure**:
 ```typescript
@@ -604,25 +636,34 @@ type ChatPhase =
 - `executeToolDeterministic(tool, args)`: Execute tool with deterministic tracking
 - `appendSyntheticToolError(tool, error)`: Add synthetic tool error
 
+**Chat Core Subsystem** (see `chat/core/` directory):
+- **StreamController**: Validates stream ownership, prevents concurrent streams
+- **ResponseAssembler**: Binds to assistantId, appends chunks, enforces content integrity
+- **MessageStore**: Central message state management
+- **RequestController**: Request lifecycle and abort handling
+
 **Streaming Handling**:
 - SSE (Server-Sent Events) parsing
 - Token-by-token message building
 - Phase transitions based on events
 - UI update throttling (33ms during streaming)
+- Stream ownership enforcement via StreamController
 
 **Tool Execution Flow**:
 1. Backend emits `tool_call_start` event
-2. ChatService creates tool execution message
+2. ChatService creates tool execution message (type: `tool_execution`)
 3. Backend emits `tool_call_completed` event
-4. ChatService updates tool result
+4. ChatService updates tool result with execution metrics
 5. Model generates explanation
 6. Response streamed to UI
 
 ---
 
-### KnezClient.ts
+### KnezClient.ts (`services/knez/`)
 
 **Purpose**: HTTP client for KNEZ backend API
+
+**Location**: `src/services/knez/KnezClient.ts`
 
 **Connection Profiles**:
 ```typescript
@@ -684,9 +725,13 @@ async chatCompletion(request: ChatCompletionRequest): AsyncGenerator<StreamEvent
 
 ---
 
-### SessionDatabase.ts
+### Session Subsystem (`services/session/`)
+
+**SessionDatabase.ts**:
 
 **Purpose**: IndexedDB-based session storage
+
+**Location**: `src/services/session/SessionDatabase.ts`
 
 **Database Schema**:
 ```typescript
@@ -707,9 +752,11 @@ interface SessionRecord {
 
 ---
 
-### SessionController.ts
+**SessionController.ts**:
 
 **Purpose**: Session lifecycle management
+
+**Location**: `src/services/session/SessionController.ts`
 
 **Key Methods**:
 - `createSession()`: Create new session
@@ -719,9 +766,11 @@ interface SessionRecord {
 
 ---
 
-### ToolExecutionService.ts
+### ToolExecutionService.ts (`services/mcp/`)
 
 **Purpose**: Tool execution with governance and error handling
+
+**Location**: `src/services/mcp/ToolExecutionService.ts`
 
 **Execution Outcome Types**:
 ```typescript
@@ -763,9 +812,11 @@ type ToolExecutionSucceeded = {
 
 ---
 
-### ToolExposureService.ts
+### ToolExposureService.ts (`services/mcp/`)
 
 **Purpose**: Tool catalog management and exposure to models
+
+**Location**: `src/services/mcp/ToolExposureService.ts`
 
 **Tool Metadata**:
 ```typescript
@@ -787,9 +838,11 @@ type ExposedToolMeta = {
 
 ---
 
-### GovernanceService.ts
+### GovernanceService.ts (`services/governance/`)
 
 **Purpose**: Governance enforcement for tool execution
+
+**Location**: `src/services/governance/GovernanceService.ts`
 
 **Governance Decision**:
 ```typescript
@@ -807,6 +860,62 @@ type GovernanceDecision = {
 - Server trust level
 - Risk ceiling enforcement
 - Proposal cap limits
+
+---
+
+## Chat Core Subsystem
+
+### StreamController.ts (`services/chat/core/`)
+
+**Purpose**: Stream ownership validation and concurrency control
+
+**Location**: `src/services/chat/core/StreamController.ts`
+
+**Rules**: Only ONE stream per request; any second stream is rejected
+
+**Constructor**:
+```typescript
+constructor(sessionId: string = "")
+```
+
+**Methods**:
+- `startStream(streamId, assistantId)`: Start a new stream (throws if stream already active)
+- `validateOwnership(streamId, assistantId)`: Validate stream ownership
+- `endStream(streamId)`: End active stream
+- `cancelStream(streamId)`: Cancel active stream
+- `isActive(streamId)`: Check if stream is active
+- `getActiveStream(): string | null`: Get active stream ID
+- `start(assistantId, streamId): boolean`: Wrapper that returns boolean instead of throwing
+- `end(assistantId, streamId): void`: Wrapper for endStream
+- `append(messageId, activeStreamId): boolean`: Validate message can append to stream
+
+### ResponseAssembler.ts (`services/chat/core/`)
+
+**Purpose**: Append and finalize assistant responses
+
+**Location**: `src/services/chat/core/ResponseAssembler.ts`
+
+**Responsibilities**:
+- Bind to assistantId
+- Append chunks safely
+- Enforce content integrity
+
+**Rules**:
+- Cannot append if message missing
+- Cannot finalize twice
+- If no content → fallback
+
+### MessageStore.ts (`services/chat/core/`)
+
+**Purpose**: Central message state management
+
+**Location**: `src/services/chat/core/MessageStore.ts`
+
+### RequestController.ts (`services/chat/core/`)
+
+**Purpose**: Request lifecycle and abort control
+
+**Location**: `src/services/chat/core/RequestController.ts`
 
 ---
 
@@ -1253,6 +1362,12 @@ export const features = {
 6. **No Collaboration**: No multi-user support
 7. **Limited Export**: No export to other formats
 
+### Resolved Issues
+
+1. **TypeScript Import Paths**: All import paths have been corrected to match the modularized service structure (Apr 2026)
+2. **StreamController API**: Constructor and method signatures aligned with ChatService usage (Apr 2026)
+3. **Tauri Build**: Clean build with 0 TypeScript errors achieved (Apr 2026)
+
 ### Potential Issues
 
 1. **IndexedDB Quota**: Can hit storage limits with many sessions
@@ -1281,19 +1396,21 @@ export const features = {
 knez-control-app is a well-structured, feature-rich frontend application that provides:
 
 - **Modern React Architecture**: Feature-based organization, comprehensive state management
+- **Modular Service Layer**: Services organized by domain (knez, mcp, chat, memory, agent, governance, etc.)
+- **Chat Core Subsystem**: Dedicated infrastructure for stream control, response assembly, message storage, and request lifecycle
 - **MCP Orchestration**: Centralized MCP server management with crash recovery
-- **Tool Execution**: Governed tool execution with error classification
-- **Debug Capabilities**: Comprehensive debug panel and diagnostics
+- **Tool Execution**: Governed tool execution with error classification and live status transitions
+- **Debug Capabilities**: Comprehensive debug panel and diagnostics with tool call history
 - **Memory Management**: Multiple memory services for different use cases
 - **Presence Engine**: AI presence state management
 - **Desktop Integration**: Tauri for native capabilities
-- **Type Safety**: Comprehensive TypeScript typing
+- **Type Safety**: Comprehensive TypeScript typing with clean build
 
-The architecture is solid and production-ready, with room for improvement in offline support, cleanup mechanisms, and performance optimization for very long sessions.
+The architecture is solid and production-ready, with a recently completed modularization effort that reorganized the service layer into domain-specific subdirectories for improved maintainability.
 
 ---
 
-**Document Version**: 1.0  
-**Last Updated**: 2025-04-21  
+**Document Version**: 1.1  
+**Last Updated**: 2026-04-21  
 **Author**: TAQWIN Architecture Analysis  
 **Related Documents**: DOC-01 (KNEZ Backend), DOC-03 (Integration Patterns), DOC-04 (Component Analysis)

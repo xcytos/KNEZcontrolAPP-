@@ -9,7 +9,7 @@
  * - Learning 83-85: Cache-Aside and Write-Through Caching Strategies
  */
 
-import { getMemoryEventSourcingService, MemoryState } from './MemoryEventSourcingService';
+import { getMemoryEventSourcingService, MemoryState } from '../storage/MemoryEventSourcingService';
 
 export interface MemoryVector {
   id: string;

@@ -3,17 +3,17 @@
  * Owns the loop, tool execution, retries, decisions, and final output
  */
 
-import { agentLoopService } from "./AgentLoopService";
+import { agentLoopService } from '../agent/AgentLoopService';
 import { agentContextManager, AgentContext } from "./AgentContext";
 import { loopController } from "./LoopController";
-import { retryStrategyEngine } from "./RetryStrategyEngine";
+import { retryStrategyEngine } from '../agent/RetryStrategyEngine';
 import { executionSandbox } from "./ExecutionSandbox";
 import { toolResultNormalizer } from "./ToolResultNormalizer";
 import { securityLayer } from "./SecurityLayer";
 import { agentTracer } from "./AgentTracer";
-import { knezClient } from "../KnezClient";
-import { toolExposureService } from "../ToolExposureService";
-import { toolExecutionService } from "../ToolExecutionService";
+import { knezClient } from "../knez/KnezClient";
+import { toolExposureService } from "../mcp/ToolExposureService";
+import { toolExecutionService } from "../mcp/ToolExecutionService";
 
 export interface AgentCallbacks {
   onThinking: (isThinking: boolean) => void;

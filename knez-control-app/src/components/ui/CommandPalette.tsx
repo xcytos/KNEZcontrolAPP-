@@ -1,8 +1,8 @@
 
 import React, { useEffect, useState } from "react";
 import { View } from "../layout/Sidebar";
-import { exportDiagnosticsBundle } from "../../services/DiagnosticsService";
-import { logger } from "../../services/LogService";
+import { exportDiagnosticsBundle } from "../../services/analytics/DiagnosticsService";
+import { logger } from '../../services/utils/LogService';
 import { features } from "../../config/features";
 
 interface CommandPaletteProps {

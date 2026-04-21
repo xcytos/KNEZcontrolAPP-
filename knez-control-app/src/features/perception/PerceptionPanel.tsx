@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { knezClient } from '../../services/KnezClient';
+import { knezClient } from '../../services/knez/KnezClient';
 import { PerceptionSnapshot, ActiveWindowInfo } from '../../domain/DataContracts';
 import { useToast } from '../../components/ui/Toast';
 

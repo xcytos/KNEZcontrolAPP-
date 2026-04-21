@@ -4,8 +4,8 @@
 // Rules: Cannot append if message missing, cannot finalize twice, if no content → fallback
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { Block, MessageState } from "../../../domain/DataContracts";
-import { logger } from "../../utils/LogService";
+import { Block } from "../../../domain/DataContracts";
+import { logger } from "../../../services/utils/LogService";
 
 export class ResponseAssembler {
   private assistantId: string;

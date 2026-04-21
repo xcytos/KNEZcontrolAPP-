@@ -6,8 +6,8 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { getMemoryEventSourcingService } from '../../services/MemoryEventSourcingService';
-import { MemoryState } from '../../services/MemoryEventSourcingService';
+import { getMemoryEventSourcingService } from '../../services/memory/storage/MemoryEventSourcingService';
+import { MemoryState } from '../../services/memory/storage/MemoryEventSourcingService';
 import { MemoryGraphVisualization } from './MemoryGraphVisualization';
 
 export const EventSourcedMemoryView: React.FC = () => {

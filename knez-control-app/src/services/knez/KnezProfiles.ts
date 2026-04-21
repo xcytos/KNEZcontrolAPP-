@@ -1,5 +1,5 @@
-import { KnezConnectionProfile } from "../domain/DataContracts";
-import { knezClient } from "./KnezClient";
+import { KnezConnectionProfile } from '../../domain/DataContracts';
+import { knezClient } from '../knez/KnezClient';
 
 const KEY = "knez_connection_profiles";
 

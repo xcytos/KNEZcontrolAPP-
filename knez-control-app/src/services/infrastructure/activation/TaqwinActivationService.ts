@@ -1,5 +1,5 @@
-import { taqwinMcpService } from "../mcp/taqwin/TaqwinMcpService";
-import { logger } from "./utils/LogService";
+import { taqwinMcpService } from "../../../mcp/taqwin/TaqwinMcpService";
+import { logger } from "../../utils/LogService";
 
 export type TaqwinActivationStatus = {
   state: "idle" | "starting" | "running" | "error";

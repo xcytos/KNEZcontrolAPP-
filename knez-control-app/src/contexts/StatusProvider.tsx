@@ -1,5 +1,5 @@
 import React, { createContext, useEffect, useRef, useState } from 'react';
-import { knezClient } from '../services/KnezClient';
+import { knezClient } from '../services/knez/KnezClient';
 import { KnezHealthResponse, CognitiveState } from '../domain/DataContracts';
 import { isOverallHealthyStatus } from '../utils/health';
 

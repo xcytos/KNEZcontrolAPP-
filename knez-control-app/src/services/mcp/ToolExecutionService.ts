@@ -1,6 +1,6 @@
 import { mcpOrchestrator } from "../../mcp/McpOrchestrator";
 import { classifyMcpError, type McpErrorClassification } from "../../mcp/McpErrorTaxonomy";
-import { toolExposureService, type ExposedToolMeta } from "./ToolExposureService";
+import { toolExposureService, type ExposedToolMeta } from '../mcp/ToolExposureService';
 import { governanceService } from "../governance/GovernanceService";
 
 export type ToolExecutionDenied = {

@@ -11,7 +11,7 @@
 
 import * as crypto from 'crypto';
 import Database from 'better-sqlite3';
-import { getMemoryCompressionService } from './MemoryCompressionService';
+import { getMemoryCompressionService } from '../compression/MemoryCompressionService';
 
 export interface ContentAddress {
   hash: string;

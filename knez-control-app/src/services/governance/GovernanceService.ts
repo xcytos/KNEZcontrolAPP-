@@ -1,4 +1,4 @@
-import { knezClient } from "../KnezClient";
+import { knezClient } from "../knez/KnezClient";
 import type { ExposedToolMeta } from "../mcp/ToolExposureService";
 import type { ServerRuntime } from "../../mcp/McpOrchestrator";
 

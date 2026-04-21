@@ -1,7 +1,7 @@
 import { BaseDirectory, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { McpHostConfig, parseMcpHostConfigJson, validateTaqwinMcpServer } from "./McpHostConfig";
 import { getDefaultMcpHostConfig } from "./DefaultMcpHostConfig";
-import { logger } from "../../services/LogService";
+import { logger } from '../../services/utils/LogService';
 
 const APP_LOCAL_FILE_NAME = "mcp.config.json";
 const LEGACY_APP_LOCAL_FILE_NAME = "mcp.host.json";

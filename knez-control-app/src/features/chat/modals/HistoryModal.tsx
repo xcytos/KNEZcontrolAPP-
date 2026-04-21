@@ -4,9 +4,9 @@ import { Input } from '../../../components/ui/core/Input';
 import { Button } from '../../../components/ui/core/Button';
 import { History, Trash2 } from 'lucide-react';
 import { useToast } from '../../../components/ui/Toast';
-import { sessionDatabase } from '../../../services/SessionDatabase';
-import { sessionController } from '../../../services/SessionController';
-import { knezClient } from '../../../services/KnezClient';
+import { sessionDatabase } from '../../../services/session/SessionDatabase';
+import { sessionController } from '../../../services/session/SessionController';
+import { knezClient } from '../../../services/knez/KnezClient';
 
 interface HistoryModalProps {
   isOpen: boolean;

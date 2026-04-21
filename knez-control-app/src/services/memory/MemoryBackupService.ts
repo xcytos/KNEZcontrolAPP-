@@ -12,8 +12,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { getMemoryEventSourcingService } from './MemoryEventSourcingService';
-import { getMemoryCompressionService, CompressionAlgorithm } from './MemoryCompressionService';
+import { getMemoryEventSourcingService } from './storage/MemoryEventSourcingService';
+import { getMemoryCompressionService, CompressionAlgorithm } from './compression/MemoryCompressionService';
 
 export interface BackupConfig {
   backupDir: string;

@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { knezClient } from '../../services/KnezClient';
+import { knezClient } from '../../services/knez/KnezClient';
 import { ResumeSnapshot } from '../../domain/DataContracts';
-import { sessionController } from '../../services/SessionController';
-import { getMemoryEventSourcingService } from '../../services/MemoryEventSourcingService';
+import { sessionController } from '../../services/session/SessionController';
+import { getMemoryEventSourcingService } from '../../services/memory/storage/MemoryEventSourcingService';
 
 export const LineagePanel: React.FC<{ sessionId: string; onResume: (sid: string) => void }> = ({ sessionId, onResume }) => {
   const [snapshot, setSnapshot] = useState<ResumeSnapshot | null>(null);

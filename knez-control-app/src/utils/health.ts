@@ -1,5 +1,5 @@
-import type { HealthBackend } from "../domain/DataContracts";
-import { TIMEOUT_CONFIG } from "../config/features";
+import type { HealthBackend } from '../domain/DataContracts';
+import { TIMEOUT_CONFIG } from '../config/features';
 
 export function backendHasLiveMetrics(be: HealthBackend): boolean {
   return be.latency_ms !== undefined && be.latency_ms !== null

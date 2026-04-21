@@ -1,5 +1,5 @@
 import { BaseDirectory, readTextFile, writeTextFile, exists, mkdir } from '@tauri-apps/plugin-fs'
-import { logger } from './utils/LogService'
+import { logger } from '../../utils/LogService'
 
 type SkillMeta = {
   name: string
