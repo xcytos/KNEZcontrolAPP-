@@ -304,13 +304,21 @@ export class ChatService {
 
     const currentPhase = this.state.phase;
 
+    // Fix: If STREAM_END is called from "thinking" or "streaming", transition to ERROR instead
+    // This handles the case where stream ends without producing content (empty response fallback)
+    let actualNewPhase = newPhase;
+    if (event === "STREAM_END" && (currentPhase === "thinking" || currentPhase === "streaming")) {
+      logger.warn("chat_service", "stream_end_from_thinking_transitioning_to_error", { currentPhase });
+      actualNewPhase = "error";
+    }
+
     // NEW: Use PhaseManager for phase transitions (handles validation)
     if (this.phaseManager) {
-      this.phaseManager.setPhase(newPhase as ModularChatPhase);
+      this.phaseManager.setPhase(actualNewPhase as ModularChatPhase);
     }
 
     // Keep ChatService state in sync for backward compatibility
-    this.state.phase = newPhase;
+    this.state.phase = actualNewPhase;
 
     // Response time measurement (P5.2 T10)
     if (event === "USER_SEND") {
@@ -1058,7 +1066,7 @@ export class ChatService {
 
     // P5.2 T5: Trigger TOOL_START event
     if (this.sessionId === input.sessionId) {
-      this.setPhase("TOOL_START");
+      this.setPhase("TOOL_START", input.assistantId);
     }
 
     void this.tryEmit(
