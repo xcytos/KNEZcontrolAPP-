@@ -14,7 +14,7 @@ import { chatService } from '../../services/ChatService';
 import { sessionDatabase } from '../../services/session/SessionDatabase';
 import { sessionController } from '../../services/session/SessionController';
 import { logger } from '../../services/utils/LogService';
-import { FolderOpen, History, Loader2, MessageSquarePlus, MoreVertical, Play, Search, Square, TerminalSquare, Puzzle, Sparkles, Zap, Bug, Database, ArrowUp } from "lucide-react";
+import { FolderOpen, History, Loader2, MessageSquarePlus, MoreVertical, Play, Search, Square, TerminalSquare, Puzzle, Sparkles, Zap, Bug, Database, ArrowUp, Download, Upload } from "lucide-react";
 import { SessionInspectorModal } from "./SessionInspectorModal";
 import { DebugPanel } from "./DebugPanel";
 import { useStatus } from "../../contexts/useStatus";
@@ -339,6 +339,48 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     }
   };
 
+  const handleExportSession = async () => {
+    if (!sessionId) return;
+    try {
+      const session = await sessionDatabase.getSession(sessionId);
+      const messages = await sessionDatabase.loadMessages(sessionId);
+      const exportData = {
+        session,
+        messages,
+        exportedAt: new Date().toISOString()
+      };
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `session-${sessionId.substring(0, 8)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast("Session exported successfully", "success");
+    } catch (e) {
+      showToast("Failed to export session", "error");
+    }
+  };
+
+  const handleImportSession = async (file: File) => {
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (!data.session || !data.messages) {
+        showToast("Invalid session file format", "error");
+        return;
+      }
+      const newSessionId = sessionController.createNewSession();
+      await sessionDatabase.saveSession(newSessionId, data.session.name || 'Imported Session');
+      await sessionDatabase.saveMessages(newSessionId, data.messages.map((msg: any) => ({ ...msg, sessionId: newSessionId })));
+      showToast(`Session imported: ${newSessionId.substring(0,8)}`, "success");
+    } catch (e) {
+      showToast("Failed to import session", "error");
+    }
+  };
+
   // CP3-A: Validation Harness
   useEffect(() => {
     if (systemStatus === 'running' && !readOnly) {
@@ -650,6 +692,29 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                 title="Debug Panel - Tool Execution History"
              >
                <Bug size={18} />
+            </button>
+            <button
+                onClick={handleExportSession}
+                className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
+                title="Export Session"
+             >
+               <Download size={18} />
+            </button>
+            <button
+                onClick={() => {
+                  const input = document.createElement('input');
+                  input.type = 'file';
+                  input.accept = '.json';
+                  input.onchange = (e) => {
+                    const file = (e.target as HTMLInputElement).files?.[0];
+                    if (file) void handleImportSession(file);
+                  };
+                  input.click();
+                }}
+                className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
+                title="Import Session"
+             >
+               <Upload size={18} />
             </button>
             <div className="relative">
               <button
