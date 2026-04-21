@@ -10,6 +10,7 @@ export type SessionControllerListener = (state: SessionControllerState) => void;
 class SessionController {
   private listeners: SessionControllerListener[] = [];
   private state: SessionControllerState;
+  private sessionOperationLock: Promise<any> = Promise.resolve();
 
   constructor() {
     const existing = knezClient.getSessionId();
@@ -45,9 +46,13 @@ class SessionController {
   }
 
   async ensureOnlineSession(): Promise<string> {
-    const sessionId = await knezClient.ensureSession();
-    this.setSessionId(sessionId);
-    return sessionId;
+    const lock = this.sessionOperationLock.then(async () => {
+      const sessionId = await knezClient.ensureSession();
+      this.setSessionId(sessionId);
+      return sessionId;
+    });
+    this.sessionOperationLock = lock;
+    return lock;
   }
 
   createNewSession(): string {
@@ -62,15 +67,23 @@ class SessionController {
   }
 
   async resumeSession(sourceSessionId: string, activate: boolean = true): Promise<string> {
-    const newSessionId = await knezClient.resumeSession(sourceSessionId);
-    if (activate) this.setSessionId(newSessionId);
-    return newSessionId;
+    const lock = this.sessionOperationLock.then(async () => {
+      const newSessionId = await knezClient.resumeSession(sourceSessionId);
+      if (activate) this.setSessionId(newSessionId);
+      return newSessionId;
+    });
+    this.sessionOperationLock = lock;
+    return lock;
   }
 
   async forkSession(sourceSessionId: string, messageId?: string, activate: boolean = true): Promise<string> {
-    const newSessionId = await knezClient.forkSession(sourceSessionId, messageId);
-    if (activate) this.setSessionId(newSessionId);
-    return newSessionId;
+    const lock = this.sessionOperationLock.then(async () => {
+      const newSessionId = await knezClient.forkSession(sourceSessionId, messageId);
+      if (activate) this.setSessionId(newSessionId);
+      return newSessionId;
+    });
+    this.sessionOperationLock = lock;
+    return lock;
   }
 }
 

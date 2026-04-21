@@ -4,6 +4,7 @@ import { KnezHealthResponse } from "../../domain/DataContracts";
 import { HealthProbeStatus, SystemStatus } from "../system/useSystemOrchestrator";
 import { isOverallHealthyStatus } from "../../utils/health";
 import { Activity, Cpu, Database, Play, RefreshCw, Square, Zap } from "lucide-react";
+import { ConnectionHealthMonitor, ConnectionHealthStatus } from '../../services/connection/ConnectionHealthMonitor';
 
 // Status Types
 type ComponentStatus = "unknown" | "healthy" | "degraded" | "unhealthy";
@@ -60,9 +61,12 @@ export const ConnectionPage: React.FC<{
   const [modelLoadingProgress, setModelLoadingProgress] = useState(0);
   const [activeTab, setActiveTab] = useState<"lifecycle" | "errors" | "raw">("lifecycle");
   const [isMounted, setIsMounted] = useState(true);
+  const [connectionHealthStatus, setConnectionHealthStatus] = useState<ConnectionHealthStatus>("unknown");
   const w = window as any;
   const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
   const abortControllerRef = React.useRef<AbortController | null>(null);
+  const healthMonitorRef = React.useRef<ConnectionHealthMonitor | null>(null);
+  const healthCheckDebounceRef = React.useRef<number | null>(null);
 
   // Load startup logs from localStorage on mount
   useEffect(() => {
@@ -79,6 +83,9 @@ export const ConnectionPage: React.FC<{
       setIsMounted(false);
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
+      }
+      if (healthCheckDebounceRef.current) {
+        clearTimeout(healthCheckDebounceRef.current);
       }
     };
   }, []);
@@ -184,30 +191,75 @@ export const ConnectionPage: React.FC<{
     }
   }, [systemStatus]);
 
+  // Initialize connection health monitor
+  useEffect(() => {
+    if (!healthMonitorRef.current) {
+      healthMonitorRef.current = new ConnectionHealthMonitor({
+        intervalMs: 5000, // Check every 5 seconds
+        timeoutMs: 3000,
+        failureThreshold: 3,
+        recoveryThreshold: 2,
+        healthCheckFn: async () => {
+          try {
+            const h = await knezClient.health({ timeoutMs: 3000 });
+            return h && isOverallHealthyStatus(h.status);
+          } catch {
+            return false;
+          }
+        },
+      });
+
+      // Subscribe to health status changes
+      const unsubscribe = healthMonitorRef.current.subscribe((state) => {
+        if (isMounted) {
+          setConnectionHealthStatus(state.status);
+        }
+      });
+
+      // Start monitoring when system is running
+      if (systemStatus === "running") {
+        healthMonitorRef.current.start();
+      }
+
+      return () => {
+        unsubscribe();
+        healthMonitorRef.current?.stop();
+      };
+    }
+  }, [systemStatus]);
+
   const checkModelState = async () => {
-    // Abort previous request if still pending
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
+    // Clear any pending debounce timer
+    if (healthCheckDebounceRef.current) {
+      clearTimeout(healthCheckDebounceRef.current);
     }
-    
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-    
-    try {
-      const h = await knezClient.health({ timeoutMs: 3000 });
-      if (isMounted) {
-        setHealth(h);
-        setModelState(h.model_state?.state ?? "unloaded");
+
+    // Debounce the health check with 500ms delay
+    healthCheckDebounceRef.current = window.setTimeout(async () => {
+      // Abort previous request if still pending
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
       }
-    } catch (error) {
-      if (isMounted && controller.signal.aborted !== true) {
-        setModelState("unloaded");
+      
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+      
+      try {
+        const h = await knezClient.health({ timeoutMs: 3000 });
+        if (isMounted && h) {
+          setHealth(h);
+          setModelState(h.model_state?.state ?? "unloaded");
+        }
+      } catch (error) {
+        if (isMounted && controller.signal.aborted !== true) {
+          setModelState("unloaded");
+        }
+      } finally {
+        if (abortControllerRef.current === controller) {
+          abortControllerRef.current = null;
+        }
       }
-    } finally {
-      if (abortControllerRef.current === controller) {
-        abortControllerRef.current = null;
-      }
-    }
+    }, 500);
   };
 
   const handleLoadModel = async () => {
@@ -283,14 +335,24 @@ export const ConnectionPage: React.FC<{
               <Activity className="w-4 h-4 text-zinc-400" />
               <span className="font-mono text-sm text-zinc-300">System Overview</span>
             </div>
-            <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-              systemStatus === "running" ? "bg-green-600 text-white" :
-              systemStatus === "starting" ? "bg-yellow-600 text-white" :
-              systemStatus === "failed" ? "bg-red-600 text-white" :
-              "bg-zinc-700 text-zinc-300"
-            }`}>
-              {systemStatus.toUpperCase()}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                connectionHealthStatus === "healthy" ? "bg-green-600 text-white" :
+                connectionHealthStatus === "degraded" ? "bg-yellow-600 text-white" :
+                connectionHealthStatus === "unhealthy" ? "bg-red-600 text-white" :
+                "bg-zinc-700 text-zinc-300"
+              }`}>
+                Health: {connectionHealthStatus.toUpperCase()}
+              </span>
+              <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                systemStatus === "running" ? "bg-green-600 text-white" :
+                systemStatus === "starting" ? "bg-yellow-600 text-white" :
+                systemStatus === "failed" ? "bg-red-600 text-white" :
+                "bg-zinc-700 text-zinc-300"
+              }`}>
+                {systemStatus.toUpperCase()}
+              </span>
+            </div>
           </div>
           <div className="text-xs text-zinc-500 font-mono mb-2">{endpoint}</div>
           {/* Startup Progress Bar */}
