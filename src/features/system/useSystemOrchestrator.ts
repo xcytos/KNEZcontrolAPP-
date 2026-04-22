@@ -54,23 +54,32 @@ export function useSystemOrchestrator(onReady?: () => void) {
       return false;
     }
 
-    // Check Ollama
+    // Check Ollama - check if it's already running or can be spawned
+    let ollamaAvailable = false;
     try {
-      const ollamaCheck = Command.create("cmd", ["/c", "ollama", "--version"]);
-      let ollamaInstalled = false;
-      ollamaCheck.on("close", (data) => {
-        if (data.code === 0) ollamaInstalled = true;
-      });
-      await ollamaCheck.spawn();
-      await new Promise(r => setTimeout(r, 500));
-      if (!ollamaInstalled) {
-        setOutput((prev) => prev + "[System Check] ✗ Ollama is not installed or not in PATH.");
-        return false;
+      // First check if Ollama is already running via HTTP
+      const ollamaHttpCheck = await fetch("http://localhost:11434/api/tags", { signal: AbortSignal.timeout(2000) });
+      if (ollamaHttpCheck.ok) {
+        ollamaAvailable = true;
+        setOutput((prev) => prev + "[System Check] ✓ Ollama is already running and reachable.");
       }
-      setOutput((prev) => prev + "[System Check] ✓ Ollama is installed.");
     } catch {
-      setOutput((prev) => prev + "[System Check] ✗ Ollama check failed.");
-      return false;
+      // Not running, check if it can be spawned (check if ollama.exe exists in common paths)
+      try {
+        const ollamaPathCheck = Command.create("cmd", ["/c", "where", "ollama"]);
+        ollamaPathCheck.on("close", (data) => {
+          if (data.code === 0) ollamaAvailable = true;
+        });
+        await ollamaPathCheck.spawn();
+        await new Promise(r => setTimeout(r, 500));
+        if (ollamaAvailable) {
+          setOutput((prev) => prev + "[System Check] ✓ Ollama is installed and can be spawned.");
+        } else {
+          setOutput((prev) => prev + "[System Check] ⚠ Ollama not found in PATH, but will attempt to start if available.");
+        }
+      } catch {
+        setOutput((prev) => prev + "[System Check] ⚠ Ollama check skipped (will attempt startup anyway).");
+      }
     }
 
     // Check port availability
