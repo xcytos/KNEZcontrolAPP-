@@ -26,6 +26,11 @@ export class WebSocketClient {
         }
       });
     }
+
+    // Log all WebSocket messages for verification
+    this.on('*', (message) => {
+      logger.debug('websocket', 'message_received', { type: message.type, data: message.data });
+    });
   }
 
   connect(sessionId: string): void {

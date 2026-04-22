@@ -28,6 +28,8 @@ import { MessageStore } from "./chat/core/MessageStore";
 import { RequestController } from "./chat/core/RequestController";
 import { PhaseManager, ChatPhase as ModularChatPhase } from "./chat/core/PhaseManager";
 import { ResponseAssembler } from "./chat/core/ResponseAssembler";
+import { realtimeEventHandler } from "./realtime/RealtimeEventHandler";
+import { realtimeToolExecutor } from "./realtime/RealtimeToolExecutor";
 import { ToolExecutionBridge } from "./chat/tools/ToolExecutionBridge";
 
 export type ChatPhase =
@@ -79,6 +81,9 @@ export class ChatService {
     pendingToolApproval: null,
     sequenceCounter: 0
   };
+  // Track if WebSocket is the primary stream source
+  private useWebSocketStream = false;
+  private currentAssistantId: string | null = null;
   private sessionId: string;
   private queueFlushInFlight = false;
   private activeDelivery:
@@ -210,6 +215,43 @@ export class ChatService {
     this.phaseManager = new PhaseManager(this.sessionId);
     this.responseAssembler = new ResponseAssembler("");
     
+    // Connect WebSocket for real-time events
+    realtimeEventHandler.connect(this.sessionId);
+    realtimeToolExecutor.enable(this.sessionId);
+
+    // Register WebSocket token handler
+    realtimeEventHandler.onToken((data) => {
+      logger.info('chatservice', 'websocket_token_received', { token: data.token.slice(0, 10), index: data.index });
+
+      // Mark WebSocket as primary stream source
+      this.useWebSocketStream = true;
+
+      // Find current assistant message being streamed (last assistant message that is partial)
+      const assistantMsg = [...this.state.messages].reverse().find(m => m.from === 'assistant' && m.isPartial);
+      if (assistantMsg) {
+        this.currentAssistantId = assistantMsg.id;
+        try {
+          this.appendToMessage(assistantMsg.id, data.token);
+          logger.info('chatservice', 'websocket_token_appended', { assistantId: assistantMsg.id, tokenIndex: data.index });
+        } catch (e) {
+          logger.error('chatservice', 'websocket_token_append_failed', { error: String(e) });
+        }
+      }
+    });
+
+    // Register WebSocket agent state handler
+    realtimeEventHandler.onAgentState((data) => {
+      logger.info('chatservice', 'websocket_agent_state', { state: data.state, message: data.message });
+      // Update phase based on agent state - map to EventType
+      if (data.state === 'streaming') {
+        this.setPhase('FIRST_TOKEN');
+      } else if (data.state === 'thinking') {
+        this.setPhase('MODEL_CALL_START');
+      } else if (data.state === 'tool_running') {
+        this.setPhase('TOOL_START');
+      }
+    });
+    
     void this.load(this.sessionId);
     sessionController.subscribe(({ sessionId }) => {
       const previousSessionId = this.sessionId;
@@ -222,6 +264,11 @@ export class ChatService {
       this.messageStore = new MessageStore(this.sessionId);
       this.requestController = new RequestController(this.sessionId);
       this.phaseManager = new PhaseManager(this.sessionId);
+      
+      // Reconnect WebSocket for new session
+      realtimeEventHandler.connect(this.sessionId);
+      realtimeToolExecutor.enable(this.sessionId);
+      
       // P5.2 T12: Reset to idle on session change for state isolation
       this.resetToIdle();
       const stored = localStorage.getItem(`chat_search_enabled:${sessionId}`);
@@ -751,6 +798,12 @@ export class ChatService {
       // PART 4: DO NOT silently fail - throw error to prevent data corruption
       logger.error("chat_service", "append_message_missing_critical", { messageId, messageCount: msgs.length });
       throw new Error(`Message missing during stream append: ${messageId}`);
+    }
+
+    // DUAL STREAM HANDLING: Skip SSE append if WebSocket is primary
+    if (this.useWebSocketStream && messageId === this.currentAssistantId) {
+      logger.debug("chat_service", "skip_sse_append_websocket_primary", { messageId });
+      return;
     }
 
     // ADD 2: Validate stream ownership
