@@ -356,8 +356,8 @@ export const ConnectionPage: React.FC<{
     
     try {
       console.log('[Test Model] Sending "who are you" request...');
-      // Generate a proper session ID in UUID format
-      const sessionId = `test-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+      // Generate a proper UUID for sessionId compatible with IndexedDB
+      const sessionId = crypto.randomUUID();
       console.log('[Test Model] Session ID:', sessionId, typeof sessionId);
       const response = await knezClient.chatCompletionsNonStream(
         [{ role: "user", content: "who are you" }],
