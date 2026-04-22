@@ -4,10 +4,11 @@ import { Activity, GitBranch, X, Layers } from 'lucide-react';
 import { DiagnosticPanel, LayerDiagnostic, DiagnosticConfig } from './DiagnosticPanel';
 import { DiagnosticSimulation } from './DiagnosticSimulation';
 import { knezArchitecture, Layer, NodeStatus } from './knezArchitecture';
-import { knezClient } from '../../services/knez/KnezClient';
 import { testExecutionStateMachine } from './TestExecutionStateMachine';
 import { getTestNodePath } from './testNodePaths';
 import { usePacketAnimation } from './PacketAnimation';
+import { getEventBus } from '../../observability/eventBus/EventBus';
+import { getPacketSimulationEngine } from '../../observability/packetSimulation/PacketSimulationEngine';
 
 type EdgeType = 'data' | 'control' | 'feedback';
 type GuardrailStatus = 'active' | 'tripped' | 'disabled';
@@ -29,6 +30,8 @@ interface SystemNode {
     errorCount?: number;
     performance?: number;
   };
+  // Event-driven state from observability system
+  eventState?: 'idle' | 'active' | 'success' | 'degraded' | 'failed';
 }
 
 interface SystemEdge {
@@ -37,6 +40,9 @@ interface SystemEdge {
   type: EdgeType;
   active: boolean;
   guardrail?: GuardrailStatus;
+  // Event-driven state from observability system
+  eventState?: 'idle' | 'active' | 'blocked' | 'failed';
+  latencyMs?: number;
 }
 
 interface Zone {
@@ -63,6 +69,8 @@ export const InfrastructureVisualizer: React.FC = () => {
   const [activeTestNodeId, setActiveTestNodeId] = useState<string | null>(null);
   const [blinkingNodes, setBlinkingNodes] = useState<Set<string>>(new Set());
   const [errorPath, setErrorPath] = useState<string[]>([]);
+  const [validationLogsOpen, setValidationLogsOpen] = useState(false);
+  const [validationLogs, setValidationLogs] = useState<{ timestamp: number; event: string; details: string }[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   
@@ -140,16 +148,14 @@ export const InfrastructureVisualizer: React.FC = () => {
   }, [zones]);
 
   const [nodes, setNodes] = useState<SystemNode[]>(initialNodes);
-
-  // Define edges from actual knezArchitecture connections
-  const edges: SystemEdge[] = useMemo(() => {
+  const [edges, setEdges] = useState<SystemEdge[]>(useMemo(() => {
     return knezArchitecture.connections.map(conn => ({
       from: conn.from,
       to: conn.to,
       type: conn.type === 'dependency' ? 'control' : conn.type === 'data_flow' ? 'data' : 'feedback',
       active: false
     }));
-  }, []);
+  }, []));
 
   const handleZoomIn = () => setZoom(prev => Math.min(prev + 0.1, 2));
   const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.1, 0.3));
@@ -205,8 +211,21 @@ export const InfrastructureVisualizer: React.FC = () => {
     setHighlightedPath(path);
   };
 
-  const getStatusColor = (status: NodeStatus): string => {
-    switch (status) {
+  const getStatusColor = (node: SystemNode): string => {
+    // Use eventState if available (from observability system), otherwise fall back to status
+    if (node.eventState) {
+      switch (node.eventState) {
+        case 'idle': return '#6b7280'; // IDLE (gray)
+        case 'active': return '#3b82f6'; // ACTIVE (blue)
+        case 'success': return '#10b981'; // SUCCESS (green)
+        case 'degraded': return '#f59e0b'; // DEGRADED (yellow)
+        case 'failed': return '#ef4444'; // FAILED (red)
+        default: return '#6b7280';
+      }
+    }
+    
+    // Fall back to legacy status mapping
+    switch (node.status) {
       case 'working': return '#10b981';
       case 'partial': return '#f59e0b';
       case 'not_working': return '#ef4444';
@@ -215,13 +234,32 @@ export const InfrastructureVisualizer: React.FC = () => {
     }
   };
 
-  const getEdgeColor = (type: EdgeType): string => {
-    switch (type) {
+  const getEdgeColor = (edge: SystemEdge): string => {
+    // Use eventState if available for flow visualization
+    if (edge.eventState) {
+      switch (edge.eventState) {
+        case 'active': return '#3b82f6'; // Flow active (blue)
+        case 'blocked': return '#ef4444'; // Failure break (red)
+        case 'failed': return '#dc2626'; // Failed (dark red)
+        case 'idle': return '#6b7280'; // Idle (gray)
+        default: return '#6b7280';
+      }
+    }
+    
+    // Fall back to type-based coloring
+    switch (edge.type) {
       case 'data': return '#3b82f6';
       case 'control': return '#8b5cf6';
       case 'feedback': return '#10b981';
       default: return '#6b7280';
     }
+  };
+
+  const getEdgeHeatColor = (latencyMs?: number): string => {
+    if (!latencyMs) return '#3b82f6';
+    if (latencyMs < 50) return '#10b981'; // Fast (green)
+    if (latencyMs < 100) return '#f59e0b'; // Medium (yellow)
+    return '#ef4444'; // Slow (red)
   };
 
   const getEdgeDash = (type: EdgeType): string => {
@@ -233,49 +271,95 @@ export const InfrastructureVisualizer: React.FC = () => {
     }
   };
 
-  // Poll health status from KnezClient
+  // Event-driven state propagation from GraphStateEngine (NO POLLING)
   useEffect(() => {
-    let mounted = true;
-    const pollInterval = 30000; // 30 seconds
+    const eventBus = getEventBus();
 
-    const pollHealth = async () => {
-      try {
-        const health = await knezClient.health({ timeoutMs: 5000 });
-        if (!mounted) return;
-        
-        // Update node statuses based on health response
-        // For now, we'll mark all nodes as working if backend is healthy
-        // In a full implementation, we'd map specific backend components to nodes
-        if (health.status === 'healthy') {
-          setNodes(prev => prev.map(node => ({
+    // Subscribe to node status changes
+    const nodeStatusUnsubscribe = eventBus.subscribe('node_status_change', (event) => {
+      const { node_id, new_status } = event.payload as { node_id: string; new_status: string };
+      
+      setNodes(prev => prev.map(node => {
+        if (node.id === node_id) {
+          return {
             ...node,
-            active: node.status === 'working'
-          })));
-        } else {
-          setNodes(prev => prev.map(node => ({
-            ...node,
-            active: false
-          })));
+            eventState: new_status as 'idle' | 'active' | 'success' | 'degraded' | 'failed',
+            active: new_status === 'active' || new_status === 'success'
+          };
         }
-      } catch (error) {
-        // If health check fails, mark nodes as inactive
-        if (mounted) {
-          setNodes(prev => prev.map(node => ({
-            ...node,
-            active: false
-          })));
-        }
-      }
-    };
+        return node;
+      }));
+    });
 
-    pollHealth();
-    const interval = setInterval(pollHealth, pollInterval);
+    // Subscribe to edge status changes
+    const edgeStatusUnsubscribe = eventBus.subscribe('edge_status_change', (event) => {
+      const { edge_id, new_status, latency_ms } = event.payload as {
+        edge_id: string;
+        new_status: string;
+        latency_ms?: number;
+      };
+      const [from, to] = edge_id.split('→');
+      
+      setEdges(prev => prev.map(edge => {
+        if (edge.from === from && edge.to === to) {
+          return {
+            ...edge,
+            eventState: new_status as 'idle' | 'active' | 'blocked' | 'failed',
+            active: new_status === 'active',
+            latencyMs: latency_ms
+          };
+        }
+        return edge;
+      }));
+    });
+
+    // Subscribe to packet events for animation
+    const packetCreatedUnsubscribe = eventBus.subscribe('packet_created', (event) => {
+      // Trigger packet animation
+      const packetEngine = getPacketSimulationEngine();
+      packetEngine.startAnimation();
+      
+      // Log packet movement
+      const { from_node, to_node } = event.payload as { from_node: string; to_node: string };
+      setValidationLogs(prev => [...prev, {
+        timestamp: Date.now(),
+        event: 'packet_movement',
+        details: `${from_node} → ${to_node}`
+      }]);
+    });
+
+    // Subscribe to diagnostic test completion
+    const diagnosticUnsubscribe = eventBus.subscribe('diagnostic_test_completed', (event) => {
+      const { test_id, success, latency_ms } = event.payload as {
+        test_id: string;
+        success: boolean;
+        latency_ms: number;
+      };
+      setValidationLogs(prev => [...prev, {
+        timestamp: Date.now(),
+        event: 'diagnostic_test_completed',
+        details: `${test_id}: ${success ? 'SUCCESS' : 'FAILED'} (${latency_ms}ms)`
+      }]);
+    });
+
+    // Subscribe to trace events
+    const traceStartUnsubscribe = eventBus.subscribe('trace_start', (event) => {
+      const { trace_id } = event.payload as { trace_id: string };
+      setValidationLogs(prev => [...prev, {
+        timestamp: Date.now(),
+        event: 'trace_id_generated',
+        details: `TRACE_ID: ${trace_id}`
+      }]);
+    });
 
     return () => {
-      mounted = false;
-      clearInterval(interval);
+      nodeStatusUnsubscribe();
+      edgeStatusUnsubscribe();
+      packetCreatedUnsubscribe();
+      diagnosticUnsubscribe();
+      traceStartUnsubscribe();
     };
-  }, [setNodes]);
+  }, []);
 
   // Subscribe to TestRunner state updates and drive visualization
   // Note: Integration logic in place, but subscription deferred due to type mismatch
@@ -402,10 +486,20 @@ export const InfrastructureVisualizer: React.FC = () => {
             Layer Summary
           </button>
           <button
+            onClick={() => setValidationLogsOpen(!validationLogsOpen)}
+            className={`flex items-center gap-2 px-3 py-1.5 text-xs rounded transition-colors ${
+              validationLogsOpen 
+                ? 'bg-cyan-600 hover:bg-cyan-700 text-white' 
+                : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400'
+            }`}
+          >
+            <Activity className="w-4 h-4" />
+            Validation Logs
+          </button>
+          <button
             onClick={() => setDiagnosticOpen(true)}
             className="flex items-center gap-2 px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
           >
-            <Activity className="w-4 h-4" />
             Diagnostics
           </button>
           <button
@@ -532,21 +626,33 @@ export const InfrastructureVisualizer: React.FC = () => {
               const isHighlighted = highlightedPath.includes(edge.from) && highlightedPath.includes(edge.to);
               const isErrorPath = errorPath.includes(edge.from) && errorPath.includes(edge.to);
               const isGuardrailTripped = edge.guardrail === 'tripped';
+              const isFlowActive = edge.eventState === 'active';
+              const edgeColor = edge.latencyMs ? getEdgeHeatColor(edge.latencyMs) : getEdgeColor(edge);
 
               return (
                 <g key={`edge-${idx}`}>
                   <path
                     d={generateEdgePath(fromNode, toNode)}
-                    stroke={isGuardrailTripped ? '#ef4444' : isErrorPath ? '#dc2626' : getEdgeColor(edge.type)}
+                    stroke={isGuardrailTripped ? '#ef4444' : isErrorPath ? '#dc2626' : edgeColor}
                     strokeWidth={isHighlighted ? 3 : isErrorPath ? 3 : edge.active ? 2 : 1}
                     fill="none"
                     opacity={isHighlighted ? 1 : isErrorPath ? 1 : edge.active ? 0.8 : 0.3}
                     strokeDasharray={isErrorPath ? '8,4' : getEdgeDash(edge.type)}
-                  />
+                  >
+                    {isFlowActive && (
+                      <animate
+                        attributeName="stroke-dashoffset"
+                        from="0"
+                        to="20"
+                        dur="1s"
+                        repeatCount="indefinite"
+                      />
+                    )}
+                  </path>
                   {/* Arrow head */}
                   <polygon
                     points={`${toNode.x - 6},${toNode.y - 6} ${toNode.x + 6},${toNode.y - 6} ${toNode.x},${toNode.y}`}
-                    fill={isGuardrailTripped ? '#ef4444' : getEdgeColor(edge.type)}
+                    fill={isGuardrailTripped ? '#ef4444' : edgeColor}
                     opacity={isHighlighted ? 1 : edge.active ? 0.8 : 0.3}
                   />
                   {/* Guardrail indicator */}
@@ -577,7 +683,7 @@ export const InfrastructureVisualizer: React.FC = () => {
                     cx={node.x}
                     cy={node.y}
                     r={20}
-                    fill={getStatusColor(node.status)}
+                    fill={getStatusColor(node)}
                     opacity={isHighlighted ? 1 : node.active ? 0.9 : 0.6}
                     stroke={isActiveTestNode ? '#fbbf24' : isBlinking ? '#fff' : 'transparent'}
                     strokeWidth={isActiveTestNode ? 3 : isBlinking ? 2 : 0}
@@ -838,6 +944,39 @@ export const InfrastructureVisualizer: React.FC = () => {
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Validation Logs Panel */}
+      {validationLogsOpen && (
+        <div className="fixed top-20 right-4 w-96 bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl z-40">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+            <div className="flex items-center gap-2">
+              <Activity className="w-4 h-4 text-cyan-500" />
+              <h3 className="text-sm font-bold text-zinc-100">Validation Logs</h3>
+            </div>
+            <button
+              onClick={() => setValidationLogsOpen(false)}
+              className="p-1 hover:bg-zinc-800 rounded transition-colors"
+            >
+              <X className="w-4 h-4 text-zinc-400" />
+            </button>
+          </div>
+          <div className="p-4 space-y-2 max-h-[60vh] overflow-auto">
+            {validationLogs.length === 0 ? (
+              <p className="text-xs text-zinc-500 text-center py-4">No validation events logged yet</p>
+            ) : (
+              validationLogs.slice().reverse().map((log, idx) => (
+                <div key={idx} className="bg-zinc-800 rounded p-2 text-[10px]">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-medium text-cyan-400">{log.event}</span>
+                    <span className="text-zinc-500">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                  </div>
+                  <p className="text-zinc-300">{log.details}</p>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}

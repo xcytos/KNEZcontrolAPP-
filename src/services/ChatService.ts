@@ -28,29 +28,31 @@ import { MessageStore } from "./chat/core/MessageStore";
 import { RequestController } from "./chat/core/RequestController";
 import { PhaseManager, ChatPhase as ModularChatPhase } from "./chat/core/PhaseManager";
 import { ResponseAssembler } from "./chat/core/ResponseAssembler";
+import { ExecutionCoordinator } from "./chat/core/ExecutionCoordinator";
+import { ExecutionController } from "./chat/core/ExecutionController";
 import { realtimeEventHandler } from "./realtime/RealtimeEventHandler";
 import { realtimeToolExecutor } from "./realtime/RealtimeToolExecutor";
 import { webSocketClient } from "./websocket/WebSocketClient";
 import { ToolExecutionBridge } from "./chat/tools/ToolExecutionBridge";
 
+// STREAM_MODE: WS_ONLY - Disable SSE fallback during stabilization
+const STREAM_MODE = "WS_ONLY" as const;
+
 export type ChatPhase =
   | "idle"
   | "sending"
   | "thinking"
-  | "tool_running"
   | "streaming"
   | "finalizing"
-  | "done"
-  | "error";
+  | "done";
 
 export type EventType =
   | "USER_SEND"
   | "MODEL_CALL_START"
   | "FIRST_TOKEN"
-  | "TOOL_START"
-  | "TOOL_END"
   | "STREAM_END"
-  | "ERROR";
+  | "FINALIZING"
+  | "DONE";
 
 // NOTE: Phase transition validation now handled by PhaseManager
 // PHASE_TRANSITIONS constant removed as it's no longer used
@@ -82,10 +84,13 @@ export class ChatService {
     pendingToolApproval: null,
     sequenceCounter: 0
   };
-  // Track if WebSocket is the primary stream source
-  private useWebSocketStream = false;
-  private webSocketConnected = false; // Track actual WebSocket connection state
+  // Track WebSocket connection state
+  private webSocketConnected = false;
   private sessionId: string;
+  
+  // NEW: Execution control layer
+  private executionCoordinator: ExecutionCoordinator;
+  private executionController: ExecutionController;
   private queueFlushInFlight = false;
   private activeDelivery:
     | {
@@ -216,6 +221,10 @@ export class ChatService {
     this.phaseManager = new PhaseManager(this.sessionId);
     this.responseAssembler = new ResponseAssembler("");
     
+    // NEW: Initialize execution control layer
+    this.executionCoordinator = new ExecutionCoordinator(this.sessionId);
+    this.executionController = new ExecutionController(this.sessionId);
+    
     // Connect WebSocket for real-time events
     realtimeEventHandler.connect(this.sessionId);
     realtimeToolExecutor.enable(this.sessionId);
@@ -229,9 +238,6 @@ export class ChatService {
     // Register WebSocket token handler
     realtimeEventHandler.onToken((data) => {
       logger.info('chatservice', 'websocket_token_received', { token: data.token.slice(0, 10), index: data.index });
-
-      // Mark WebSocket as primary stream source
-      this.useWebSocketStream = true;
 
       // Find current assistant message being streamed (last assistant message)
       const assistantMsg = [...this.state.messages].reverse().find(m => m.from === 'assistant');
@@ -256,9 +262,9 @@ export class ChatService {
         this.setPhase('FIRST_TOKEN');
       } else if (data.state === 'thinking') {
         this.setPhase('MODEL_CALL_START');
-      } else if (data.state === 'tool_running') {
-        this.setPhase('TOOL_START');
       }
+      // tool_running state no longer has a corresponding phase in strict FSM
+      // Tool execution is now handled at a different layer
     });
 
     // Register WebSocket stream_end handler
@@ -272,8 +278,7 @@ export class ChatService {
         );
         logger.info('chatservice', 'websocket_mark_message_complete', { assistantId: assistantMsg.id });
       }
-      // Reset WebSocket flag for next request
-      this.useWebSocketStream = false;
+      // Transition to finalizing phase
       this.setPhase('STREAM_END');
     });
     
@@ -283,16 +288,27 @@ export class ChatService {
       // T7: Cancel previous session queue when switching sessions
       if (previousSessionId && previousSessionId !== sessionId) {
         void this.forceStopForSession(previousSessionId);
+        // NEW: Reinitialize modular controllers only when session actually changes
+        this.sessionId = sessionId;
+        
+        // NEW: Reinitialize ExecutionCoordinator and ExecutionController for new session
+        this.executionCoordinator = new ExecutionCoordinator(sessionId);
+        this.executionController = new ExecutionController(sessionId);
+        logger.info("chat_service", "execution_controllers_reinitialized", { 
+          previousSessionId, 
+          newSessionId: sessionId 
+        });
+        this.messageStore = new MessageStore(this.sessionId);
+        this.requestController = new RequestController(this.sessionId);
+        this.phaseManager = new PhaseManager(this.sessionId);
+        
+        // Reconnect WebSocket for new session
+        realtimeEventHandler.connect(this.sessionId);
+        realtimeToolExecutor.enable(this.sessionId);
+      } else if (!previousSessionId) {
+        // First time initialization
+        this.sessionId = sessionId;
       }
-      this.sessionId = sessionId;
-      // NEW: Reinitialize modular controllers for new session
-      this.messageStore = new MessageStore(this.sessionId);
-      this.requestController = new RequestController(this.sessionId);
-      this.phaseManager = new PhaseManager(this.sessionId);
-      
-      // Reconnect WebSocket for new session
-      realtimeEventHandler.connect(this.sessionId);
-      realtimeToolExecutor.enable(this.sessionId);
       
       // P5.2 T12: Reset to idle on session change for state isolation
       this.resetToIdle();
@@ -338,8 +354,8 @@ export class ChatService {
     }
   }
 
-  // PART 1: Tolerant event-driven state engine
-  // Allows re-entrant transitions, logs instead of throws on invalid transitions
+  // PART 1: STRICT event-driven state engine
+  // Enforces strict phase transitions via PhaseManager
   // PART 4: Added ownership validation via requestId, streamId, or assistantId
   private setPhase(event: EventType, ownershipId?: string): void {
     // PART 4: Validate ownership - ignore updates from stale requests
@@ -362,10 +378,9 @@ export class ChatService {
       USER_SEND: "sending",
       MODEL_CALL_START: "thinking",
       FIRST_TOKEN: "streaming",
-      TOOL_START: "tool_running",
-      TOOL_END: "thinking",
       STREAM_END: "finalizing",
-      ERROR: "error"
+      FINALIZING: "done",
+      DONE: "idle"
     };
 
     const newPhase = phaseTransition[event];
@@ -374,46 +389,106 @@ export class ChatService {
       return;
     }
 
-    const currentPhase = this.state.phase;
-
-    // Fix: If STREAM_END is called from "thinking" or "streaming", transition to ERROR instead
-    // This handles the case where stream ends without producing content (empty response fallback)
-    let actualNewPhase = newPhase;
-    if (event === "STREAM_END" && (currentPhase === "thinking" || currentPhase === "streaming")) {
-      logger.warn("chat_service", "stream_end_from_thinking_transitioning_to_error", { currentPhase });
-      actualNewPhase = "error";
-    }
-
-    // NEW: Use PhaseManager for phase transitions (handles validation)
+    // NEW: Use PhaseManager for strict phase transitions (handles validation)
     if (this.phaseManager) {
-      this.phaseManager.setPhase(actualNewPhase as ModularChatPhase);
+      try {
+        this.phaseManager.setPhase(newPhase as ModularChatPhase);
+      } catch (error) {
+        logger.error("chat_service", "phase_transition_failed", { 
+          event, 
+          newPhase, 
+          error: String(error) 
+        });
+        throw error;
+      }
     }
 
     // Keep ChatService state in sync for backward compatibility
-    this.state.phase = actualNewPhase;
+    this.state.phase = newPhase;
 
     // Response time measurement (P5.2 T10)
     if (event === "USER_SEND") {
       this.state.responseStart = Date.now();
     }
-    if (event === "STREAM_END" || event === "ERROR") {
+    if (event === "STREAM_END" || event === "FINALIZING") {
       this.state.responseEnd = Date.now();
-      // Auto-reset to idle after finalizing or error
-      setTimeout(() => {
-        const currentPhase = this.phaseManager?.getPhase() as ChatPhase ?? this.state.phase;
-        if (currentPhase === "done" || currentPhase === "error") {
-          this.resetToIdle();
-        }
-      }, 150);
     }
 
-    logger.info("chat_service", "phase_transition", {
-      event,
-      from: currentPhase,
-      to: newPhase,
-      ownershipId
-    });
+    // NEW: Auto-transition from finalizing to done to idle
+    if (newPhase === "finalizing") {
+      setTimeout(() => {
+        try {
+          this.setPhase("FINALIZING");
+          setTimeout(() => {
+            try {
+              this.setPhase("DONE");
+              // Reset execution coordinator
+              if (this.executionCoordinator) {
+                const executionId = this.executionCoordinator.getCurrentExecutionId();
+                if (executionId) {
+                  this.executionCoordinator.endExecution(executionId);
+                }
+              }
+            } catch (e) {
+              logger.warn("chat_service", "auto_transition_to_done_failed", { error: String(e) });
+            }
+          }, 100);
+        } catch (e) {
+          logger.warn("chat_service", "auto_transition_to_finalizing_failed", { error: String(e) });
+        }
+      }, 100);
+    }
 
+    // NEW: Track execution lifecycle with ExecutionCoordinator
+    if (this.executionCoordinator) {
+      const executionId = this.executionCoordinator.getCurrentExecutionId();
+      logger.info("chat_service", "phase_transition", {
+        event,
+        from: this.state.phase,
+        to: newPhase,
+        ownershipId,
+        executionId
+      });
+    } else {
+      logger.info("chat_service", "phase_transition", {
+        event,
+        from: this.state.phase,
+        to: newPhase,
+        ownershipId
+      });
+    }
+
+    this.notify();
+  }
+
+  // NEW: Stop current execution using ExecutionController
+  stopExecution(): void {
+    if (this.executionController) {
+      this.executionController.stop();
+      logger.info("chat_service", "execution_stopped", { 
+        sessionId: this.sessionId,
+        executionId: this.executionCoordinator?.getCurrentExecutionId()
+      });
+    }
+    
+    // Reset phase to idle
+    if (this.phaseManager) {
+      try {
+        this.phaseManager.setPhase("idle");
+      } catch (e) {
+        logger.warn("chat_service", "reset_to_idle_failed", { error: String(e) });
+      }
+    }
+    this.state.phase = "idle";
+    
+    // End execution coordinator
+    if (this.executionCoordinator) {
+      const executionId = this.executionCoordinator.getCurrentExecutionId();
+      if (executionId) {
+        this.executionCoordinator.endExecution(executionId);
+      }
+    }
+    
     this.notify();
   }
 
@@ -816,8 +891,8 @@ export class ChatService {
   }
 
   appendToMessage(messageId: string, text: string) {
-    // STEP 2: Log stream source
-    logger.info('chat_service', 'STREAM_SOURCE', { source: this.useWebSocketStream && this.webSocketConnected ? 'WS' : 'SSE', messageId });
+    // WS_ONLY MODE: Always use WebSocket, skip SSE append if WebSocket is connected
+    logger.info('chat_service', 'STREAM_SOURCE', { source: this.webSocketConnected ? 'WS' : 'SSE', mode: STREAM_MODE, messageId });
 
     // PART 4: Append Pipeline Hard Fix - MUST read from state.messages only
     const msgs = this.state.messages;
@@ -828,9 +903,9 @@ export class ChatService {
       throw new Error(`Message missing during stream append: ${messageId}`);
     }
 
-    // DUAL STREAM HANDLING: Skip SSE append only if WebSocket is actually connected and primary
-    if (this.useWebSocketStream && this.webSocketConnected) {
-      logger.info("chat_service", "STREAM_SOURCE", { source: 'WS', messageId, action: 'skip_sse_websocket_primary' });
+    // WS_ONLY MODE: Skip SSE append if WebSocket is connected
+    if (this.webSocketConnected) {
+      logger.info("chat_service", "STREAM_SOURCE", { source: 'WS', messageId, action: 'skip_sse_ws_only_mode' });
       return;
     }
 
@@ -1145,9 +1220,9 @@ export class ChatService {
     const runtimeHint = serverIdHint ? mcpOrchestrator.getServer(serverIdHint) : null;
     const startedAt = performance.now();
 
-    // P5.2 T5: Trigger TOOL_START event
+    // TOOL_START phase removed in strict FSM - tool execution handled at different layer
     if (this.sessionId === input.sessionId) {
-      this.setPhase("TOOL_START", input.assistantId);
+      logger.debug("chat_service", "tool_execution_start", { assistantId: input.assistantId });
     }
 
     void this.tryEmit(
@@ -1237,9 +1312,9 @@ export class ChatService {
       : Math.round(performance.now() - startedAt);
 
     if (exec.ok) {
-      // P5.2 T5: Trigger TOOL_END event on success
+      // TOOL_END phase removed in strict FSM - tool execution handled at different layer
       if (this.sessionId === input.sessionId) {
-        this.setPhase("TOOL_END", input.assistantId);
+        logger.debug("chat_service", "tool_execution_success", { assistantId: input.assistantId });
       }
 
       void this.tryEmit(
@@ -1285,9 +1360,9 @@ export class ChatService {
 
     const errorMsg = exec.error ? `${exec.error.code}:${exec.error.message}` : "tool_execution_failed:Unknown error";
     const errorCode = exec.error?.code ?? "tool_execution_failed";
-    // P5.2 T5: Trigger TOOL_END event
+    // TOOL_END phase removed in strict FSM - tool execution handled at different layer
     if (this.sessionId === input.sessionId) {
-      this.setPhase("TOOL_END", input.assistantId);
+      logger.debug("chat_service", "tool_execution_error", { assistantId: input.assistantId, errorCode });
     }
 
     void this.tryEmit(
@@ -1417,7 +1492,8 @@ export class ChatService {
         }
       },
       onToolStart: (toolName, args) => {
-        this.setPhase("TOOL_START", assistantId);
+        // TOOL_START phase removed in strict FSM - tool execution handled at different layer
+        logger.debug("chat_service", "tool_start_callback", { assistantId, toolName });
         const traceMessageId = `${assistantId}-tool-${Date.now()}`;
         currentToolMessageId = traceMessageId;
 
@@ -1430,7 +1506,8 @@ export class ChatService {
         });
       },
       onToolEnd: (toolName, result, success) => {
-        this.setPhase("TOOL_END", assistantId);
+        // TOOL_END phase removed in strict FSM - tool execution handled at different layer
+        logger.debug("chat_service", "tool_end_callback", { assistantId, toolName, success });
         if (currentToolMessageId) {
           const finishedAt = new Date().toISOString();
           // Calculate execution time
@@ -2280,7 +2357,18 @@ export class ChatService {
   private async deliverQueueItem(id: string, forceContext?: string) {
     const item = await sessionDatabase.getOutgoing(id);
     if (!item) return;
-    
+
+    // NEW: Enforce single execution lock using ExecutionCoordinator
+    if (this.executionCoordinator && this.executionCoordinator.isActive()) {
+      logger.warn("chat_service", "single_execution_lock_rejected", { 
+        sessionId: item.sessionId, 
+        id,
+        activeExecutionId: this.executionCoordinator.getCurrentExecutionId()
+      });
+      await sessionDatabase.removeOutgoing(id);
+      return;
+    }
+
     // ADD 5: Acquire request lock to prevent overlapping requests
     const lockAcquired = await this.acquireRequestLock(item.sessionId, id);
     if (!lockAcquired) {
@@ -2315,8 +2403,8 @@ export class ChatService {
             }
             return m;
           });
-          // P5.2 T11: Set ERROR phase on health check failure
-          this.setPhase("ERROR", id);
+          // ERROR phase removed in strict FSM - errors logged instead
+          logger.error("chat_service", "health_check_failed", { id, sessionId: item.sessionId });
         }
         // TICKET-3: Always release request lock on early return
         this.releaseRequestLock(item.sessionId, id);
@@ -2333,7 +2421,6 @@ export class ChatService {
         text: "⚠️ KNEZ not ready. Please wait for connection.",
         refusal: true
       });
-      await sessionDatabase.removeOutgoing(id);
       if (this.sessionId === item.sessionId) {
         this.state.messages = this.state.messages.map((m) => {
           if (m.id === id) return { ...m, deliveryStatus: "delivered", deliveryError: undefined };
@@ -2342,8 +2429,7 @@ export class ChatService {
           }
           return m;
         });
-        // P5.2 T11: Set ERROR phase on health check exception
-        this.setPhase("ERROR", id);
+        logger.error("chat_service", "health_check_exception", { id, sessionId: item.sessionId, error: String(healthErr) });
       }
       // TICKET-3: Always release request lock on early return
       this.releaseRequestLock(item.sessionId, id);
@@ -2454,9 +2540,16 @@ export class ChatService {
       const existing = await sessionDatabase.getSession(sessionId);
       if (!existing) {
         logger.error("chat_service", "session_not_initialized", { sessionId });
-        this.setPhase("ERROR", id);
+        // ERROR phase removed in strict FSM - errors logged instead
         return;
       }
+      
+      // NEW: Start execution lifecycle tracking
+      if (this.executionCoordinator) {
+        const executionId = this.executionCoordinator.startExecution();
+        logger.info("chat_service", "execution_started", { executionId, sessionId, id });
+      }
+      
       this.setPhase("USER_SEND", id);
     }
 
@@ -2530,7 +2623,8 @@ export class ChatService {
         logger.info("mcp_routing", "skipping_streaming_for_tool_loop", { toolsCount: toolsForModel.length, userText: item.text.slice(0, 100) });
         // Skip streaming entirely, go directly to tool loop
         streamId = newMessageId();
-        const controller = new AbortController();
+        // NEW: Use ExecutionController for abort control
+        const controller = this.executionController ? this.executionController.createAbortController() : new AbortController();
         this.activeDelivery = { sessionId, outgoingId: id, assistantId, controller, stopRequested: false };
         // FIX B: Enforce stream ownership
         if (!this.streamController.start(assistantId, streamId)) {
@@ -2623,7 +2717,8 @@ export class ChatService {
       }
 
       streamId = newMessageId();
-      const controller = new AbortController();
+      // NEW: Use ExecutionController for abort control
+      const controller = this.executionController ? this.executionController.createAbortController() : new AbortController();
       this.activeDelivery = { sessionId, outgoingId: id, assistantId, controller, stopRequested: false };
       
       // PART 2: Track active stream IMMEDIATELY after creating streamId
@@ -2963,8 +3058,9 @@ export class ChatService {
         // PART 2: Ensure phase is not stuck in thinking/streaming
         const currentPhase = this.phaseManager?.getPhase() as ChatPhase ?? this.state.phase;
         if (currentPhase === "thinking" || currentPhase === "streaming") {
-          logger.warn("chat_service", "phase_stuck_resetting_to_error", { currentPhase });
-          this.setPhase("ERROR", id);
+          logger.warn("chat_service", "phase_stuck_resetting_to_stream_end", { currentPhase });
+          // ERROR phase removed in strict FSM - transition to STREAM_END instead
+          this.setPhase("STREAM_END", id);
         }
       }
     }

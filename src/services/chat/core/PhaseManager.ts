@@ -1,7 +1,7 @@
 // ─── PhaseManager.ts ────────────────────────────────────────────────────
-// Phase transitions (sending/thinking/streaming/completed/failed)
-// Responsibilities: setPhase, validate transitions, allow idempotent updates
-// Rules: thinking → thinking allowed, streaming → streaming allowed
+// STRICT Phase transitions (idle → sending → thinking → streaming → finalizing → done → idle)
+// Responsibilities: setPhase, validate transitions, FAIL FAST on invalid transitions
+// Rules: NO illegal transitions - ever, strict FSM enforcement
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { logger } from "../../utils/LogService";
@@ -11,20 +11,16 @@ export type ChatPhase =
   | "sending"
   | "thinking"
   | "streaming"
-  | "tool_running"
-  | "completed"
-  | "failed"
-  | "error";
+  | "finalizing"
+  | "done";
 
 const VALID_TRANSITIONS: Record<ChatPhase, ChatPhase[]> = {
   idle: ["sending"],
-  sending: ["thinking", "failed", "error"],
-  thinking: ["streaming", "tool_running", "failed", "error"],
-  streaming: ["streaming", "completed", "failed", "error"],
-  tool_running: ["thinking", "streaming", "failed", "error"],
-  completed: ["idle"],
-  failed: ["idle"],
-  error: ["idle"]
+  sending: ["thinking"],
+  thinking: ["streaming"],
+  streaming: ["finalizing"],
+  finalizing: ["done"],
+  done: ["idle"]
 };
 
 export class PhaseManager {
@@ -36,31 +32,38 @@ export class PhaseManager {
   }
 
   setPhase(newPhase: ChatPhase): void {
-    // Allow idempotent updates (same phase → same phase)
-    if (this.currentPhase === newPhase) {
-      logger.debug("phase_manager", "phase_idempotent", { sessionId: this.sessionId, phase: newPhase });
+    // Allow idempotent updates only for idle → idle
+    if (this.currentPhase === newPhase && newPhase === "idle") {
+      logger.debug("phase_manager", "phase_idempotent_idle", { sessionId: this.sessionId, phase: newPhase });
       return;
     }
 
     const validTransitions = VALID_TRANSITIONS[this.currentPhase];
     if (!validTransitions) {
-      logger.error("phase_manager", "invalid_current_phase", { sessionId: this.sessionId, currentPhase: this.currentPhase, message: "Valid transitions map missing for current phase - race condition detected" });
-      this.currentPhase = newPhase;
-      return;
+      logger.error("phase_manager", "INVALID_CURRENT_PHASE", { 
+        sessionId: this.sessionId, 
+        currentPhase: this.currentPhase,
+        error: "Valid transitions map missing - race condition detected"
+      });
+      throw new Error(`Invalid current phase: ${this.currentPhase}`);
     }
+
     if (!validTransitions.includes(newPhase)) {
-      logger.warn("phase_manager", "invalid_transition", { 
+      logger.error("phase_manager", "INVALID_TRANSITION_REJECTED", { 
         sessionId: this.sessionId, 
         from: this.currentPhase, 
-        to: newPhase 
+        to: newPhase,
+        error: "Strict FSM violation"
       });
-      // Don't throw error - allow recovery but log the issue
-      this.currentPhase = newPhase;
-      return;
+      throw new Error(`Invalid phase transition: ${this.currentPhase} → ${newPhase}`);
     }
 
     this.currentPhase = newPhase;
-    logger.debug("phase_manager", "phase_changed", { sessionId: this.sessionId, phase: newPhase });
+    logger.info("phase_manager", "phase_transition", { 
+      sessionId: this.sessionId, 
+      from: this.currentPhase, 
+      to: newPhase 
+    });
   }
 
   getPhase(): ChatPhase {
@@ -79,7 +82,11 @@ export class PhaseManager {
     return this.currentPhase === "streaming";
   }
 
-  isToolRunning(): boolean {
-    return this.currentPhase === "tool_running";
+  isFinalizing(): boolean {
+    return this.currentPhase === "finalizing";
+  }
+
+  isDone(): boolean {
+    return this.currentPhase === "done";
   }
 }
