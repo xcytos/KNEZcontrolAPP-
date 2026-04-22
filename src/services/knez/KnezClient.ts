@@ -15,6 +15,8 @@ import {
   KnowledgeDoc
 } from '../../domain/DataContracts';
 import { AppError } from '../../domain/Errors';
+import { logger } from '../utils/LogService';
+import { webSocketClient } from '../websocket/WebSocketClient';
 
 export type KnezMemoryRecord = {
   memory_id: string;
@@ -200,16 +202,7 @@ async function postJsonViaShell<T>(url: string, payload: any, timeoutMs: number)
   throw new AppError("KNEZ_FETCH_FAILED", `Shell POST failed (cmd code ${out.code})`, { url, stderr: out.stderr });
 }
 
-function newSessionId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID().replace(/-/g, "");
-  }
-  return `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
-}
-
 const testFailOnce = new Set<string>();
-
-import { logger } from  '../utils/LogService';
 
 async function safeRequest<T>(fn: () => Promise<T>, context: string): Promise<T> {
   const MAX_RETRIES = 3;
@@ -365,18 +358,55 @@ export class KnezClient {
   }
 
   setSessionId(sessionId: string | null): void {
+    // Disconnect WebSocket if session is being cleared
+    if (!sessionId && this.sessionId) {
+      webSocketClient.disconnect();
+    }
+
     this.sessionId = sessionId;
     if (sessionId) {
       localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+      // Connect WebSocket when session is set
+      webSocketClient.connect(sessionId);
+      logger.info("knez_client", "WebSocket connecting", { sessionId });
     } else {
       localStorage.removeItem(SESSION_STORAGE_KEY);
     }
   }
 
-  createNewLocalSession(): string {
-    const fresh = newSessionId();
-    this.setSessionId(fresh);
-    return fresh;
+  async createNewLocalSession(): Promise<string> {
+    // Call backend to create session (backend generates session ID)
+    const url = `${this.baseUrl()}/sessions/create`;
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agent_id: null }),
+      });
+      if (!resp.ok) {
+        throw new AppError("KNEZ_SESSION_CREATE_FAILED", `Session creation failed (${resp.status})`, { status: resp.status });
+      }
+      const data = await resp.json() as { session_id: string };
+      const sessionId = data.session_id;
+      this.setSessionId(sessionId);
+      logger.info("knez_client", "Session created by backend", { sessionId });
+      return sessionId;
+    } catch (e: any) {
+      if (isTauriRuntime()) {
+        try {
+          const data = await postJsonViaShell<{ session_id: string }>(url, { agent_id: null }, 5000);
+          const sessionId = data.session_id;
+          this.setSessionId(sessionId);
+          logger.info("knez_client", "Session created by backend (shell)", { sessionId });
+          return sessionId;
+        } catch (shellErr: any) {
+          if (shellErr instanceof AppError) throw shellErr;
+          throw new AppError("KNEZ_SESSION_CREATE_FAILED", `Failed to create session: ${url}`, { url, reason: String(shellErr?.message ?? shellErr) });
+        }
+      }
+      if (e instanceof AppError) throw e;
+      throw new AppError("KNEZ_SESSION_CREATE_FAILED", `Failed to create session: ${url}`, { url, reason: String(e?.message ?? e) });
+    }
   }
 
   async health(options?: { timeoutMs?: number }): Promise<KnezHealthResponse> {
@@ -473,16 +503,9 @@ export class KnezClient {
       return existing;
     }
     // CP8-6: Enforce fresh session creation if validation fails or doesn't exist
-    // But we should also check if we have a "last used session" that is still valid?
-    // The requirement says "Enforce Session Creation on Every Launch (if not exists)".
-    // The current logic does exactly that: if not existing or not valid, create new.
-    // However, to be strict about "Every Launch", maybe we should always create one unless we explicitly resume?
-    // "if not exists" implies we keep it if valid.
-    
-    const fresh = newSessionId();
-    this.sessionId = fresh;
-    localStorage.setItem(SESSION_STORAGE_KEY, fresh);
-    logger.info("knez_client", "New session created (CP8-6 Enforcement)", { sessionId: fresh });
+    // Backend now generates session IDs (not frontend)
+    const fresh = await this.createNewLocalSession();
+    logger.info("knez_client", "Session created by backend (ensureSession)", { sessionId: fresh });
     try {
       await this.emitEvent({
         session_id: fresh,
@@ -496,9 +519,6 @@ export class KnezClient {
     } catch (e: any) {
       logger.warn("knez_client", "Session bootstrap event failed", { sessionId: fresh, error: String(e?.message ?? e) });
     }
-    
-    // Also log this creation event to backend immediately if possible?
-    // Usually the first message does that, but we can emit a "session_start" event if we had an endpoint.
     return fresh;
   }
 

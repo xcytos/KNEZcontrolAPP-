@@ -6,6 +6,7 @@ import { isOverallHealthyStatus } from '../utils/health';
 interface StatusContextValue {
   online: boolean;
   isConnected: boolean;
+  isModelReady: boolean;
   isDegraded: boolean;
   lastCheck: number | null;
   health: KnezHealthResponse | null;
@@ -25,6 +26,7 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   
   // Derived state
   const isConnected = online && !!health && isOverallHealthyStatus(health.status);
+  const isModelReady = online && !!health && health.model_loaded === true;
   const isDegraded = online && !!health && !isOverallHealthyStatus(health.status);
 
   const timeoutRef = useRef<number | null>(null);
@@ -99,7 +101,8 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   return (
     <StatusContext.Provider value={{ 
       online,
-      isConnected, 
+      isConnected,
+      isModelReady,
       isDegraded, 
       lastCheck, 
       health, 

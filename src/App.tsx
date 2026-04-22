@@ -58,7 +58,7 @@ function AppContent() {
   const [chatSending, setChatSending] = useState(false);
   const [tabErrors, setTabErrors] = useState<Partial<Record<View, boolean>>>({});
   
-  const { online, isConnected, isDegraded, lastCheck, health, forceCheck } = useStatus();
+  const { online, isConnected, isModelReady, isDegraded, lastCheck, health, forceCheck } = useStatus();
 
   // CP9-6: Global Command Palette Listener
   useEffect(() => {
@@ -330,6 +330,7 @@ function AppContent() {
                   ? "running"
                   : "down",
         connected: online,
+        isModelReady: isModelReady,
         endpoint: knezClient.getProfile().endpoint,
         lastCheck: lastCheck
       }}

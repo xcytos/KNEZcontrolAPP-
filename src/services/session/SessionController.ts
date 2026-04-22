@@ -14,8 +14,16 @@ class SessionController {
 
   constructor() {
     const existing = knezClient.getSessionId();
-    const sessionId = existing ?? knezClient.createNewLocalSession();
+    const sessionId = existing ?? "";
     this.state = { sessionId };
+    if (!existing) {
+      void this.initializeSession();
+    }
+  }
+
+  private async initializeSession(): Promise<void> {
+    const created = await knezClient.createNewLocalSession();
+    this.setSessionId(created);
   }
 
   subscribe(listener: SessionControllerListener) {
@@ -37,10 +45,10 @@ class SessionController {
     this.listeners.forEach((l) => l(this.state));
   }
 
-  ensureLocalSession(): string {
+  async ensureLocalSession(): Promise<string> {
     const existing = this.state.sessionId;
     if (existing) return existing;
-    const created = knezClient.createNewLocalSession();
+    const created = await knezClient.createNewLocalSession();
     this.setSessionId(created);
     return created;
   }
@@ -55,8 +63,8 @@ class SessionController {
     return lock;
   }
 
-  createNewSession(): string {
-    const created = knezClient.createNewLocalSession();
+  async createNewSession(): Promise<string> {
+    const created = await knezClient.createNewLocalSession();
     this.setSessionId(created);
     return created;
   }
