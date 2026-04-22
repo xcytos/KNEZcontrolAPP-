@@ -60,6 +60,8 @@ export const ConnectionPage: React.FC<{
   const [modelState, setModelState] = useState<"unloaded" | "loading" | "loaded">("unloaded");
   const [modelLoadingProgress, setModelLoadingProgress] = useState(0);
   const [activeTab, setActiveTab] = useState<"lifecycle" | "errors" | "raw">("lifecycle");
+  const [testResponse, setTestResponse] = useState<string | null>(null);
+  const [testLoading, setTestLoading] = useState(false);
   const isMounted = React.useRef(true);
   const [connectionHealthStatus, setConnectionHealthStatus] = useState<ConnectionHealthStatus>("unknown");
   const w = window as any;
@@ -341,6 +343,38 @@ export const ConnectionPage: React.FC<{
         } catch (e) {
           console.warn('Failed to save model log:', e);
         }
+      }
+    }
+  };
+
+  const handleTestModel = async () => {
+    console.log('[Test Model] Button clicked');
+    if (!isMounted.current) return;
+    
+    setTestLoading(true);
+    setTestResponse(null);
+    
+    try {
+      console.log('[Test Model] Sending "who are you" request...');
+      const sessionId = Date.now().toString(); // Use temporary session ID
+      const response = await knezClient.chatCompletionsNonStream(
+        [{ role: "user", content: "who are you" }],
+        sessionId
+      );
+      
+      console.log('[Test Model] Response received:', response);
+      
+      if (isMounted.current) {
+        setTestResponse(response || "No response");
+      }
+    } catch (error: any) {
+      console.error('[Test Model] Error:', error);
+      if (isMounted.current) {
+        setTestResponse(`Error: ${error?.message || String(error)}`);
+      }
+    } finally {
+      if (isMounted.current) {
+        setTestLoading(false);
       }
     }
   };
@@ -653,9 +687,25 @@ export const ConnectionPage: React.FC<{
                 >
                   Load Model
                 </button>
+              ) : modelState === "loaded" ? (
+                <button
+                  onClick={handleTestModel}
+                  disabled={testLoading}
+                  className="w-full px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {testLoading ? 'Testing...' : 'Test Model'}
+                </button>
               ) : null
             }
           />
+          {testResponse && (
+            <div className="mt-2 border border-zinc-800 rounded-lg bg-zinc-950/40 p-3">
+              <h3 className="text-xs font-bold text-zinc-400 mb-2">MODEL TEST RESPONSE</h3>
+              <pre className="bg-zinc-800 rounded p-3 border border-zinc-700 text-xs text-zinc-300 font-mono whitespace-pre-wrap">
+                {testResponse}
+              </pre>
+            </div>
+          )}
         </div>
       </div>
     </div>
