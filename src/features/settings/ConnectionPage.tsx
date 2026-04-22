@@ -278,13 +278,34 @@ export const ConnectionPage: React.FC<{
         if (result.success) {
           setModelState("loaded");
           await checkModelState();
+          // Log model loading response to localStorage for debug panel
+          try {
+            const modelLog = `[Model Load] Successfully loaded qwen2.5:7b-instruct-q4_K_M\n${JSON.stringify(result, null, 2)}`;
+            localStorage.setItem('knez_model_log', modelLog);
+          } catch (e) {
+            console.warn('Failed to save model log:', e);
+          }
         } else {
           setModelState("unloaded");
+          // Log model loading failure
+          try {
+            const modelLog = `[Model Load] Failed to load qwen2.5:7b-instruct-q4_K_M\nError: ${result.error || 'Unknown error'}`;
+            localStorage.setItem('knez_model_log', modelLog);
+          } catch (e) {
+            console.warn('Failed to save model log:', e);
+          }
         }
       }
-    } catch (error) {
+    } catch (error: any) {
       if (isMounted) {
         setModelState("unloaded");
+        // Log model loading error
+        try {
+          const modelLog = `[Model Load] Error loading qwen2.5:7b-instruct-q4_K_M\nError: ${error?.message || String(error)}`;
+          localStorage.setItem('knez_model_log', modelLog);
+        } catch (e) {
+          console.warn('Failed to save model log:', e);
+        }
       }
     }
   };
