@@ -356,7 +356,9 @@ export const ConnectionPage: React.FC<{
     
     try {
       console.log('[Test Model] Sending "who are you" request...');
-      const sessionId = Date.now().toString(); // Use temporary session ID
+      // Generate a proper session ID in UUID format
+      const sessionId = `test-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+      console.log('[Test Model] Session ID:', sessionId, typeof sessionId);
       const response = await knezClient.chatCompletionsNonStream(
         [{ role: "user", content: "who are you" }],
         sessionId
