@@ -259,7 +259,10 @@ export const ConnectionPage: React.FC<{
         const h = await knezClient.health({ timeoutMs: 3000 });
         if (isMounted.current && h) {
           setHealth(h);
-          setModelState(h.model_state?.state ?? "unloaded");
+          // Use health.model field to determine model state
+          const backendModelState = h.model === 'loaded' ? 'loaded' : 'unloaded';
+          setModelState(backendModelState);
+          console.log('[Model State Sync] Backend model:', h.model, 'Setting modelState to:', backendModelState);
         }
       } catch (error) {
         if (isMounted.current && controller.signal.aborted !== true) {
