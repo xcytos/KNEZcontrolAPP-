@@ -156,7 +156,15 @@ export const ConnectionPage: React.FC<{
     if (modelState === "loaded") return "healthy";
     if (modelState === "loading") return "degraded";
     return "unhealthy";
-  }, [modelState]);
+  }, [modelState, health]);
+
+  // Debug logging for Load Model button visibility
+  useEffect(() => {
+    console.log('[Load Model Button] modelState:', modelState);
+    console.log('[Load Model Button] health:', health);
+    console.log('[Load Model Button] ollama reachable:', health?.ollama?.reachable);
+    console.log('[Load Model Button] Button should show:', modelState === "unloaded" && health?.ollama?.reachable);
+  }, [modelState, health]);
 
   // Startup progress calculation
   const startupProgress = useMemo(() => {
