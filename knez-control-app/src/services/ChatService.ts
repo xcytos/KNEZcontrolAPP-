@@ -30,6 +30,7 @@ import { PhaseManager, ChatPhase as ModularChatPhase } from "./chat/core/PhaseMa
 import { ResponseAssembler } from "./chat/core/ResponseAssembler";
 import { realtimeEventHandler } from "./realtime/RealtimeEventHandler";
 import { realtimeToolExecutor } from "./realtime/RealtimeToolExecutor";
+import { webSocketClient } from "./websocket/WebSocketClient";
 import { ToolExecutionBridge } from "./chat/tools/ToolExecutionBridge";
 
 export type ChatPhase =
@@ -83,6 +84,7 @@ export class ChatService {
   };
   // Track if WebSocket is the primary stream source
   private useWebSocketStream = false;
+  private webSocketConnected = false; // Track actual WebSocket connection state
   private sessionId: string;
   private queueFlushInFlight = false;
   private activeDelivery:
@@ -217,6 +219,12 @@ export class ChatService {
     // Connect WebSocket for real-time events
     realtimeEventHandler.connect(this.sessionId);
     realtimeToolExecutor.enable(this.sessionId);
+
+    // Register WebSocket connected handler
+    webSocketClient.on('connected', (message) => {
+      logger.info('chatservice', 'websocket_connected_event', { sessionId: message.data.sessionId });
+      this.webSocketConnected = true;
+    });
 
     // Register WebSocket token handler
     realtimeEventHandler.onToken((data) => {
@@ -368,14 +376,12 @@ export class ChatService {
 
     const currentPhase = this.state.phase;
 
-    // STEP 6: Fix phase machine - prevent invalid error transitions during normal flow
-    // Valid transitions: thinking → streaming → finalizing → idle
-    // Only allow ERROR transition on explicit ERROR event, not from STREAM_END
+    // Fix: If STREAM_END is called from "thinking" or "streaming", transition to ERROR instead
+    // This handles the case where stream ends without producing content (empty response fallback)
     let actualNewPhase = newPhase;
     if (event === "STREAM_END" && (currentPhase === "thinking" || currentPhase === "streaming")) {
-      // If stream ends during normal flow, go to finalizing, not error
-      logger.info("chat_service", "stream_end_normal_flow_to_finalizing", { currentPhase });
-      actualNewPhase = "finalizing";
+      logger.warn("chat_service", "stream_end_from_thinking_transitioning_to_error", { currentPhase });
+      actualNewPhase = "error";
     }
 
     // NEW: Use PhaseManager for phase transitions (handles validation)
@@ -811,7 +817,7 @@ export class ChatService {
 
   appendToMessage(messageId: string, text: string) {
     // STEP 2: Log stream source
-    logger.info('chat_service', 'STREAM_SOURCE', { source: this.useWebSocketStream ? 'WS' : 'SSE', messageId });
+    logger.info('chat_service', 'STREAM_SOURCE', { source: this.useWebSocketStream && this.webSocketConnected ? 'WS' : 'SSE', messageId });
 
     // PART 4: Append Pipeline Hard Fix - MUST read from state.messages only
     const msgs = this.state.messages;
@@ -822,9 +828,9 @@ export class ChatService {
       throw new Error(`Message missing during stream append: ${messageId}`);
     }
 
-    // STEP 3: Force WebSocket primary - temporarily disable SSE append
-    if (this.useWebSocketStream) {
-      logger.info("chat_service", "STREAM_SOURCE", { source: 'WS', messageId, action: 'force_ws_primary_skip_sse' });
+    // DUAL STREAM HANDLING: Skip SSE append only if WebSocket is actually connected and primary
+    if (this.useWebSocketStream && this.webSocketConnected) {
+      logger.info("chat_service", "STREAM_SOURCE", { source: 'WS', messageId, action: 'skip_sse_websocket_primary' });
       return;
     }
 

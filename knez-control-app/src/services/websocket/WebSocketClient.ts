@@ -53,6 +53,15 @@ export class WebSocketClient {
         this.isConnected = true;
         this.reconnectAttempts = 0;
 
+        // Emit connected event for ChatService to track
+        this.handlers.get('connected')?.forEach(handler => {
+          try {
+            handler({ type: 'connected', data: { sessionId } });
+          } catch (e) {
+            logger.error('websocket', 'connected_handler_error', { error: String(e) });
+          }
+        });
+
         // Subscribe to all events by default
         this.send({
           type: 'subscribe',
