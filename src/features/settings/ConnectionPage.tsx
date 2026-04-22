@@ -263,17 +263,21 @@ export const ConnectionPage: React.FC<{
   };
 
   const handleLoadModel = async () => {
+    console.log('[Load Model] Button clicked');
     // First refresh health state to ensure we have current data
     await checkModelState();
     
     if (!health?.ollama?.reachable) {
+      console.log('[Load Model] Ollama not reachable');
       return;
     }
     if (!isMounted) return;
     
+    console.log('[Load Model] Starting model load');
     setModelState("loading");
     try {
       const result = await knezClient.loadModel("qwen2.5:7b-instruct-q4_K_M");
+      console.log('[Load Model] Result:', result);
       if (isMounted) {
         if (result.success) {
           setModelState("loaded");
@@ -297,6 +301,7 @@ export const ConnectionPage: React.FC<{
         }
       }
     } catch (error: any) {
+      console.error('[Load Model] Error:', error);
       if (isMounted) {
         setModelState("unloaded");
         // Log model loading error
