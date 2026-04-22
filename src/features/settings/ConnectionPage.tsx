@@ -60,7 +60,7 @@ export const ConnectionPage: React.FC<{
   const [modelState, setModelState] = useState<"unloaded" | "loading" | "loaded">("unloaded");
   const [modelLoadingProgress, setModelLoadingProgress] = useState(0);
   const [activeTab, setActiveTab] = useState<"lifecycle" | "errors" | "raw">("lifecycle");
-  const [isMounted, setIsMounted] = useState(true);
+  const isMounted = React.useRef(true);
   const [connectionHealthStatus, setConnectionHealthStatus] = useState<ConnectionHealthStatus>("unknown");
   const w = window as any;
   const isTauri = !!w.__TAURI_INTERNALS__ || !!w.__TAURI__ || !!w.__TAURI_IPC__;
@@ -80,12 +80,15 @@ export const ConnectionPage: React.FC<{
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      setIsMounted(false);
+      isMounted.current = false;
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
       if (healthCheckDebounceRef.current) {
         clearTimeout(healthCheckDebounceRef.current);
+      }
+      if (healthMonitorRef.current) {
+        healthMonitorRef.current.stop();
       }
     };
   }, []);
@@ -211,7 +214,7 @@ export const ConnectionPage: React.FC<{
 
       // Subscribe to health status changes
       const unsubscribe = healthMonitorRef.current.subscribe((state) => {
-        if (isMounted) {
+        if (isMounted.current) {
           setConnectionHealthStatus(state.status);
         }
       });
@@ -246,12 +249,12 @@ export const ConnectionPage: React.FC<{
       
       try {
         const h = await knezClient.health({ timeoutMs: 3000 });
-        if (isMounted && h) {
+        if (isMounted.current && h) {
           setHealth(h);
           setModelState(h.model_state?.state ?? "unloaded");
         }
       } catch (error) {
-        if (isMounted && controller.signal.aborted !== true) {
+        if (isMounted.current && controller.signal.aborted !== true) {
           setModelState("unloaded");
         }
       } finally {
@@ -283,7 +286,7 @@ export const ConnectionPage: React.FC<{
       console.log('[Load Model] Ollama not reachable, aborting');
       return;
     }
-    if (!isMounted) {
+    if (!isMounted.current) {
       console.log('[Load Model] Component unmounted, aborting');
       return;
     }
@@ -294,7 +297,7 @@ export const ConnectionPage: React.FC<{
       console.log('[Load Model] Calling knezClient.loadModel...');
       const result = await knezClient.loadModel("qwen2.5:7b-instruct-q4_K_M");
       console.log('[Load Model] Result:', result);
-      if (isMounted) {
+      if (isMounted.current) {
         if (result.success) {
           setModelState("loaded");
           await checkModelState();
@@ -318,7 +321,7 @@ export const ConnectionPage: React.FC<{
       }
     } catch (error: any) {
       console.error('[Load Model] Error:', error);
-      if (isMounted) {
+      if (isMounted.current) {
         setModelState("unloaded");
         // Log model loading error
         try {
