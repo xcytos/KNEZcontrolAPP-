@@ -5,6 +5,9 @@ import { DiagnosticPanel, LayerDiagnostic, DiagnosticConfig } from './Diagnostic
 import { DiagnosticSimulation } from './DiagnosticSimulation';
 import { knezArchitecture, Layer, NodeStatus } from './knezArchitecture';
 import { knezClient } from '../../services/knez/KnezClient';
+import { testExecutionStateMachine } from './TestExecutionStateMachine';
+import { getTestNodePath } from './testNodePaths';
+import { usePacketAnimation } from './PacketAnimation';
 
 type EdgeType = 'data' | 'control' | 'feedback';
 type GuardrailStatus = 'active' | 'tripped' | 'disabled';
@@ -57,8 +60,13 @@ export const InfrastructureVisualizer: React.FC = () => {
   const [view, setView] = useState<'graph' | 'simulation'>('graph');
   const [selectedNode, setSelectedNode] = useState<SystemNode | null>(null);
   const [layerSummaryOpen, setLayerSummaryOpen] = useState(false);
+  const [activeTestNodeId, setActiveTestNodeId] = useState<string | null>(null);
+  const [blinkingNodes, setBlinkingNodes] = useState<Set<string>>(new Set());
+  const [errorPath, setErrorPath] = useState<string[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  
+  const { isAnimating, startAnimation, stopAnimation } = usePacketAnimation();
 
   // Define zones from actual knezArchitecture layers
   const zones: Zone[] = useMemo(() => {
@@ -234,7 +242,7 @@ export const InfrastructureVisualizer: React.FC = () => {
       try {
         const health = await knezClient.health({ timeoutMs: 5000 });
         if (!mounted) return;
-
+        
         // Update node statuses based on health response
         // For now, we'll mark all nodes as working if backend is healthy
         // In a full implementation, we'd map specific backend components to nodes
@@ -268,6 +276,82 @@ export const InfrastructureVisualizer: React.FC = () => {
       clearInterval(interval);
     };
   }, [setNodes]);
+
+  // Subscribe to TestRunner state updates and drive visualization
+  // Note: Integration logic in place, but subscription deferred due to type mismatch
+  // TODO: Resolve TestRunner.subscribe return type to enable real-time integration
+  // useEffect(() => {
+  //   const handleTestUpdate = (results: any[]) => {
+  //     results.forEach((result: any) => {
+  //       if (result.status === 'running') {
+  //         testExecutionStateMachine.transition({ type: 'START', testId: result.id });
+  //       } else if (result.status === 'passed') {
+  //         testExecutionStateMachine.transition({ type: 'COMPLETE', testId: result.id, success: true });
+  //       } else if (result.status === 'failed') {
+  //         testExecutionStateMachine.transition({ type: 'FAIL', testId: result.id, error: result.log[result.log.length - 1] || 'Unknown error' });
+  //       }
+  //     });
+  //   };
+  //   const unsubscribe = testRunner.subscribe(handleTestUpdate);
+  //   return unsubscribe;
+  // }, []);
+
+  // Subscribe to test execution state machine for real-time visualization
+  useEffect(() => {
+    const unsubscribe = testExecutionStateMachine.subscribe((context) => {
+      const activeTest = context.activeTest;
+      if (!activeTest) {
+        setActiveTestNodeId(null);
+        setBlinkingNodes(new Set());
+        setErrorPath([]);
+        stopAnimation();
+        return;
+      }
+
+      const testState = context.tests.get(activeTest);
+      if (!testState) return;
+
+      // If test failed, set error path
+      if (testState.state === 'failed') {
+        const testPath = getTestNodePath(activeTest);
+        if (testPath) {
+          setErrorPath(testPath.nodePath.slice(0, testState.currentNodeIndex + 1));
+        }
+        return;
+      }
+
+      if (testState.state !== 'running') return;
+
+      const testPath = getTestNodePath(activeTest);
+      if (!testPath) return;
+
+      // Clear error path when test is running
+      setErrorPath([]);
+
+      // Highlight current node in the test path
+      const currentNodeId = testPath.nodePath[testState.currentNodeIndex];
+      if (currentNodeId) {
+        setActiveTestNodeId(currentNodeId);
+        
+        // Blink the node briefly
+        setBlinkingNodes(prev => new Set([...prev, currentNodeId]));
+        setTimeout(() => {
+          setBlinkingNodes(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(currentNodeId);
+            return newSet;
+          });
+        }, 500);
+      }
+
+      // Start packet animation if not already animating
+      if (!isAnimating) {
+        startAnimation(testPath.nodePath, '#3b82f6');
+      }
+    });
+
+    return unsubscribe;
+  }, [isAnimating, startAnimation, stopAnimation]);
 
   const generateEdgePath = (from: SystemNode, to: SystemNode): string => {
     const startX = from.x;
@@ -446,17 +530,18 @@ export const InfrastructureVisualizer: React.FC = () => {
               if (!fromNode || !toNode) return null;
 
               const isHighlighted = highlightedPath.includes(edge.from) && highlightedPath.includes(edge.to);
+              const isErrorPath = errorPath.includes(edge.from) && errorPath.includes(edge.to);
               const isGuardrailTripped = edge.guardrail === 'tripped';
 
               return (
                 <g key={`edge-${idx}`}>
                   <path
                     d={generateEdgePath(fromNode, toNode)}
-                    stroke={isGuardrailTripped ? '#ef4444' : getEdgeColor(edge.type)}
-                    strokeWidth={isHighlighted ? 3 : edge.active ? 2 : 1}
+                    stroke={isGuardrailTripped ? '#ef4444' : isErrorPath ? '#dc2626' : getEdgeColor(edge.type)}
+                    strokeWidth={isHighlighted ? 3 : isErrorPath ? 3 : edge.active ? 2 : 1}
                     fill="none"
-                    opacity={isHighlighted ? 1 : edge.active ? 0.8 : 0.3}
-                    strokeDasharray={getEdgeDash(edge.type)}
+                    opacity={isHighlighted ? 1 : isErrorPath ? 1 : edge.active ? 0.8 : 0.3}
+                    strokeDasharray={isErrorPath ? '8,4' : getEdgeDash(edge.type)}
                   />
                   {/* Arrow head */}
                   <polygon
@@ -482,6 +567,8 @@ export const InfrastructureVisualizer: React.FC = () => {
             {/* Draw nodes */}
             {nodes.map((node) => {
               const isHighlighted = highlightedPath.includes(node.id);
+              const isActiveTestNode = activeTestNodeId === node.id;
+              const isBlinking = blinkingNodes.has(node.id);
 
               return (
                 <g key={node.id}>
@@ -492,9 +579,36 @@ export const InfrastructureVisualizer: React.FC = () => {
                     r={20}
                     fill={getStatusColor(node.status)}
                     opacity={isHighlighted ? 1 : node.active ? 0.9 : 0.6}
+                    stroke={isActiveTestNode ? '#fbbf24' : isBlinking ? '#fff' : 'transparent'}
+                    strokeWidth={isActiveTestNode ? 3 : isBlinking ? 2 : 0}
                     className="cursor-pointer hover:opacity-100 transition-opacity"
                     onClick={() => handleNodeClick(node.id)}
-                  />
+                  >
+                    {isActiveTestNode && (
+                      <animate
+                        attributeName="r"
+                        values="20;23;20"
+                        dur="1s"
+                        repeatCount="indefinite"
+                      />
+                    )}
+                    {isBlinking && (
+                      <>
+                        <animate
+                          attributeName="opacity"
+                          values="1;0.3;1"
+                          dur="0.3s"
+                          repeatCount="3"
+                        />
+                        <animate
+                          attributeName="stroke-opacity"
+                          values="1;0.5;1"
+                          dur="0.3s"
+                          repeatCount="3"
+                        />
+                      </>
+                    )}
+                  </circle>
                   
                   {/* Guardrail indicator on node */}
                   {node.guardrails && node.guardrails.includes('tripped') && (

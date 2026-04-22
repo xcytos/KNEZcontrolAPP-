@@ -17,6 +17,7 @@ interface MainLayoutProps {
   connectionStatus?: {
     state: "running" | "starting" | "degraded" | "error" | "down";
     connected: boolean;
+    isModelReady: boolean;
     endpoint: string;
     lastCheck: number | null;
   };
@@ -48,25 +49,39 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                 KNEZ Control <span className="text-zinc-600 mx-2">/</span> {activeView}
               </h1>
               {connectionStatus && (
-                <div className={`flex items-center gap-2 text-xs px-2 py-1 rounded border ${
-                  connectionStatus.state === "running"
-                    ? "bg-emerald-950/30 border-emerald-900 text-emerald-400"
-                    : connectionStatus.state === "starting" || connectionStatus.state === "degraded"
-                      ? "bg-orange-950/30 border-orange-900 text-orange-400"
-                      : connectionStatus.state === "error"
-                        ? "bg-red-950/30 border-red-900 text-red-400"
-                        : "bg-zinc-900/30 border-zinc-800 text-zinc-400"
-                }`}>
-                  <div className={`w-1.5 h-1.5 rounded-full ${
+                <div className="flex items-center gap-3">
+                  <div className={`flex items-center gap-2 text-xs px-2 py-1 rounded border ${
                     connectionStatus.state === "running"
-                      ? "bg-emerald-500"
+                      ? "bg-emerald-950/30 border-emerald-900 text-emerald-400"
                       : connectionStatus.state === "starting" || connectionStatus.state === "degraded"
-                        ? "bg-orange-500"
+                        ? "bg-orange-950/30 border-orange-900 text-orange-400"
                         : connectionStatus.state === "error"
-                          ? "bg-red-500"
-                          : "bg-zinc-500"
-                  }`} />
-                  <span className="font-mono">{connectionStatus.endpoint}</span>
+                          ? "bg-red-950/30 border-red-900 text-red-400"
+                          : "bg-zinc-900/30 border-zinc-800 text-zinc-400"
+                  }`}>
+                    <div className={`w-1.5 h-1.5 rounded-full ${
+                      connectionStatus.state === "running"
+                        ? "bg-emerald-500"
+                        : connectionStatus.state === "starting" || connectionStatus.state === "degraded"
+                          ? "bg-orange-500"
+                          : connectionStatus.state === "error"
+                            ? "bg-red-500"
+                            : "bg-zinc-500"
+                    }`} />
+                    <span className="font-mono">{connectionStatus.endpoint}</span>
+                  </div>
+                  <div className={`flex items-center gap-2 text-xs px-2 py-1 rounded border ${
+                    connectionStatus.isModelReady
+                      ? "bg-emerald-950/30 border-emerald-900 text-emerald-400"
+                      : "bg-amber-950/30 border-amber-900 text-amber-400"
+                  }`}>
+                    <div className={`w-1.5 h-1.5 rounded-full ${
+                      connectionStatus.isModelReady
+                        ? "bg-emerald-500"
+                        : "bg-amber-500"
+                    }`} />
+                    <span className="font-mono">{connectionStatus.isModelReady ? "Model Ready" : "Model Loading"}</span>
+                  </div>
                 </div>
               )}
               {headerSubtitle}

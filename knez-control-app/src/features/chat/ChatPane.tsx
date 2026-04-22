@@ -377,7 +377,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         showToast("Invalid session file format", "error");
         return;
       }
-      const newSessionId = sessionController.createNewSession();
+      const newSessionId = await sessionController.createNewSession();
       await sessionDatabase.saveSession(newSessionId, data.session.name || 'Imported Session');
       await sessionDatabase.saveMessages(newSessionId, data.messages.map((msg: any) => ({ ...msg, sessionId: newSessionId })));
       showToast(`Session imported: ${newSessionId.substring(0,8)}`, "success");

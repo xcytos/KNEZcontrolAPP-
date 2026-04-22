@@ -311,7 +311,10 @@ export interface HealthBackend {
 
 export interface KnezHealthResponse {
   status: "ok" | string;
-  model: string;
+  model_loaded: boolean;
+  active_model?: string;
+  available_models?: string[];
+  model?: string; // Keep for backward compatibility
   backends: HealthBackend[];
   ollama?: {
     reachable: boolean;
