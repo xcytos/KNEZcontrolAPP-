@@ -49,9 +49,10 @@ export class WebSocketClient {
       
       this.ws.onopen = () => {
         logger.info('websocket', 'connected', { sessionId });
+        logger.info('websocket', 'websocket_connected', { sessionId }); // STEP 1: Explicit log
         this.isConnected = true;
         this.reconnectAttempts = 0;
-        
+
         // Subscribe to all events by default
         this.send({
           type: 'subscribe',
