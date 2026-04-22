@@ -35,22 +35,27 @@ export function useSystemOrchestrator(onReady?: () => void) {
   const checkSystemRequirements = useCallback(async () => {
     setOutput((prev) => prev + "[System Check] Verifying requirements...");
     
-    // Check Python
-    try {
-      const pythonCheck = Command.create("cmd", ["/c", "python", "--version"]);
-      let pythonInstalled = false;
-      pythonCheck.on("close", (data) => {
-        if (data.code === 0) pythonInstalled = true;
-      });
-      await pythonCheck.spawn();
-      await new Promise(r => setTimeout(r, 500));
-      if (!pythonInstalled) {
-        setOutput((prev) => prev + "[System Check] ✗ Python is not installed or not in PATH.");
-        return false;
+    // Check Python - try both 'python' and 'python3'
+    let pythonInstalled = false;
+    const pythonCommands = ["python", "python3"];
+    for (const cmd of pythonCommands) {
+      try {
+        const pythonCheck = Command.create("cmd", ["/c", cmd, "--version"]);
+        pythonCheck.on("close", (data) => {
+          if (data.code === 0) pythonInstalled = true;
+        });
+        await pythonCheck.spawn();
+        await new Promise(r => setTimeout(r, 500));
+        if (pythonInstalled) {
+          setOutput((prev) => prev + `[System Check] ✓ Python is installed (${cmd}).`);
+          break;
+        }
+      } catch {
+        // Try next command
       }
-      setOutput((prev) => prev + "[System Check] ✓ Python is installed.");
-    } catch {
-      setOutput((prev) => prev + "[System Check] ✗ Python check failed.");
+    }
+    if (!pythonInstalled) {
+      setOutput((prev) => prev + "[System Check] ✗ Python is not installed or not in PATH.");
       return false;
     }
 

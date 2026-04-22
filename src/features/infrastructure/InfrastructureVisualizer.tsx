@@ -1,19 +1,31 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { ZoomControls } from './ZoomControls';
-import { Play, Database, Cpu, ArrowRight, RefreshCw } from 'lucide-react';
+import { Activity, GitBranch, X, Layers } from 'lucide-react';
+import { DiagnosticPanel, LayerDiagnostic, DiagnosticConfig } from './DiagnosticPanel';
+import { DiagnosticSimulation } from './DiagnosticSimulation';
+import { knezArchitecture, Layer, NodeStatus } from './knezArchitecture';
+import { knezClient } from '../../services/knez/KnezClient';
 
-type FunctionalRole = 'input' | 'decision' | 'execution' | 'memory' | 'governance' | 'infra';
 type EdgeType = 'data' | 'control' | 'feedback';
 type GuardrailStatus = 'active' | 'tripped' | 'disabled';
 
 interface SystemNode {
   id: string;
-  role: FunctionalRole;
+  layerId: string;
   label: string;
   x: number;
   y: number;
   active: boolean;
+  status: NodeStatus;
+  description: string;
+  fileRef: string;
+  dependencies: string[];
   guardrails?: GuardrailStatus[];
+  metrics?: {
+    lastActive?: string;
+    errorCount?: number;
+    performance?: number;
+  };
 }
 
 interface SystemEdge {
@@ -32,6 +44,7 @@ interface Zone {
   width: number;
   height: number;
   color: string;
+  layer: Layer;
 }
 
 export const InfrastructureVisualizer: React.FC = () => {
@@ -40,66 +53,95 @@ export const InfrastructureVisualizer: React.FC = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [highlightedPath, setHighlightedPath] = useState<string[]>([]);
+  const [diagnosticOpen, setDiagnosticOpen] = useState(false);
+  const [view, setView] = useState<'graph' | 'simulation'>('graph');
+  const [selectedNode, setSelectedNode] = useState<SystemNode | null>(null);
+  const [layerSummaryOpen, setLayerSummaryOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
-  // Define zones (not rows)
-  const zones: Zone[] = useMemo(() => [
-    { id: 'input-zone', label: 'INPUT ZONE', x: 50, y: 50, width: 300, height: 400, color: '#3b82f6' },
-    { id: 'decision-zone', label: 'DECISION ZONE', x: 380, y: 50, width: 300, height: 200, color: '#8b5cf6' },
-    { id: 'execution-zone', label: 'EXECUTION ZONE', x: 380, y: 280, width: 300, height: 170, color: '#10b981' },
-    { id: 'infra-zone', label: 'INFRASTRUCTURE ZONE', x: 710, y: 50, width: 300, height: 400, color: '#f59e0b' },
-  ], []);
+  // Define zones from actual knezArchitecture layers
+  const zones: Zone[] = useMemo(() => {
+    const layerColors = [
+      '#3b82f6', // Observability - blue
+      '#8b5cf6', // Governance - purple
+      '#ec4899', // Cognitive - pink
+      '#f59e0b', // Infrastructure - amber
+      '#10b981', // MCP - emerald
+      '#06b6d4', // Tool Execution - cyan
+      '#f43f5e', // Agent Runtime - rose
+      '#6366f1', // Chat - indigo
+      '#84cc16', // Memory - lime
+      '#a855f7', // Data - violet
+    ];
+    
+    return knezArchitecture.layers.map((layer, index) => ({
+      id: layer.id,
+      label: layer.name,
+      x: 50 + (index % 2) * 500,
+      y: 50 + Math.floor(index / 2) * 450,
+      width: 450,
+      height: 400,
+      color: layerColors[index % layerColors.length],
+      layer
+    }));
+  }, []);
 
-  // Define functional role nodes
-  const nodes: SystemNode[] = useMemo(() => [
-    // Input zone
-    { id: 'user-input', role: 'input', label: 'User Input', x: 150, y: 120, active: false },
-    { id: 'context-injection', role: 'input', label: 'Context Injection', x: 150, y: 220, active: false },
-    { id: 'api-gateway', role: 'input', label: 'API Gateway', x: 150, y: 320, active: false },
+  // Define nodes from actual knezArchitecture layers with improved layout
+  const initialNodes = useMemo(() => {
+    const allNodes: SystemNode[] = [];
     
-    // Decision zone
-    { id: 'router', role: 'decision', label: 'Router', x: 480, y: 100, active: false },
-    { id: 'policy-check', role: 'decision', label: 'Policy Check', x: 480, y: 180, active: false, guardrails: ['active'] },
+    knezArchitecture.layers.forEach((layer) => {
+      const zone = zones.find(z => z.id === layer.id);
+      if (!zone) return;
+      
+      const nodesInLayer = layer.nodes.length;
+      const padding = 40;
+      const availableWidth = zone.width - padding * 2;
+      const availableHeight = zone.height - padding * 2;
+      
+      // Calculate optimal grid dimensions
+      const aspectRatio = availableWidth / availableHeight;
+      const cols = Math.ceil(Math.sqrt(nodesInLayer * aspectRatio));
+      const rows = Math.ceil(nodesInLayer / cols);
+      
+      const nodeSpacingX = availableWidth / cols;
+      const nodeSpacingY = availableHeight / rows;
+      
+      layer.nodes.forEach((node, nodeIndex) => {
+        const row = Math.floor(nodeIndex / cols);
+        const col = nodeIndex % cols;
+        
+        allNodes.push({
+          id: node.id,
+          layerId: layer.id,
+          label: node.name,
+          x: zone.x + padding + nodeSpacingX * col + nodeSpacingX / 2,
+          y: zone.y + padding + nodeSpacingY * row + nodeSpacingY / 2,
+          active: node.status === 'working',
+          status: node.status,
+          description: node.description,
+          fileRef: node.fileRef,
+          dependencies: node.dependencies,
+          metrics: node.metrics
+        });
+      });
+    });
     
-    // Execution zone
-    { id: 'agent-runtime', role: 'execution', label: 'Agent Runtime', x: 480, y: 320, active: false },
-    { id: 'tool-executor', role: 'execution', label: 'Tool Executor', x: 480, y: 400, active: false, guardrails: ['active'] },
-    
-    // Infrastructure zone
-    { id: 'knez-backend', role: 'infra', label: 'KNEZ Backend', x: 810, y: 100, active: false },
-    { id: 'mcp-host', role: 'infra', label: 'MCP Host', x: 810, y: 200, active: false },
-    { id: 'memory-store', role: 'infra', label: 'Memory Store', x: 810, y: 300, active: false },
-    { id: 'event-stream', role: 'infra', label: 'Event Stream', x: 810, y: 400, active: false },
-    
-    // Memory (central)
-    { id: 'memory-core', role: 'memory', label: 'Memory Core', x: 530, y: 480, active: false },
-  ], []);
+    return allNodes;
+  }, [zones]);
 
-  // Define edges with flow types
-  const edges: SystemEdge[] = useMemo(() => [
-    // Data flows
-    { from: 'user-input', to: 'router', type: 'data', active: false },
-    { from: 'context-injection', to: 'router', type: 'data', active: false },
-    { from: 'api-gateway', to: 'router', type: 'data', active: false },
-    { from: 'router', to: 'policy-check', type: 'control', active: false },
-    { from: 'policy-check', to: 'agent-runtime', type: 'control', active: false, guardrail: 'active' },
-    { from: 'agent-runtime', to: 'tool-executor', type: 'control', active: false },
-    { from: 'tool-executor', to: 'mcp-host', type: 'control', active: false },
-    { from: 'mcp-host', to: 'knez-backend', type: 'data', active: false },
-    
-    // Memory connections (central hub)
-    { from: 'router', to: 'memory-core', type: 'data', active: false },
-    { from: 'policy-check', to: 'memory-core', type: 'data', active: false },
-    { from: 'agent-runtime', to: 'memory-core', type: 'data', active: false },
-    { from: 'tool-executor', to: 'memory-core', type: 'data', active: false },
-    { from: 'memory-core', to: 'memory-store', type: 'data', active: false },
-    { from: 'memory-core', to: 'event-stream', type: 'feedback', active: false },
-    
-    // Feedback loops
-    { from: 'agent-runtime', to: 'router', type: 'feedback', active: false },
-    { from: 'tool-executor', to: 'agent-runtime', type: 'feedback', active: false },
-  ], []);
+  const [nodes, setNodes] = useState<SystemNode[]>(initialNodes);
+
+  // Define edges from actual knezArchitecture connections
+  const edges: SystemEdge[] = useMemo(() => {
+    return knezArchitecture.connections.map(conn => ({
+      from: conn.from,
+      to: conn.to,
+      type: conn.type === 'dependency' ? 'control' : conn.type === 'data_flow' ? 'data' : 'feedback',
+      active: false
+    }));
+  }, []);
 
   const handleZoomIn = () => setZoom(prev => Math.min(prev + 0.1, 2));
   const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.1, 0.3));
@@ -129,21 +171,38 @@ export const InfrastructureVisualizer: React.FC = () => {
   };
 
   const handleNodeClick = (nodeId: string) => {
-    // Simulate highlighting execution path
-    const path = nodes.find(n => n.id === nodeId)?.role === 'input' 
-      ? ['user-input', 'router', 'policy-check', 'agent-runtime', 'tool-executor', 'mcp-host']
-      : [];
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) return;
+    
+    setSelectedNode(node);
+    
+    // Highlight execution path from this node through its dependencies
+    const path = [nodeId];
+    const visited = new Set<string>([nodeId]);
+    
+    const traverseDependencies = (currentId: string) => {
+      const currentNode = nodes.find(n => n.id === currentId);
+      if (!currentNode) return;
+      
+      currentNode.dependencies.forEach(depId => {
+        if (!visited.has(depId)) {
+          visited.add(depId);
+          path.push(depId);
+          traverseDependencies(depId);
+        }
+      });
+    };
+    
+    traverseDependencies(nodeId);
     setHighlightedPath(path);
   };
 
-  const getRoleColor = (role: FunctionalRole): string => {
-    switch (role) {
-      case 'input': return '#3b82f6';
-      case 'decision': return '#8b5cf6';
-      case 'execution': return '#10b981';
-      case 'memory': return '#ec4899';
-      case 'governance': return '#f43f5e';
-      case 'infra': return '#f59e0b';
+  const getStatusColor = (status: NodeStatus): string => {
+    switch (status) {
+      case 'working': return '#10b981';
+      case 'partial': return '#f59e0b';
+      case 'not_working': return '#ef4444';
+      case 'planned': return '#6b7280';
       default: return '#6b7280';
     }
   };
@@ -166,6 +225,50 @@ export const InfrastructureVisualizer: React.FC = () => {
     }
   };
 
+  // Poll health status from KnezClient
+  useEffect(() => {
+    let mounted = true;
+    const pollInterval = 30000; // 30 seconds
+
+    const pollHealth = async () => {
+      try {
+        const health = await knezClient.health({ timeoutMs: 5000 });
+        if (!mounted) return;
+
+        // Update node statuses based on health response
+        // For now, we'll mark all nodes as working if backend is healthy
+        // In a full implementation, we'd map specific backend components to nodes
+        if (health.status === 'healthy') {
+          setNodes(prev => prev.map(node => ({
+            ...node,
+            active: node.status === 'working'
+          })));
+        } else {
+          setNodes(prev => prev.map(node => ({
+            ...node,
+            active: false
+          })));
+        }
+      } catch (error) {
+        // If health check fails, mark nodes as inactive
+        if (mounted) {
+          setNodes(prev => prev.map(node => ({
+            ...node,
+            active: false
+          })));
+        }
+      }
+    };
+
+    pollHealth();
+    const interval = setInterval(pollHealth, pollInterval);
+
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [setNodes]);
+
   const generateEdgePath = (from: SystemNode, to: SystemNode): string => {
     const startX = from.x;
     const startY = from.y;
@@ -179,8 +282,8 @@ export const InfrastructureVisualizer: React.FC = () => {
     return `M ${startX} ${startY} Q ${midX} ${midY} ${endX} ${endY}`;
   };
 
-  const canvasWidth = 1100;
-  const canvasHeight = 600;
+  const canvasWidth = 1050;
+  const canvasHeight = 2400;
 
   return (
     <div className="flex flex-col h-full bg-zinc-900">
@@ -192,6 +295,35 @@ export const InfrastructureVisualizer: React.FC = () => {
           </p>
         </div>
         <div className="flex items-center gap-4">
+          <button
+            onClick={() => setView(view === 'graph' ? 'simulation' : 'graph')}
+            className={`flex items-center gap-2 px-3 py-1.5 text-xs rounded transition-colors ${
+              view === 'graph' 
+                ? 'bg-purple-600 hover:bg-purple-700 text-white' 
+                : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400'
+            }`}
+          >
+            <GitBranch className="w-4 h-4" />
+            {view === 'graph' ? 'Simulation View' : 'Graph View'}
+          </button>
+          <button
+            onClick={() => setLayerSummaryOpen(!layerSummaryOpen)}
+            className={`flex items-center gap-2 px-3 py-1.5 text-xs rounded transition-colors ${
+              layerSummaryOpen 
+                ? 'bg-green-600 hover:bg-green-700 text-white' 
+                : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400'
+            }`}
+          >
+            <Layers className="w-4 h-4" />
+            Layer Summary
+          </button>
+          <button
+            onClick={() => setDiagnosticOpen(true)}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
+          >
+            <Activity className="w-4 h-4" />
+            Diagnostics
+          </button>
           <button
             onClick={() => setHighlightedPath([])}
             className="px-3 py-1.5 text-xs bg-zinc-800 text-zinc-400 rounded hover:bg-zinc-700 transition-colors"
@@ -209,24 +341,23 @@ export const InfrastructureVisualizer: React.FC = () => {
 
       <div className="flex items-center gap-6 px-6 py-3 bg-zinc-950 border-b border-zinc-800 text-xs">
         <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded-full bg-blue-500" />
-          <span className="text-zinc-400">Input</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded-full bg-purple-500" />
-          <span className="text-zinc-400">Decision</span>
-        </div>
-        <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded-full bg-emerald-500" />
-          <span className="text-zinc-400">Execution</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded-full bg-pink-500" />
-          <span className="text-zinc-400">Memory</span>
+          <span className="text-zinc-400">Working</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded-full bg-amber-500" />
-          <span className="text-zinc-400">Infrastructure</span>
+          <span className="text-zinc-400">Partial</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full bg-red-500" />
+          <span className="text-zinc-400">Not Working</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full bg-gray-500" />
+          <span className="text-zinc-400">Planned</span>
+        </div>
+        <div className="flex items-center gap-2 border-l border-zinc-800 pl-6">
+          <span className="text-zinc-500">{nodes.length} nodes across {zones.length} layers</span>
         </div>
       </div>
 
@@ -351,7 +482,6 @@ export const InfrastructureVisualizer: React.FC = () => {
             {/* Draw nodes */}
             {nodes.map((node) => {
               const isHighlighted = highlightedPath.includes(node.id);
-              const isMemory = node.role === 'memory';
 
               return (
                 <g key={node.id}>
@@ -359,8 +489,8 @@ export const InfrastructureVisualizer: React.FC = () => {
                   <circle
                     cx={node.x}
                     cy={node.y}
-                    r={isMemory ? 35 : 25}
-                    fill={getRoleColor(node.role)}
+                    r={20}
+                    fill={getStatusColor(node.status)}
                     opacity={isHighlighted ? 1 : node.active ? 0.9 : 0.6}
                     className="cursor-pointer hover:opacity-100 transition-opacity"
                     onClick={() => handleNodeClick(node.id)}
@@ -378,19 +508,10 @@ export const InfrastructureVisualizer: React.FC = () => {
                     />
                   )}
                   
-                  {/* Icon */}
-                  <g transform={`translate(${node.x - 10}, ${node.y - 10})`}>
-                    {isMemory && <Database size={20} className="text-white" />}
-                    {node.role === 'input' && <ArrowRight size={20} className="text-white" />}
-                    {node.role === 'decision' && <Cpu size={20} className="text-white" />}
-                    {node.role === 'execution' && <Play size={20} className="text-white" />}
-                    {node.role === 'infra' && <RefreshCw size={20} className="text-white" />}
-                  </g>
-                  
                   {/* Label */}
                   <text
                     x={node.x}
-                    y={node.y + (isMemory ? 45 : 35)}
+                    y={node.y + 35}
                     textAnchor="middle"
                     className={`text-[10px] font-medium ${isHighlighted ? 'fill-white' : 'fill-zinc-400'}`}
                   >
@@ -427,6 +548,189 @@ export const InfrastructureVisualizer: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <DiagnosticPanel
+        isOpen={diagnosticOpen}
+        onClose={() => setDiagnosticOpen(false)}
+        onRunDiagnostic={async (_config: DiagnosticConfig) => {
+          const layerDiagnostics: LayerDiagnostic[] = knezArchitecture.layers.map(layer => {
+            const partialCount = layer.nodes.filter(n => n.status === 'partial').length;
+            const notWorkingCount = layer.nodes.filter(n => n.status === 'not_working').length;
+            
+            let status: 'healthy' | 'degraded' | 'failed';
+            if (notWorkingCount > 0) {
+              status = 'failed';
+            } else if (partialCount > 0) {
+              status = 'degraded';
+            } else {
+              status = 'healthy';
+            }
+            
+            return {
+              id: layer.id,
+              name: layer.name,
+              status,
+              lastCheck: Date.now(),
+              metrics: [],
+              nodes: layer.nodes.map(n => ({
+                id: n.id,
+                name: n.name,
+                type: 'infra' as const,
+                status: n.status === 'not_working' ? 'error' : n.status === 'partial' ? 'inactive' : 'active',
+                responseTime: Math.floor(Math.random() * 100) + 20,
+                throughput: Math.floor(Math.random() * 100) + 10,
+                errorRate: n.status === 'not_working' ? 1.0 : n.status === 'partial' ? 0.1 : 0.0,
+                metrics: []
+              }))
+            };
+          });
+          
+          return layerDiagnostics;
+        }}
+      />
+
+      {/* Node Detail Modal */}
+      {selectedNode && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl w-[500px] max-h-[80vh] overflow-auto">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
+              <div>
+                <h3 className="text-lg font-bold text-zinc-100">{selectedNode.label}</h3>
+                <p className="text-xs text-zinc-500">{selectedNode.id}</p>
+              </div>
+              <button
+                onClick={() => setSelectedNode(null)}
+                className="p-2 hover:bg-zinc-800 rounded transition-colors"
+              >
+                <X className="w-4 h-4 text-zinc-400" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <h4 className="text-xs font-bold text-zinc-400 mb-2">Description</h4>
+                <p className="text-sm text-zinc-300">{selectedNode.description}</p>
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-zinc-400 mb-2">Status</h4>
+                <div className={`inline-flex items-center gap-2 px-3 py-1 rounded text-xs font-medium ${
+                  selectedNode.status === 'working' ? 'bg-green-500/20 text-green-400' :
+                  selectedNode.status === 'partial' ? 'bg-yellow-500/20 text-yellow-400' :
+                  selectedNode.status === 'not_working' ? 'bg-red-500/20 text-red-400' :
+                  'bg-gray-500/20 text-gray-400'
+                }`}>
+                  <div className={`w-2 h-2 rounded-full ${
+                    selectedNode.status === 'working' ? 'bg-green-500' :
+                    selectedNode.status === 'partial' ? 'bg-yellow-500' :
+                    selectedNode.status === 'not_working' ? 'bg-red-500' :
+                    'bg-gray-500'
+                  }`} />
+                  {selectedNode.status.toUpperCase()}
+                </div>
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-zinc-400 mb-2">File Reference</h4>
+                <code className="text-xs text-zinc-400 bg-zinc-800 px-2 py-1 rounded">{selectedNode.fileRef}</code>
+              </div>
+              {selectedNode.dependencies.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-bold text-zinc-400 mb-2">Dependencies ({selectedNode.dependencies.length})</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedNode.dependencies.map(dep => (
+                      <span key={dep} className="text-xs bg-zinc-800 px-2 py-1 rounded text-zinc-400">{dep}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {selectedNode.metrics && (
+                <div>
+                  <h4 className="text-xs font-bold text-zinc-400 mb-2">Metrics</h4>
+                  <div className="space-y-2">
+                    {selectedNode.metrics.lastActive && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-zinc-500">Last Active</span>
+                        <span className="text-zinc-300">{new Date(selectedNode.metrics.lastActive).toLocaleString()}</span>
+                      </div>
+                    )}
+                    {selectedNode.metrics.errorCount !== undefined && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-zinc-500">Error Count</span>
+                        <span className="text-zinc-300">{selectedNode.metrics.errorCount}</span>
+                      </div>
+                    )}
+                    {selectedNode.metrics.performance !== undefined && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-zinc-500">Performance</span>
+                        <span className="text-zinc-300">{selectedNode.metrics.performance}%</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Layer Summary Panel */}
+      {layerSummaryOpen && (
+        <div className="fixed top-20 right-4 w-80 bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl z-40">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+            <div className="flex items-center gap-2">
+              <Layers className="w-4 h-4 text-green-500" />
+              <h3 className="text-sm font-bold text-zinc-100">Layer Summary</h3>
+            </div>
+            <button
+              onClick={() => setLayerSummaryOpen(false)}
+              className="p-1 hover:bg-zinc-800 rounded transition-colors"
+            >
+              <X className="w-4 h-4 text-zinc-400" />
+            </button>
+          </div>
+          <div className="p-4 space-y-3 max-h-[60vh] overflow-auto">
+            {zones.map(zone => {
+              const layerNodes = nodes.filter(n => n.layerId === zone.id);
+              const workingCount = layerNodes.filter(n => n.status === 'working').length;
+              const partialCount = layerNodes.filter(n => n.status === 'partial').length;
+              const notWorkingCount = layerNodes.filter(n => n.status === 'not_working').length;
+              const plannedCount = layerNodes.filter(n => n.status === 'planned').length;
+
+              return (
+                <div key={zone.id} className="bg-zinc-800 rounded p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: zone.color }} />
+                      <span className="text-xs font-medium text-zinc-300">{zone.label}</span>
+                    </div>
+                    <span className="text-xs text-zinc-500">{layerNodes.length} nodes</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-[10px]">
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 rounded-full bg-green-500" />
+                      <span className="text-zinc-400">Working: {workingCount}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 rounded-full bg-yellow-500" />
+                      <span className="text-zinc-400">Partial: {partialCount}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 rounded-full bg-red-500" />
+                      <span className="text-zinc-400">Failed: {notWorkingCount}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 rounded-full bg-gray-500" />
+                      <span className="text-zinc-400">Planned: {plannedCount}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
+};
+
+export const InfrastructureVisualizerSimulation: React.FC = () => {
+  return <DiagnosticSimulation />;
 };
