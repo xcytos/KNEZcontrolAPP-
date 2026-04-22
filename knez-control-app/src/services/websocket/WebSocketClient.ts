@@ -190,12 +190,10 @@ export class WebSocketClient {
   }
 
   private getWebSocketUrl(sessionId: string): string {
-    // Determine the WebSocket URL based on the current protocol and host
+    // STEP 1: Use backend URL directly (port 8000) instead of frontend dev server
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    
-    // If in Tauri dev mode, use the proxied backend
-    // Otherwise, use the same host as the current page
+    const host = '127.0.0.1:8000'; // Backend server, not frontend dev server
+
     return `${protocol}//${host}/ws/${sessionId}`;
   }
 
