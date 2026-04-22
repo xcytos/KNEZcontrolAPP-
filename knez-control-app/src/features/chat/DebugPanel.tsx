@@ -21,6 +21,20 @@ interface DebugPanelProps {
 export const DebugPanel: React.FC<DebugPanelProps> = ({ messages, isOpen, onClose }) => {
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
   const [agentTraces, setAgentTraces] = useState<Map<string, AgentTrace>>(new Map());
+  const [activeTab, setActiveTab] = useState<'lifecycle' | 'errors' | 'raw' | 'model'>('lifecycle');
+  const [modelLog, setModelLog] = useState<string>('');
+
+  // Load model log from localStorage when panel opens or tab changes
+  useEffect(() => {
+    if (isOpen && activeTab === 'model') {
+      try {
+        const savedLog = localStorage.getItem('knez_model_log');
+        setModelLog(savedLog || 'No model loading logs available. Click "Load Model" in ConnectionPage to generate logs.');
+      } catch (e) {
+        setModelLog('Failed to load model logs from localStorage.');
+      }
+    }
+  }, [isOpen, activeTab]);
 
   // Fetch AgentTracer data when panel opens
   useEffect(() => {
@@ -124,13 +138,30 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({ messages, isOpen, onClos
       <div className="bg-zinc-900 border border-zinc-700 rounded-lg w-full max-w-6xl max-h-[80vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-zinc-700">
-          <h2 className="text-lg font-bold text-white">Debug Panel - Agent Execution Traces</h2>
+          <h2 className="text-lg font-bold text-white">Debug Panel</h2>
           <button
             onClick={onClose}
             className="text-zinc-400 hover:text-white transition-colors"
           >
             ✕
           </button>
+        </div>
+
+        {/* Tab Navigation */}
+        <div className="flex border-b border-zinc-700">
+          {['lifecycle', 'errors', 'raw', 'model'].map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab as any)}
+              className={`px-4 py-2 text-xs font-medium transition-colors ${
+                activeTab === tab
+                  ? 'text-white border-b-2 border-indigo-500 bg-zinc-800'
+                  : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              {tab.toUpperCase()}
+            </button>
+          ))}
         </div>
 
         {/* Content */}
@@ -162,149 +193,161 @@ export const DebugPanel: React.FC<DebugPanelProps> = ({ messages, isOpen, onClos
 
           {/* Stats & History */}
           <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Stats */}
-            <div className="p-4 border-b border-zinc-700">
-              <h3 className="text-xs font-bold text-zinc-400 mb-3">AGENT TRACER STATISTICS</h3>
-              <div className="grid grid-cols-6 gap-4">
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-white">{stats.agentTotalSteps}</div>
-                  <div className="text-xs text-zinc-400">Total Steps</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-green-400">{stats.succeeded}</div>
-                  <div className="text-xs text-zinc-400">Succeeded</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-red-400">{stats.agentTotalFailures}</div>
-                  <div className="text-xs text-zinc-400">Failures</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-yellow-400">{stats.agentTotalRetries}</div>
-                  <div className="text-xs text-zinc-400">Retries</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-blue-400">
-                    {stats.agentTotalTime > 0 ? `${(stats.agentTotalTime / 1000).toFixed(1)}s` : 'N/A'}
-                  </div>
-                  <div className="text-xs text-zinc-400">Total Time</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-purple-400">
-                    {(stats.agentSuccessRate * 100).toFixed(0)}%
-                  </div>
-                  <div className="text-xs text-zinc-400">Success Rate</div>
-                </div>
+            {activeTab === 'model' ? (
+              /* Model Log Tab */
+              <div className="flex-1 overflow-y-auto p-4">
+                <h3 className="text-xs font-bold text-zinc-400 mb-2">MODEL LOADING LOGS</h3>
+                <pre className="bg-zinc-800 rounded p-3 border border-zinc-700 text-xs text-zinc-300 font-mono whitespace-pre-wrap">
+                  {modelLog}
+                </pre>
               </div>
-            </div>
-
-            {/* History List */}
-            <div className="flex-1 overflow-y-auto p-4">
-              <h3 className="text-xs font-bold text-zinc-400 mb-2">EXECUTION STEPS</h3>
-              {selectedSession && agentTraces.has(selectedSession) ? (
-                <div className="space-y-3">
-                  {agentTraces.get(selectedSession)!.steps.map((step, idx) => (
-                    <div
-                      key={idx}
-                      className="bg-zinc-800 rounded p-3 border border-zinc-700"
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-mono text-zinc-300">Step {step.stepNumber + 1}</span>
-                        <span className="text-[10px] text-zinc-500">
-                          {step.timing.duration > 0 ? `${step.timing.duration}ms` : ''}
-                        </span>
+            ) : (
+              <>
+                {/* Stats */}
+                <div className="p-4 border-b border-zinc-700">
+                  <h3 className="text-xs font-bold text-zinc-400 mb-3">AGENT TRACER STATISTICS</h3>
+                  <div className="grid grid-cols-6 gap-4">
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-white">{stats.agentTotalSteps}</div>
+                      <div className="text-xs text-zinc-400">Total Steps</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-green-400">{stats.succeeded}</div>
+                      <div className="text-xs text-zinc-400">Succeeded</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-red-400">{stats.agentTotalFailures}</div>
+                      <div className="text-xs text-zinc-400">Failures</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-yellow-400">{stats.agentTotalRetries}</div>
+                      <div className="text-xs text-zinc-400">Retries</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-blue-400">
+                        {stats.agentTotalTime > 0 ? `${(stats.agentTotalTime / 1000).toFixed(1)}s` : 'N/A'}
                       </div>
-                      <div className="text-xs text-zinc-200 mb-2">{step.decision}</div>
-                      {step.toolCall && (
-                        <div className="mt-2 p-2 bg-zinc-900/50 rounded border border-zinc-800">
-                          <div className="text-[10px] font-mono text-zinc-400 mb-1">Tool: {step.toolCall.name}</div>
-                          <div className={`text-[10px] font-mono px-2 py-0.5 rounded inline-block ${
-                            step.toolCall.success
-                              ? 'bg-green-900/20 text-green-300'
-                              : 'bg-red-900/20 text-red-300'
-                          }`}>
-                            {step.toolCall.success ? 'Success' : 'Failed'}
-                          </div>
-                          {step.toolCall.result && (
-                            <div className="mt-2 text-[10px] text-zinc-400 truncate">
-                              {typeof step.toolCall.result === 'string'
-                                ? step.toolCall.result.slice(0, 100)
-                                : JSON.stringify(step.toolCall.result).slice(0, 100)}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      {step.failure && (
-                        <div className="mt-2 p-2 bg-red-900/10 rounded border border-red-900/30">
-                          <div className="text-[10px] font-mono text-red-400">Failure: {step.failure.type}</div>
-                          <div className="text-[10px] text-red-300 mt-1">{step.failure.message}</div>
-                        </div>
-                      )}
-                      {step.retry && (
-                        <div className="mt-2 p-2 bg-yellow-900/10 rounded border border-yellow-900/30">
-                          <div className="text-[10px] font-mono text-yellow-400">Retry Attempt {step.retry.attempt}</div>
-                          <div className="text-[10px] text-yellow-300 mt-1">
-                            Error: {step.retry.originalError.slice(0, 80)}
-                          </div>
-                        </div>
-                      )}
+                      <div className="text-xs text-zinc-400">Total Time</div>
                     </div>
-                  ))}
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-purple-400">
+                        {(stats.agentSuccessRate * 100).toFixed(0)}%
+                      </div>
+                      <div className="text-xs text-zinc-400">Success Rate</div>
+                    </div>
+                  </div>
                 </div>
-              ) : (
-                <>
-                  <h3 className="text-xs font-bold text-zinc-400 mb-2 mt-4">TOOL CALL HISTORY</h3>
-                  {filteredHistory.length === 0 ? (
-                    <div className="text-center text-zinc-500 text-sm py-8">
-                      {selectedSession ? 'No AgentTracer data for this session' : 'No tool calls recorded'}
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {filteredHistory.map((item, idx) => (
+
+                {/* History List */}
+                <div className="flex-1 overflow-y-auto p-4">
+                  <h3 className="text-xs font-bold text-zinc-400 mb-2">EXECUTION STEPS</h3>
+                  {selectedSession && agentTraces.has(selectedSession) ? (
+                    <div className="space-y-3">
+                      {agentTraces.get(selectedSession)!.steps.map((step, idx) => (
                         <div
-                          key={`${item.messageId}-${idx}`}
+                          key={idx}
                           className="bg-zinc-800 rounded p-3 border border-zinc-700"
                         >
                           <div className="flex items-center justify-between mb-2">
-                            <span className="text-sm font-mono text-zinc-200">{item.tool}</span>
-                            <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${
-                              item.status === 'succeeded' || item.status === 'completed'
-                                ? 'bg-green-900/20 text-green-300'
-                                : item.status === 'failed'
-                                  ? 'bg-red-900/20 text-red-300'
-                                  : 'bg-blue-900/20 text-blue-200'
-                            }`}>
-                              {item.status}
+                            <span className="text-xs font-mono text-zinc-300">Step {step.stepNumber + 1}</span>
+                            <span className="text-[10px] text-zinc-500">
+                              {step.timing.duration > 0 ? `${step.timing.duration}ms` : ''}
                             </span>
                           </div>
-                          <div className="grid grid-cols-2 gap-2 text-[10px] text-zinc-400">
-                            <div>
-                              <span className="text-zinc-500">Time: </span>
-                              {new Date(item.timestamp).toLocaleTimeString()}
-                            </div>
-                            {item.executionTimeMs && (
-                              <div>
-                                <span className="text-zinc-500">Exec: </span>
-                                {item.executionTimeMs}ms
+                          <div className="text-xs text-zinc-200 mb-2">{step.decision}</div>
+                          {step.toolCall && (
+                            <div className="mt-2 p-2 bg-zinc-900/50 rounded border border-zinc-800">
+                              <div className="text-[10px] font-mono text-zinc-400 mb-1">Tool: {step.toolCall.name}</div>
+                              <div className={`text-[10px] font-mono px-2 py-0.5 rounded inline-block ${
+                                step.toolCall.success
+                                  ? 'bg-green-900/20 text-green-300'
+                                  : 'bg-red-900/20 text-red-300'
+                              }`}>
+                                {step.toolCall.success ? 'Success' : 'Failed'}
                               </div>
-                            )}
-                            {item.mcpLatencyMs && (
-                              <div>
-                                <span className="text-zinc-500">MCP: </span>
-                                {item.mcpLatencyMs}ms
-                              </div>
-                            )}
-                            <div>
-                              <span className="text-zinc-500">Session: </span>
-                              {item.sessionId.slice(0, 8)}...
+                              {step.toolCall.result && (
+                                <div className="mt-2 text-[10px] text-zinc-400 truncate">
+                                  {typeof step.toolCall.result === 'string'
+                                    ? step.toolCall.result.slice(0, 100)
+                                    : JSON.stringify(step.toolCall.result).slice(0, 100)}
+                                </div>
+                              )}
                             </div>
-                          </div>
+                          )}
+                          {step.failure && (
+                            <div className="mt-2 p-2 bg-red-900/10 rounded border border-red-900/30">
+                              <div className="text-[10px] font-mono text-red-400">Failure: {step.failure.type}</div>
+                              <div className="text-[10px] text-red-300 mt-1">{step.failure.message}</div>
+                            </div>
+                          )}
+                          {step.retry && (
+                            <div className="mt-2 p-2 bg-yellow-900/10 rounded border border-yellow-900/30">
+                              <div className="text-[10px] font-mono text-yellow-400">Retry Attempt {step.retry.attempt}</div>
+                              <div className="text-[10px] text-yellow-300 mt-1">
+                                Error: {step.retry.originalError.slice(0, 80)}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
+                  ) : (
+                    <>
+                      <h3 className="text-xs font-bold text-zinc-400 mb-2 mt-4">TOOL CALL HISTORY</h3>
+                      {filteredHistory.length === 0 ? (
+                        <div className="text-center text-zinc-500 text-sm py-8">
+                          {selectedSession ? 'No AgentTracer data for this session' : 'No tool calls recorded'}
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {filteredHistory.map((item, idx) => (
+                            <div
+                              key={`${item.messageId}-${idx}`}
+                              className="bg-zinc-800 rounded p-3 border border-zinc-700"
+                            >
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-sm font-mono text-zinc-200">{item.tool}</span>
+                                <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${
+                                  item.status === 'succeeded' || item.status === 'completed'
+                                    ? 'bg-green-900/20 text-green-300'
+                                    : item.status === 'failed'
+                                      ? 'bg-red-900/20 text-red-300'
+                                      : 'bg-blue-900/20 text-blue-200'
+                                }`}>
+                                  {item.status}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 text-[10px] text-zinc-400">
+                                <div>
+                                  <span className="text-zinc-500">Time: </span>
+                                  {new Date(item.timestamp).toLocaleTimeString()}
+                                </div>
+                                {item.executionTimeMs && (
+                                  <div>
+                                    <span className="text-zinc-500">Exec: </span>
+                                    {item.executionTimeMs}ms
+                                  </div>
+                                )}
+                                {item.mcpLatencyMs && (
+                                  <div>
+                                    <span className="text-zinc-500">MCP: </span>
+                                    {item.mcpLatencyMs}ms
+                                  </div>
+                                )}
+                                <div>
+                                  <span className="text-zinc-500">Session: </span>
+                                  {item.sessionId.slice(0, 8)}...
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
                   )}
-                </>
-              )}
-            </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
