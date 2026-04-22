@@ -83,7 +83,6 @@ export class ChatService {
   };
   // Track if WebSocket is the primary stream source
   private useWebSocketStream = false;
-  private currentAssistantId: string | null = null;
   private sessionId: string;
   private queueFlushInFlight = false;
   private activeDelivery:
@@ -226,16 +225,18 @@ export class ChatService {
       // Mark WebSocket as primary stream source
       this.useWebSocketStream = true;
 
-      // Find current assistant message being streamed (last assistant message that is partial)
-      const assistantMsg = [...this.state.messages].reverse().find(m => m.from === 'assistant' && m.isPartial);
-      if (assistantMsg) {
-        this.currentAssistantId = assistantMsg.id;
-        try {
-          this.appendToMessage(assistantMsg.id, data.token);
-          logger.info('chatservice', 'websocket_token_appended', { assistantId: assistantMsg.id, tokenIndex: data.index });
-        } catch (e) {
-          logger.error('chatservice', 'websocket_token_append_failed', { error: String(e) });
-        }
+      // Find current assistant message being streamed (last assistant message)
+      const assistantMsg = [...this.state.messages].reverse().find(m => m.from === 'assistant');
+      if (!assistantMsg) {
+        logger.warn('chatservice', 'websocket_token_no_assistant_message', { messageCount: this.state.messages.length });
+        return;
+      }
+
+      try {
+        this.appendToMessage(assistantMsg.id, data.token);
+        logger.info('chatservice', 'websocket_token_appended', { assistantId: assistantMsg.id, tokenIndex: data.index, token: data.token.slice(0, 10) });
+      } catch (e) {
+        logger.error('chatservice', 'websocket_token_append_failed', { error: String(e) });
       }
     });
 
@@ -250,6 +251,22 @@ export class ChatService {
       } else if (data.state === 'tool_running') {
         this.setPhase('TOOL_START');
       }
+    });
+
+    // Register WebSocket stream_end handler
+    realtimeEventHandler.onStreamEnd((data) => {
+      logger.info('chatservice', 'websocket_stream_end', { total_tokens: data.total_tokens, finish_reason: data.finish_reason });
+      // Mark message as complete
+      const assistantMsg = [...this.state.messages].reverse().find(m => m.from === 'assistant');
+      if (assistantMsg) {
+        this.state.messages = this.state.messages.map(m =>
+          m.id === assistantMsg.id ? { ...m, isPartial: false } : m
+        );
+        logger.info('chatservice', 'websocket_mark_message_complete', { assistantId: assistantMsg.id });
+      }
+      // Reset WebSocket flag for next request
+      this.useWebSocketStream = false;
+      this.setPhase('STREAM_END');
     });
     
     void this.load(this.sessionId);
@@ -351,12 +368,14 @@ export class ChatService {
 
     const currentPhase = this.state.phase;
 
-    // Fix: If STREAM_END is called from "thinking" or "streaming", transition to ERROR instead
-    // This handles the case where stream ends without producing content (empty response fallback)
+    // STEP 6: Fix phase machine - prevent invalid error transitions during normal flow
+    // Valid transitions: thinking → streaming → finalizing → idle
+    // Only allow ERROR transition on explicit ERROR event, not from STREAM_END
     let actualNewPhase = newPhase;
     if (event === "STREAM_END" && (currentPhase === "thinking" || currentPhase === "streaming")) {
-      logger.warn("chat_service", "stream_end_from_thinking_transitioning_to_error", { currentPhase });
-      actualNewPhase = "error";
+      // If stream ends during normal flow, go to finalizing, not error
+      logger.info("chat_service", "stream_end_normal_flow_to_finalizing", { currentPhase });
+      actualNewPhase = "finalizing";
     }
 
     // NEW: Use PhaseManager for phase transitions (handles validation)
@@ -791,6 +810,9 @@ export class ChatService {
   }
 
   appendToMessage(messageId: string, text: string) {
+    // STEP 2: Log stream source
+    logger.info('chat_service', 'STREAM_SOURCE', { source: this.useWebSocketStream ? 'WS' : 'SSE', messageId });
+
     // PART 4: Append Pipeline Hard Fix - MUST read from state.messages only
     const msgs = this.state.messages;
     const idx = msgs.findIndex((m) => m.id === messageId);
@@ -800,9 +822,9 @@ export class ChatService {
       throw new Error(`Message missing during stream append: ${messageId}`);
     }
 
-    // DUAL STREAM HANDLING: Skip SSE append if WebSocket is primary
-    if (this.useWebSocketStream && messageId === this.currentAssistantId) {
-      logger.debug("chat_service", "skip_sse_append_websocket_primary", { messageId });
+    // STEP 3: Force WebSocket primary - temporarily disable SSE append
+    if (this.useWebSocketStream) {
+      logger.info("chat_service", "STREAM_SOURCE", { source: 'WS', messageId, action: 'force_ws_primary_skip_sse' });
       return;
     }
 
