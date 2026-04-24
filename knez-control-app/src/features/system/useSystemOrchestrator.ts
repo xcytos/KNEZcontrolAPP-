@@ -209,10 +209,13 @@ export function useSystemOrchestrator(onReady?: () => void) {
           setOutput((prev) => prev + "[Ollama] No existing processes to clean up.\n");
         }
 
-        setOutput((prev) => prev + "[Ollama] Spawning ollama serve via Rust shell plugin...");
+        setOutput((prev) => prev + "[Ollama] Spawning ollama serve via PowerShell script...");
 
-        // Start Ollama first using cmd scope
-        const ollamaCommand = Command.create("cmd", ["/c", "ollama", "serve"]);
+        // Use named PowerShell command from capabilities for proper scope
+        const ollamaCommand = Command.create("powershell", [
+          "-ExecutionPolicy", "Bypass",
+          "-File", "scripts/start_ollama.ps1"
+        ]);
         ollamaCommand.on("error", (error) => {
           setOutput((prev) => prev + `\n[Ollama Error] ${error}`);
         });
