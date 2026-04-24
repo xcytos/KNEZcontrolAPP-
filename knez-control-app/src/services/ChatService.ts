@@ -96,18 +96,10 @@ export class ChatService {
   private executionCoordinator: ExecutionCoordinator;
   private executionController: ExecutionController;
   private queueFlushInFlight = false;
-  private activeDelivery:
-    | {
-        sessionId: string;
-        outgoingId: string;
-        assistantId: string;
-        controller: AbortController;
-        stopRequested: boolean;
-      }
-    | null = null;
+  private activeDelivery: { sessionId: string; outgoingId: string; assistantId: string; controller: AbortController; stopRequested: boolean } | null = null;
   private maxOutgoingAttempts = 3;
   private maxOutgoingAgeMs = 300000;
-  private maxOutgoingPerSession = 1;
+  private maxOutgoingPerSession = 10;
   private lastMcpSignatureBySessionId = new Map<string, string>();
   // ADD 5: Single Active Request Lock
   private activeRequestLock: { sessionId: string; requestId: string } | null = null;
@@ -409,6 +401,14 @@ export class ChatService {
       
       // P5.2 T12: Reset to idle on session change for state isolation
       this.resetToIdle();
+      
+      // CRITICAL FIX: Clear state immediately on session change before loading
+      this.state.messages = [];
+      this.state.assistantMessages = [];
+      this.state.sequenceCounter = 0;
+      this.state.phase = "idle";
+      this.notify();
+      
       const stored = localStorage.getItem(`chat_search_enabled:${sessionId}`);
       const enabled = stored === "1";
       this.state.activeTools = { search: enabled };
