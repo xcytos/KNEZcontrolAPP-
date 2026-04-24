@@ -45,7 +45,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   // Use ChatService state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [assistantMessages, setAssistantMessages] = useState<AssistantMessage[]>([]);
-  const [phase, setPhase] = useState<"idle" | "sending" | "thinking" | "tool_running" | "streaming" | "finalizing" | "done" | "error">("idle");
+  const [phase, setPhase] = useState<"idle" | "sending" | "thinking" | "tool_running" | "streaming" | "finalizing" | "done" | "error" | "failed">("idle");
   const [activeTools, setActiveTools] = useState<{ search: boolean }>({ search: false });
   const [searchProvider, setSearchProvider] = useState<"off" | "taqwin" | "proxy">("off");
   const [insertAboveIdx, setInsertAboveIdx] = useState<number | null>(null);
@@ -186,9 +186,22 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         setPhase(state.phase);
         setActiveTools(state.activeTools);
         setSearchProvider(state.searchProvider);
+        // Manual approval removed - tools auto-approve
+        // setPendingToolApproval(state.pendingToolApproval);
       }
-       // Manual approval removed - tools auto-approve
-       // setPendingToolApproval(state.pendingToolApproval);
+    });
+    return unsub;
+  }, [sessionId]);
+
+  useEffect(() => {
+    const unsub = sessionController.subscribe(({ sessionId: newSessionId }) => {
+      if (isMounted && newSessionId !== sessionId) {
+        // Session changed, ChatPane will receive new sessionId via props
+        logger.info("chat_pane", "session_changed", { 
+          oldSessionId: sessionId, 
+          newSessionId 
+        });
+      }
     });
     return unsub;
   }, [sessionId]);
@@ -297,9 +310,9 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     setTimeout(() => setValidating(false), 2000);
   };
 
-  // Reset isSending when phase changes to idle
+  // Reset isSending when phase changes to idle or done
   useEffect(() => {
-    if (phase === "idle") {
+    if (phase === "idle" || phase === "done") {
       setIsSending(false);
     }
   }, [phase]);
@@ -451,7 +464,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
 
   // P5.2 T6: AgentProgressBar — shows thinking/executing/generating stages based on phase
   const AgentProgressBar: React.FC<{
-    phase: "idle" | "sending" | "thinking" | "tool_running" | "streaming" | "finalizing" | "done" | "error";
+    phase: "idle" | "sending" | "thinking" | "tool_running" | "streaming" | "finalizing" | "done" | "error" | "failed";
     messages: ChatMessage[];
   }> = ({ phase, messages }) => {
     const [isCollapsed, setIsCollapsed] = useState(false);
@@ -484,8 +497,11 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
       stage = "generating response...";
       stageColor = "bg-purple-400";
     } else if (phase === "thinking") {
-      stage = "thinking...";
+      stage = "ChatPane-Thinking...";
       stageColor = "bg-yellow-400";
+    } else if (phase === "failed") {
+      stage = "failed";
+      stageColor = "bg-red-400";
     } else if (phase === "sending") {
       stage = "sending...";
     } else if (phase === "error") {
@@ -683,8 +699,14 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
               <span>mcp_tools:{exposedAllowedCount}</span>
             </div>
             <button
-                onClick={() => {
-                   sessionController.createNewSession();
+                onClick={async () => {
+                   try {
+                     const newSessionId = await sessionController.createNewSession();
+                     showToast(`New session created: ${newSessionId.substring(0,8)}`, "success");
+                   } catch (e) {
+                     showToast("Failed to create new session", "error");
+                     logger.error("chat_pane", "new_session_failed", { error: String(e) });
+                   }
                 }}
                 className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors"
                 title="New Session"
@@ -864,15 +886,15 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
               // Filter out assistant-type ChatMessages to prevent double rendering with AssistantMessage blocks
               const filteredMessages = visibleMessages.filter(m => m.from !== "knez" && m.from !== "assistant");
               
-              // Merge assistant messages with regular messages and sort by creation time
+              // Merge assistant messages with regular messages and sort by sequenceNumber for deterministic ordering
               type MergedItem = { type: 'message', data: ChatMessage } | { type: 'assistant', data: AssistantMessage };
               const mergedMessages: MergedItem[] = [
                 ...filteredMessages.map(m => ({ type: 'message' as const, data: m })),
                 ...assistantMessages.map(am => ({ type: 'assistant' as const, data: am }))
               ].sort((a, b) => {
-                const timeA = new Date(a.data.createdAt).getTime();
-                const timeB = new Date(b.data.createdAt).getTime();
-                return timeA - timeB;
+                const seqA = a.data.sequenceNumber ?? 0;
+                const seqB = b.data.sequenceNumber ?? 0;
+                return seqA - seqB;
               });
 
               return mergedMessages.map((item, idx) => {
@@ -936,16 +958,18 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                       </div>
                     )}
                     {item.type === 'message' ? (
-                      <MessageItem
-                        key={item.data.id || idx}
-                        msg={item.data}
-                        onEdit={handleEdit}
-                        onStop={handleStop}
-                        onRetry={handleRetry}
-                        readOnly={readOnly}
-                      />
+                      <div className="mb-4">
+                        <MessageItem
+                          key={item.data.id || idx}
+                          msg={item.data}
+                          onEdit={handleEdit}
+                          onStop={handleStop}
+                          onRetry={handleRetry}
+                          readOnly={readOnly}
+                        />
+                      </div>
                     ) : (
-                      <div className="flex gap-3 max-w-full min-w-0">
+                      <div className="mb-4 flex gap-3 max-w-full min-w-0">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
                             <span className="text-xs font-medium text-zinc-400">Assistant</span>
@@ -967,7 +991,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
             })()}
 
             {/* Prominent status indicator when AI is processing - hide when streaming has started to avoid duplicate icons */}
-            {(phase === "sending" || phase === "thinking" || phase === "tool_running") && (
+            {(phase === "sending" || phase === "thinking" || phase === "tool_running" || phase === "failed") && (
               <div className="flex gap-3 max-w-full min-w-0 animate-in fade-in slide-in-from-bottom-2 duration-300">
                 <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-xs font-medium text-white shadow-lg shadow-indigo-500/20">
                   AI
@@ -985,7 +1009,13 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                       {phase === "thinking" && (
                         <>
                           <div className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
-                          <span className="text-xs text-zinc-400">Thinking...</span>
+                          <span className="text-xs text-zinc-400">ChatPane-Status-Thinking...</span>
+                        </>
+                      )}
+                      {phase === "failed" && (
+                        <>
+                          <div className="w-2 h-2 rounded-full bg-red-400" />
+                          <span className="text-xs text-zinc-400">Failed</span>
                         </>
                       )}
                       {phase === "tool_running" && (
@@ -1000,7 +1030,8 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                     <Loader2 className="w-4 h-4 animate-spin" />
                     <span>
                       {phase === "sending" && "Your prompt has been received and is being sent to the AI model..."}
-                      {phase === "thinking" && "The AI is analyzing your request and formulating a response..."}
+                      {phase === "thinking" && "ChatPane-Text-Thinking: The AI is analyzing your request and formulating a response..."}
+                      {phase === "failed" && "The request failed. Please try again."}
                       {phase === "tool_running" && "The AI is executing tools to gather information..."}
                     </span>
                   </div>
@@ -1160,7 +1191,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                   }
                 }}
               />
-              {composerMode === "chat" && (phase === "streaming" || phase === "thinking" || phase === "tool_running" || phase === "sending") && (
+              {composerMode === "chat" && (phase === "streaming" || phase === "thinking" || phase === "tool_running" || phase === "sending" || phase === "failed") && (
                 <button
                   type="button"
                   onClick={() => chatService.stopCurrentResponse()}
