@@ -167,7 +167,7 @@ function AppContent() {
   }, [online, isConnected, isDegraded, sessionId, readOnly, systemStatus]);
 
   useEffect(() => {
-    const unsub = chatService.subscribe((s) => setChatSending(s.phase === "streaming"));
+    const unsub = chatService.subscribe(() => setChatSending(chatService.getPhase() === "streaming"));
     return unsub;
   }, []);
 

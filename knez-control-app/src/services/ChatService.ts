@@ -2,9 +2,8 @@
 import { knezClient } from "./knez/KnezClient";
 import { extractionService } from "./utils/ExtractionService";
 import { persistenceService } from "./infrastructure/persistence/PersistenceService";
-import { ChatMessage, ToolCallMessage, AssistantMessage, Block, MessageState } from '../domain/DataContracts';
+import { ChatMessage, ToolCallMessage, AssistantMessage, Block } from '../domain/DataContracts';
 import { AppError, asErrorMessage } from '../domain/Errors';
-import { observe } from '../utils/observer';
 import { sessionDatabase } from "./session/SessionDatabase";
 import { sessionController } from "./session/SessionController";
 import { logger } from './utils/LogService';
@@ -93,7 +92,6 @@ export class ChatService {
   private activeDelivery: { sessionId: string; outgoingId: string; assistantId: string; controller: AbortController; stopRequested: boolean } | null = null;
   private maxOutgoingAttempts = 3;
   private maxOutgoingAgeMs = 300000;
-  private maxOutgoingPerSession = 10;
   private lastMcpSignatureBySessionId = new Map<string, string>();
   // ADD 5: Single Active Request Lock
   private activeRequestLock: { sessionId: string; requestId: string } | null = null;
@@ -106,7 +104,6 @@ export class ChatService {
 
   // STEP 5: System-level stream ownership enforcement
   private activeExecutionId: string | null = null;
-  private activeStreamId: string | null = null;
 
   // PART 5: Remove Multiple Stream Triggers - Track if stream has started to disable fallback
   private streamStarted: boolean = false;
@@ -481,7 +478,6 @@ export class ChatService {
       this.releaseRequestLock(this.sessionId, ownershipId);
       // STEP 5: Clear system-level execution ownership
       this.activeExecutionId = null;
-      this.activeStreamId = null;
     }
 
     // START WATCHDOG when transitioning to streaming or finalizing
@@ -696,17 +692,7 @@ export class ChatService {
 
   // handleStreamStart removed - WebSocket stream handlers removed (STEP 4)
 
-  // Block-based assistant message methods
-  private createAssistantMessage(sessionId: string, initialBlocks: Block[] = [], id?: string): AssistantMessage {
-    return {
-      id: id || newMessageId(),
-      sessionId,
-      role: "assistant",
-      state: MessageState.CREATED, // ADD 1: Initialize with CREATED state
-      blocks: initialBlocks,
-      createdAt: Date.now() // ADD 1: Use number timestamp
-    };
-  }
+  // Block-based assistant message methods (removed - unused in current implementation)
 
   private appendBlockToAssistantMessage(assistantId: string, block: Block): void {
     const assistantMsg = this.state.assistantMessages.find(m => m.id === assistantId);
@@ -742,12 +728,7 @@ export class ChatService {
     return null;
   }
 
-  // Helper to generate sequence number for deterministic ordering
-  private getNextSequenceNumber(): number {
-    const seq = this.state.sequenceCounter;
-    this.state.sequenceCounter += 1;
-    return seq;
-  }
+  // Helper to generate sequence number for deterministic ordering (removed - unused)
 
   async load(sessionId: string) {
     // NEW: Use MessageStore for loading messages
