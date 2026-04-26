@@ -12,6 +12,7 @@
  */
 
 import { WebSocketClient } from '../websocket/WebSocketClient';
+import { logger } from '../utils/LogService';
 
 export interface ConnectionState {
   ws: 'connected' | 'reconnecting' | 'disconnected' | 'dead';
@@ -103,6 +104,7 @@ export class ConnectionManager {
 
   /**
    * Start SSE request for chat streaming.
+   * Smart switching: Try SSE first, only switch to WebSocket if SSE fails.
    */
   startSSERequest(sessionId: string, url: string, options: RequestInit = {}): SSERequest {
     const requestId = `${sessionId}-${Date.now()}`;
@@ -139,8 +141,10 @@ export class ConnectionManager {
         if (error.name !== 'AbortError') {
           request.status = 'error';
           this.emit('sse_error', { requestId, error: error.message });
-          // Attempt fallback to WebSocket
-          this.attemptWebSocketFallback(sessionId);
+          // Smart switching: Only switch to WebSocket if SSE fails
+          this.state.connection.activeConnectionType = 'websocket';
+          this.emit('connection_change', this.state.connection);
+          this.emit('connection_switch', { from: 'sse', to: 'websocket', reason: 'sse_failed' });
         }
         this.state.activeSSERequests.delete(requestId);
       });
@@ -272,8 +276,7 @@ export class ConnectionManager {
     // Error
     this.wsClient.on('error', (error: any) => {
       this.emit('websocket_error', error);
-      // Attempt fallback to SSE
-      this.attemptSSEFallback();
+      // No automatic fallback - WebSocket is for system events only, not streaming
     });
   }
 
@@ -339,7 +342,8 @@ export class ConnectionManager {
   }
 
   /**
-   * Read SSE stream.
+   * Read SSE stream and emit data events.
+   * STRICT ENFORCEMENT: SSE is the ONLY source for token/stream data.
    */
   private async readSSEStream(reader: ReadableStreamDefaultReader<Uint8Array>, request: SSERequest): Promise<void> {
     const decoder = new TextDecoder();
@@ -357,25 +361,25 @@ export class ConnectionManager {
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             const data = line.slice(6);
-            if (data === '[DONE]') {
-              request.status = 'completed';
-              this.state.activeSSERequests.delete(request.id);
-              this.emit('sse_completed', { requestId: request.id });
-              return;
-            }
+            if (data === '[DONE]') continue;
+
             try {
               const parsed = JSON.parse(data);
-              this.emit('sse_data', { requestId: request.id, data: parsed });
+              // Event firewall: Tag SSE data as SSE source
+              this.emit('sse_data', { requestId: request.id, data: parsed, source: 'sse' });
             } catch (error) {
-              console.error('Error parsing SSE data:', error);
+              logger.error('connection_manager', 'sse_parse_error', { error: String(error), data });
             }
           }
         }
       }
+
+      request.status = 'completed';
+      this.state.activeSSERequests.delete(request.id);
     } catch (error) {
-      if (error instanceof Error && error.name !== 'AbortError') {
+      if ((error as Error).name !== 'AbortError') {
         request.status = 'error';
-        this.emit('sse_error', { requestId: request.id, error: error.message });
+        this.emit('sse_error', { requestId: request.id, error: String(error) });
       }
       this.state.activeSSERequests.delete(request.id);
     }
@@ -399,26 +403,6 @@ export class ConnectionManager {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
     }
-  }
-
-  /**
-   * Attempt fallback to WebSocket when SSE fails.
-   */
-  private attemptWebSocketFallback(_sessionId: string): void {
-    console.log('SSE failed, attempting WebSocket fallback');
-    this.state.connection.activeConnectionType = 'websocket';
-    this.emit('connection_change', this.state.connection);
-    this.emit('connection_fallback', { from: 'sse', to: 'websocket' });
-  }
-
-  /**
-   * Attempt fallback to SSE when WebSocket fails.
-   */
-  private attemptSSEFallback(): void {
-    console.log('WebSocket failed, attempting SSE fallback');
-    this.state.connection.activeConnectionType = 'sse';
-    this.emit('connection_change', this.state.connection);
-    this.emit('connection_fallback', { from: 'websocket', to: 'sse' });
   }
 
   /**
