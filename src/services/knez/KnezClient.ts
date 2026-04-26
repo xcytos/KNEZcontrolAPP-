@@ -548,14 +548,7 @@ export class KnezClient {
         throw new Error(`taqwin_event_failed_${resp.status}`);
       }
     } catch (e: any) {
-      if (isTauriRuntime()) {
-        try {
-          await postJsonViaShell(url, payload, 5000);
-          return;
-        } catch (shellErr) {
-          logger.warn("knez_client", "shell_fallback_taqwin_event_failed", { error: String(shellErr) });
-        }
-      }
+      // Shell fallback removed - unreliable, rely on HTTP/WebSocket only
       throw e;
     }
   }
@@ -843,14 +836,7 @@ export class KnezClient {
       });
       if (!resp.ok) throw new Error(`event_emit_failed_${resp.status}`);
     } catch (e: any) {
-      if (isTauriRuntime()) {
-        try {
-          await postJsonViaShell(url, args, 5000);
-          return;
-        } catch (shellErr) {
-          logger.warn("knez_client", "shell_fallback_event_emit_failed", { error: String(shellErr) });
-        }
-      }
+      // Shell fallback removed - unreliable, rely on HTTP/WebSocket only
       throw e;
     }
   }

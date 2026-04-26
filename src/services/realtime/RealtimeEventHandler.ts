@@ -11,14 +11,12 @@ import { logger } from '../utils/LogService';
 import {
   RealtimeEvent,
   RealtimeEventType,
-  TokenEventData,
   AgentStateEventData,
   ToolCallEventData,
   ToolResultEventData,
   ErrorEventData,
   StreamStartEventData,
   StreamEndEventData,
-  isTokenEventData,
   isAgentStateEventData,
   isToolCallEventData,
   isToolResultEventData,
@@ -27,7 +25,6 @@ import {
   isStreamEndEventData
 } from '../../domain/RealtimeProtocol';
 
-export type TokenHandler = (data: TokenEventData) => void;
 export type AgentStateHandler = (data: AgentStateEventData) => void;
 export type ToolCallHandler = (data: ToolCallEventData) => void;
 export type ToolResultHandler = (data: ToolResultEventData) => void;
@@ -38,7 +35,6 @@ export type StreamEndHandler = (data: StreamEndEventData) => void;
 export class RealtimeEventHandler {
   private sessionId: string | null = null;
   private isConnected = false;
-  private tokenHandlers: Set<TokenHandler> = new Set();
   private agentStateHandlers: Set<AgentStateHandler> = new Set();
   private toolCallHandlers: Set<ToolCallHandler> = new Set();
   private toolResultHandlers: Set<ToolResultHandler> = new Set();
@@ -125,11 +121,12 @@ export class RealtimeEventHandler {
       logger.debug('realtime_handler', 'realtime_event_parsed', { type: realtimeEvent.type });
 
       // Route to appropriate handler based on event type
+      // STRICT ENFORCEMENT: TOKEN events are SSE-only, WebSocket MUST NOT process them
       switch (realtimeEvent.type) {
         case RealtimeEventType.TOKEN:
-          if (isTokenEventData(realtimeEvent.data)) {
-            this.dispatchToken(realtimeEvent.data);
-          }
+          logger.warn('realtime_handler', 'token_event_blocked', { 
+            reason: 'Tokens must come via SSE only, WebSocket token stream is forbidden' 
+          });
           break;
 
         case RealtimeEventType.AGENT_STATE:
@@ -174,14 +171,6 @@ export class RealtimeEventHandler {
     } catch (error) {
       logger.error('realtime_handler', 'event_handling_error', { error: String(error), message });
     }
-  }
-
-  /**
-   * Register token handler
-   */
-  onToken(handler: TokenHandler): () => void {
-    this.tokenHandlers.add(handler);
-    return () => this.tokenHandlers.delete(handler);
   }
 
   /**
@@ -230,20 +219,6 @@ export class RealtimeEventHandler {
   onStreamEnd(handler: StreamEndHandler): () => void {
     this.streamEndHandlers.add(handler);
     return () => this.streamEndHandlers.delete(handler);
-  }
-
-  /**
-   * Dispatch token event to all handlers
-   */
-  private dispatchToken(data: TokenEventData): void {
-    logger.debug('realtime_handler', 'token_received', { index: data.index, token: data.token.slice(0, 10) });
-    this.tokenHandlers.forEach(handler => {
-      try {
-        handler(data);
-      } catch (error) {
-        logger.error('realtime_handler', 'token_handler_error', { error: String(error) });
-      }
-    });
   }
 
   /**

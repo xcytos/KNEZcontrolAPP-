@@ -30,6 +30,7 @@ export class StaticMemoryLoader {
   private loadedCount: number = 0;
   private lastLoad: string | null = null;
   private errors: string[] = [];
+  private loadedHashes: Set<string> = new Set(); // Track loaded content hashes for deduplication
 
   /**
    * Load all memory files from the public/memory directory
@@ -101,9 +102,18 @@ export class StaticMemoryLoader {
         throw new Error(`Unsupported file type: ${ext}`);
       }
 
-      // Inject memories
+      // Inject memories with deduplication
       const memories = Array.isArray(memoryData) ? memoryData : [memoryData];
       for (const mem of memories) {
+        // Create hash from content for deduplication
+        const contentHash = this.simpleHash(mem.content);
+        
+        // Skip if already loaded
+        if (this.loadedHashes.has(contentHash)) {
+          console.log(`[StaticMemoryLoader] Skipping duplicate memory: ${mem.title}`);
+          continue;
+        }
+        
         console.log(`[StaticMemoryLoader] Injecting memory: ${mem.title}`);
         await this.memoryService.createMemory(
           mem.type,
@@ -113,6 +123,7 @@ export class StaticMemoryLoader {
           mem.tags,
           mem.metadata
         );
+        this.loadedHashes.add(contentHash);
         this.loadedCount++;
       }
 
@@ -121,6 +132,19 @@ export class StaticMemoryLoader {
       console.error(`[StaticMemoryLoader] Error loading ${filename}:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Simple hash function for content deduplication
+   */
+  private simpleHash(content: string): string {
+    let hash = 0;
+    for (let i = 0; i < content.length; i++) {
+      const char = content.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    return hash.toString(36);
   }
 
   /**
