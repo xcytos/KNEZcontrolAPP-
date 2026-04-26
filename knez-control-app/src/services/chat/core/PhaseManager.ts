@@ -1,7 +1,7 @@
 // ─── PhaseManager.ts ────────────────────────────────────────────────────
-// STRICT Phase transitions (idle → sending → thinking → streaming → finalizing → done → idle)
-// Responsibilities: setPhase, validate transitions, FAIL FAST on invalid transitions
-// Rules: NO illegal transitions - ever, strict FSM enforcement
+// STRICT Phase transitions (idle → sending → thinking → streaming → finalizing → idle)
+// Responsibilities: setPhase, validate transitions, SAFE transitions (no throws)
+// Rules: NO illegal transitions - log and ignore instead of throwing
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { logger } from "../../utils/LogService";
@@ -12,15 +12,16 @@ export type ChatPhase =
   | "thinking"
   | "streaming"
   | "finalizing"
-  | "done";
+  | "error";
 
-const VALID_TRANSITIONS: Record<ChatPhase, ChatPhase[]> = {
+// STRICT FSM - only these transitions are allowed
+const ALLOWED_TRANSITIONS: Record<ChatPhase, ChatPhase[]> = {
   idle: ["sending"],
-  sending: ["thinking"],
-  thinking: ["streaming"],
-  streaming: ["finalizing"],
-  finalizing: ["done"],
-  done: ["idle"]
+  sending: ["thinking", "error"],
+  thinking: ["streaming", "error"],
+  streaming: ["finalizing", "error"],
+  finalizing: ["idle"],
+  error: ["idle"]
 };
 
 export class PhaseManager {
@@ -31,39 +32,44 @@ export class PhaseManager {
     this.sessionId = sessionId;
   }
 
-  setPhase(newPhase: ChatPhase): void {
-    // Allow idempotent updates only for idle → idle
-    if (this.currentPhase === newPhase && newPhase === "idle") {
-      logger.debug("phase_manager", "phase_idempotent_idle", { sessionId: this.sessionId, phase: newPhase });
-      return;
+  setPhase(newPhase: ChatPhase): boolean {
+    // Allow idempotent updates for same phase
+    if (this.currentPhase === newPhase) {
+      logger.debug("phase_manager", "phase_idempotent", { 
+        sessionId: this.sessionId, 
+        phase: newPhase 
+      });
+      return true;
     }
 
-    const validTransitions = VALID_TRANSITIONS[this.currentPhase];
+    const validTransitions = ALLOWED_TRANSITIONS[this.currentPhase];
     if (!validTransitions) {
       logger.error("phase_manager", "INVALID_CURRENT_PHASE", { 
         sessionId: this.sessionId, 
         currentPhase: this.currentPhase,
-        error: "Valid transitions map missing - race condition detected"
+        error: "Valid transitions map missing"
       });
-      throw new Error(`Invalid current phase: ${this.currentPhase}`);
+      return false;
     }
 
     if (!validTransitions.includes(newPhase)) {
-      logger.error("phase_manager", "INVALID_TRANSITION_REJECTED", { 
+      logger.warn("phase_manager", "INVALID_TRANSITION_IGNORED", { 
         sessionId: this.sessionId, 
         from: this.currentPhase, 
         to: newPhase,
-        error: "Strict FSM violation"
+        error: "Strict FSM violation - transition ignored"
       });
-      throw new Error(`Invalid phase transition: ${this.currentPhase} → ${newPhase}`);
+      return false; // Return false instead of throwing
     }
 
+    const previousPhase = this.currentPhase;
     this.currentPhase = newPhase;
     logger.info("phase_manager", "phase_transition", { 
       sessionId: this.sessionId, 
-      from: this.currentPhase, 
+      from: previousPhase, 
       to: newPhase 
     });
+    return true;
   }
 
   getPhase(): ChatPhase {
@@ -86,7 +92,30 @@ export class PhaseManager {
     return this.currentPhase === "finalizing";
   }
 
-  isDone(): boolean {
-    return this.currentPhase === "done";
+  isError(): boolean {
+    return this.currentPhase === "error";
+  }
+
+  // Force set phase bypassing FSM validation (for hard resets only)
+  forceSetPhase(newPhase: ChatPhase): void {
+    const previousPhase = this.currentPhase;
+    this.currentPhase = newPhase;
+    logger.warn("phase_manager", "phase_force_set", { 
+      sessionId: this.sessionId, 
+      from: previousPhase, 
+      to: newPhase,
+      reason: "hard_reset"
+    });
+  }
+
+  // Reset to idle (for new session or cleanup)
+  reset(): void {
+    const previousPhase = this.currentPhase;
+    this.currentPhase = "idle";
+    logger.info("phase_manager", "phase_reset", { 
+      sessionId: this.sessionId, 
+      from: previousPhase, 
+      to: "idle"
+    });
   }
 }

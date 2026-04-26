@@ -183,7 +183,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
       if (isMounted) {
         setMessages(state.messages);
         setAssistantMessages(state.assistantMessages);
-        setPhase(state.phase);
+        // Phase removed from state - read from PhaseManager via getPhase()
         setActiveTools(state.activeTools);
         setSearchProvider(state.searchProvider);
         // Manual approval removed - tools auto-approve
@@ -191,6 +191,16 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
       }
     });
     return unsub;
+  }, [sessionId]);
+
+  // Sync phase from PhaseManager (single source of truth)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (isMounted) {
+        setPhase(chatService.getPhase());
+      }
+    }, 100); // Poll every 100ms for phase changes
+    return () => clearInterval(interval);
   }, [sessionId]);
 
   useEffect(() => {
@@ -219,9 +229,16 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   }, [sessionId]);
 
   const handleSend = async (e?: React.FormEvent) => {
+    logger.info("chat_pane", "handleSend_called", { inputValue, isSending, readOnly, online });
     if (e) e.preventDefault();
-    if (!inputValue.trim()) return;
-    if (readOnly) return;
+    if (!inputValue.trim()) {
+      logger.warn("chat_pane", "send_blocked_empty_input");
+      return;
+    }
+    if (readOnly) {
+      logger.warn("chat_pane", "send_blocked_readonly");
+      return;
+    }
     if (isSending) {
       logger.warn("chat_pane", "send_blocked_already_sending", { message: "Message send blocked - already sending" });
       return;
@@ -1141,12 +1158,19 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
 
             <form
               onSubmit={(e) => {
-                if (composerMode === "terminal") {
-                  e.preventDefault();
-                  void runTerminal();
-                  return;
+                console.log("[DEBUG] form_onSubmit_called", { composerMode, inputValue });
+                logger.info("chat_pane", "form_onSubmit_called", { composerMode, inputValue });
+                try {
+                  if (composerMode === "terminal") {
+                    e.preventDefault();
+                    void runTerminal();
+                    return;
+                  }
+                  void handleSend(e);
+                } catch (error) {
+                  console.error("[DEBUG] form_onSubmit_error", error);
+                  logger.error("chat_pane", "form_onSubmit_error", { error: String(error) });
                 }
-                void handleSend(e);
               }}
               className="relative flex gap-2"
             >

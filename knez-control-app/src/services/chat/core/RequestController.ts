@@ -1,6 +1,6 @@
 // ─── RequestController.ts ────────────────────────────────────────────────
 // Request lock + lifecycle management
-// Responsibilities: startRequest, endRequest, reject if another request is active
+// Responsibilities: startRequest, endRequest, cancelRequest, reject if another request is active
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { logger } from "../../utils/LogService";
@@ -8,6 +8,7 @@ import { logger } from "../../utils/LogService";
 export class RequestController {
   private activeRequest: string | null = null;
   private sessionId: string;
+  private onCancelled: ((requestId: string) => void) | null = null;
 
   constructor(sessionId: string) {
     this.sessionId = sessionId;
@@ -24,6 +25,21 @@ export class RequestController {
     }
     this.activeRequest = requestId;
     logger.debug("request_controller", "request_started", { sessionId: this.sessionId, requestId });
+  }
+
+  cancelActiveRequest(): string | null {
+    const cancelled = this.activeRequest;
+    if (cancelled) {
+      logger.info("request_controller", "request_cancelled", { 
+        sessionId: this.sessionId, 
+        cancelledRequest: cancelled 
+      });
+      this.activeRequest = null;
+      if (this.onCancelled) {
+        this.onCancelled(cancelled);
+      }
+    }
+    return cancelled;
   }
 
   endRequest(requestId: string): void {
@@ -45,5 +61,17 @@ export class RequestController {
 
   isActive(): boolean {
     return this.activeRequest !== null;
+  }
+
+  setCancellationCallback(callback: (requestId: string) => void): void {
+    this.onCancelled = callback;
+  }
+
+  reset(): void {
+    const cancelled = this.cancelActiveRequest();
+    logger.info("request_controller", "controller_reset", { 
+      sessionId: this.sessionId, 
+      cancelledRequest: cancelled 
+    });
   }
 }

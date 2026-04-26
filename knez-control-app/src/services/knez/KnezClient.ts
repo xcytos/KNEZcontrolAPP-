@@ -1103,6 +1103,7 @@ export class KnezClient {
     sessionId: string,
     options?: { signal?: AbortSignal; onMeta?: (meta: { model?: string; totalTokens?: number }) => void }
   ): AsyncGenerator<string, void, void> {
+    console.log('[KnezClient] chatCompletionsStream called', { sessionId, messageCount: messages.length });
     if (sessionId.startsWith("test-session-")) {
       const lastUser = [...messages].reverse().find(m => m.role === "user")?.content ?? "";
       if (lastUser.includes("[FAIL_ONCE]")) {
@@ -1115,6 +1116,7 @@ export class KnezClient {
     }
 
     const url = `${this.baseUrl()}/v1/chat/completions`;
+    console.log('[KnezClient] Request URL:', url);
     const payload: ChatCompletionsRequest = {
       messages,
       stream: true,

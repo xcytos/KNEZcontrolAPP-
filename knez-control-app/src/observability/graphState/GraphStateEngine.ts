@@ -19,6 +19,7 @@
 
 import { NodeState, EdgeState, ExecutionFlow, SystemEvent } from '../eventBus/EventSchema';
 import { getEventBus } from '../eventBus/EventBus';
+import { NodeIds } from '../NodeRegistry';
 
 export class GraphStateEngine {
   private nodes: Map<string, NodeState> = new Map();
@@ -28,6 +29,44 @@ export class GraphStateEngine {
 
   constructor() {
     this.setupEventListeners();
+    this.initializeCoreNodes();
+  }
+
+  /**
+   * Initialize core nodes that should always be registered
+   */
+  private initializeCoreNodes(): void {
+    const coreNodes = [
+      NodeIds.UI,
+      NodeIds.ChatService,
+      NodeIds.Router,
+      NodeIds.Model,
+      NodeIds.Tool,
+      NodeIds.Memory,
+      NodeIds.Response,
+      NodeIds.System,
+      NodeIds.EventBus,
+      NodeIds.ExecutionFlowRunner
+    ];
+
+    coreNodes.forEach(nodeId => {
+      if (!this.nodes.has(nodeId)) {
+        this.registerNode({
+          node_id: nodeId,
+          node_type: 'backend',
+          status: 'idle',
+          last_activity: Date.now(),
+          active_trace_ids: new Set(),
+          metrics: {
+            request_count: 0,
+            success_count: 0,
+            failure_count: 0,
+            avg_latency_ms: 0,
+            last_latency_ms: 0
+          }
+        });
+      }
+    });
   }
 
   /**
@@ -43,8 +82,8 @@ export class GraphStateEngine {
       event_id: this.generateUUID(),
       trace_id: 'system',
       timestamp: Date.now(),
-      source_node: 'graph_state',
-      target_node: 'system',
+      source_node: NodeIds.ExecutionFlowRunner,
+      target_node: NodeIds.System,
       event_type: 'node_registered',
       payload: { node_id: node.node_id, node_type: node.node_type },
       latency_ms: 0,
@@ -67,8 +106,8 @@ export class GraphStateEngine {
       event_id: this.generateUUID(),
       trace_id: 'system',
       timestamp: Date.now(),
-      source_node: 'graph_state',
-      target_node: 'system',
+      source_node: NodeIds.ExecutionFlowRunner,
+      target_node: NodeIds.System,
       event_type: 'edge_registered',
       payload: { edge_id: edgeId, from_node: edge.from_node, to_node: edge.to_node },
       latency_ms: 0,
@@ -140,7 +179,6 @@ export class GraphStateEngine {
       return;
     }
 
-    const oldStatus = node.status;
     node.status = status;
     node.last_activity = Date.now();
 
@@ -166,13 +204,11 @@ export class GraphStateEngine {
       trace_id: 'system',
       timestamp: Date.now(),
       source_node: nodeId,
-      target_node: 'graph_state',
-      event_type: 'node_status_change',
+      target_node: NodeIds.ExecutionFlowRunner,
+      event_type: 'node_state_changed',
       payload: {
         node_id: nodeId,
-        old_status: oldStatus,
-        new_status: status,
-        latency_ms: latencyMs
+        new_status: status
       },
       latency_ms: latencyMs || 0,
       status: 'success'
@@ -300,8 +336,8 @@ export class GraphStateEngine {
       event_id: this.generateUUID(),
       trace_id: 'system',
       timestamp: Date.now(),
-      source_node: 'graph_state',
-      target_node: 'system',
+      source_node: NodeIds.ExecutionFlowRunner,
+      target_node: NodeIds.System,
       event_type: 'node_removed',
       payload: { node_id: nodeId },
       latency_ms: 0,
@@ -320,8 +356,8 @@ export class GraphStateEngine {
       event_id: this.generateUUID(),
       trace_id: 'system',
       timestamp: Date.now(),
-      source_node: 'graph_state',
-      target_node: 'system',
+      source_node: NodeIds.ExecutionFlowRunner,
+      target_node: NodeIds.System,
       event_type: 'edge_removed',
       payload: { edge_id: edgeId },
       latency_ms: 0,
@@ -350,8 +386,8 @@ export class GraphStateEngine {
       event_id: this.generateUUID(),
       trace_id: 'system',
       timestamp: Date.now(),
-      source_node: 'graph_state',
-      target_node: 'system',
+      source_node: NodeIds.ExecutionFlowRunner,
+      target_node: NodeIds.System,
       event_type: 'trace_removed',
       payload: { trace_id: traceId },
       latency_ms: 0,
@@ -371,8 +407,8 @@ export class GraphStateEngine {
       event_id: this.generateUUID(),
       trace_id: 'system',
       timestamp: Date.now(),
-      source_node: 'graph_state',
-      target_node: 'system',
+      source_node: NodeIds.ExecutionFlowRunner,
+      target_node: NodeIds.System,
       event_type: 'graph_cleared',
       payload: {},
       latency_ms: 0,
@@ -428,33 +464,35 @@ export class GraphStateEngine {
    * This implements event-driven state propagation (NO POLLING)
    */
   private setupEventListeners(): void {
-    // Listen to node status changes from other components
-    this.eventBus.subscribe('node_status_change', (event: SystemEvent) => {
-      const { node_id, new_status, latency_ms } = event.payload as {
+    // Listen to node state changes from other components
+    this.eventBus.subscribe('node_state_changed', (event: SystemEvent) => {
+      const { node_id, new_status } = event.payload as {
         node_id: string;
         new_status: NodeState['status'];
-        latency_ms?: number;
       };
-      this.updateNodeState(node_id, new_status, latency_ms);
+      // Extract latency_ms from event if available
+      const latencyMs = event.latency_ms;
+      this.updateNodeState(node_id, new_status, latencyMs);
     });
 
     // Listen to edge status changes from other components
     this.eventBus.subscribe('edge_status_change', (event: SystemEvent) => {
-      const { edge_id, new_status, latency_ms } = event.payload as {
+      const { edge_id, new_status } = event.payload as {
         edge_id: string;
         new_status: EdgeState['status'];
-        latency_ms?: number;
       };
+      // Extract latency_ms from event if available
+      const latencyMs = event.latency_ms;
       const [from, to] = edge_id.split('→');
-      this.updateEdgeState(from, to, new_status, latency_ms);
+      this.updateEdgeState(from, to, new_status, latencyMs);
     });
 
     // Listen to trace events
-    this.eventBus.subscribe('trace_start', () => {
+    this.eventBus.subscribe('trace_started', () => {
       // Trace will be registered by ExecutionTraceEngine
     });
 
-    this.eventBus.subscribe('trace_complete', (event: SystemEvent) => {
+    this.eventBus.subscribe('trace_completed', (event: SystemEvent) => {
       const traceId = event.trace_id;
       const trace = this.traces.get(traceId);
       if (trace) {

@@ -17,6 +17,9 @@ import { Packet, SystemEvent } from '../eventBus/EventSchema';
 import { getEventBus } from '../eventBus/EventBus';
 import { getGraphStateEngine } from '../graphState/GraphStateEngine';
 
+// PHASE 3: Packet types
+export type PacketType = 'request_packet' | 'token_packet' | 'tool_packet' | 'memory_packet' | 'response_packet';
+
 export class PacketSimulationEngine {
   private packets: Map<string, Packet> = new Map();
   private activePackets: Map<string, Packet> = new Map();
@@ -24,6 +27,9 @@ export class PacketSimulationEngine {
   private graphState = getGraphStateEngine();
   private animationFrameId: number | null = null;
   private isRunning = false;
+  
+  // PHASE 3: Cap on active packets
+  private readonly MAX_ACTIVE_PACKETS = 100;
 
   constructor() {
     this.setupEventListeners();
@@ -33,6 +39,21 @@ export class PacketSimulationEngine {
    * Create packet from event
    */
   createPacket(event: SystemEvent): Packet {
+    // PHASE 3: Check packet cap
+    if (this.activePackets.size >= this.MAX_ACTIVE_PACKETS) {
+      // Drop or batch overflow - for now, drop oldest
+      const oldestPacketId = this.activePackets.keys().next().value;
+      if (oldestPacketId) {
+        this.activePackets.delete(oldestPacketId);
+      }
+    }
+
+    // PHASE 3: Determine packet type from event
+    const packetType = this.determinePacketType(event);
+
+    // PHASE 3: Normalize latency for animation
+    const normalizedDuration = this.normalizeLatency(event.latency_ms || 100);
+
     const packet: Packet = {
       packet_id: this.generateUUID(),
       event_id: event.event_id,
@@ -43,7 +64,7 @@ export class PacketSimulationEngine {
       progress: 0,
       status: 'traveling',
       start_time: Date.now(),
-      estimated_arrival: Date.now() + (event.latency_ms || 100)
+      estimated_arrival: Date.now() + normalizedDuration
     };
 
     this.packets.set(packet.packet_id, packet);
@@ -61,13 +82,53 @@ export class PacketSimulationEngine {
         packet_id: packet.packet_id,
         from_node: packet.from_node,
         to_node: packet.to_node,
-        path: packet.path
+        path: packet.path,
+        packet_type: packetType
       },
       latency_ms: 0,
       status: 'success'
     });
 
     return packet;
+  }
+
+  /**
+   * PHASE 3: Determine packet type from event
+   */
+  private determinePacketType(event: SystemEvent): PacketType {
+    const { event_type, source_node, target_node } = event;
+
+    // Determine packet type based on event and nodes
+    if (target_node.includes('tool') || event_type.includes('tool')) {
+      return 'tool_packet';
+    }
+    if (target_node.includes('memory') || event_type.includes('memory')) {
+      return 'memory_packet';
+    }
+    if (event_type.includes('token') || source_node.includes('model')) {
+      return 'token_packet';
+    }
+    if (source_node.includes('model') || event_type.includes('response')) {
+      return 'response_packet';
+    }
+    return 'request_packet';
+  }
+
+  /**
+   * PHASE 3: Normalize latency for animation
+   * Scale: 10ms → 300ms, 200ms → 700ms, 1s → 1200ms
+   * This keeps realism while avoiding jitter and maintaining readability
+   */
+  private normalizeLatency(latencyMs: number): number {
+    // Clamp minimum to avoid too-fast animations
+    const clamped = Math.max(latencyMs, 10);
+    
+    // Normalize using logarithmic scale
+    // Formula: visual_duration = 300 + log2(latency_ms / 10) * 400
+    const normalized = 300 + Math.log2(clamped / 10) * 400;
+    
+    // Cap maximum to avoid too-slow animations
+    return Math.min(normalized, 1200);
   }
 
   /**

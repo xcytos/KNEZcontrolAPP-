@@ -8,6 +8,7 @@
  */
 
 import { SystemEvent } from './EventSchema';
+import { NodeIds } from '../NodeRegistry';
 
 type EventCallback = (event: SystemEvent) => void;
 type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -57,8 +58,8 @@ export class EventBus {
           event_id: this.generateUUID(),
           trace_id: 'system',
           timestamp: Date.now(),
-          source_node: 'event_bus',
-          target_node: 'system',
+          source_node: NodeIds.EventBus,
+          target_node: NodeIds.System,
           event_type: 'websocket_connected',
           payload: { state: 'connected' },
           latency_ms: 0,
@@ -290,9 +291,9 @@ let eventBusInstance: EventBus | null = null;
 
 export function getEventBus(config?: EventBusConfig): EventBus {
   if (!eventBusInstance) {
-    // Use default config if not provided
+    // PHASE 6: Use default config with correct WebSocket URL
     const defaultConfig: EventBusConfig = {
-      wsUrl: 'ws://localhost:8080/events',
+      wsUrl: 'ws://127.0.0.1:8000/ws',
       reconnectInterval: 3000,
       maxReconnectAttempts: 5
     };

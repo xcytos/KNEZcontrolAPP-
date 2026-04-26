@@ -43,6 +43,7 @@ export class WebSocketClient {
     const wsUrl = this.getWebSocketUrl(sessionId);
     
     logger.info('websocket', 'connecting', { sessionId, wsUrl });
+    console.log('[WebSocketClient] Connecting to:', wsUrl, 'sessionId:', sessionId);
 
     try {
       this.ws = new WebSocket(wsUrl);
@@ -50,6 +51,7 @@ export class WebSocketClient {
       this.ws.onopen = () => {
         logger.info('websocket', 'connected', { sessionId });
         logger.info('websocket', 'websocket_connected', { sessionId }); // STEP 1: Explicit log
+        console.log('[WebSocketClient] Connected to WebSocket, sessionId:', sessionId);
         this.isConnected = true;
         this.reconnectAttempts = 0;
 
@@ -72,24 +74,29 @@ export class WebSocketClient {
       this.ws.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data) as WebSocketMessage;
+          console.log('[WebSocketClient] Message received:', message);
           this.handleMessage(message);
         } catch (e) {
           logger.error('websocket', 'message_parse_error', { error: String(e) });
+          console.error('[WebSocketClient] Message parse error:', e);
         }
       };
 
       this.ws.onerror = (error) => {
         logger.error('websocket', 'error', { error: String(error) });
+        console.error('[WebSocketClient] WebSocket error:', error);
       };
 
       this.ws.onclose = () => {
         logger.warn('websocket', 'disconnected', { sessionId });
+        console.log('[WebSocketClient] Disconnected from WebSocket, sessionId:', sessionId);
         this.isConnected = false;
         this.ws = null;
         this.scheduleReconnect();
       };
     } catch (e) {
       logger.error('websocket', 'connection_failed', { error: String(e) });
+      console.error('[WebSocketClient] Connection failed:', e);
       this.scheduleReconnect();
     }
   }
