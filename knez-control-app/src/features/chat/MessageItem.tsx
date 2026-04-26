@@ -572,6 +572,7 @@ const MessageItemInner: React.FC<{
                       )}
                       {msg.from !== "user" && (
                         <>
+                          {/* Show stop button if message is partial, pending, or queued */}
                           {(msg.isPartial || msg.deliveryStatus === "pending" || msg.deliveryStatus === "queued") && onStop && (
                             <button
                               onClick={() => onStop(msg.id)}

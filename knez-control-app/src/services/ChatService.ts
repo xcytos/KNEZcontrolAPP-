@@ -449,14 +449,26 @@ export class ChatService {
   // PART 4: Added ownership validation via requestId, streamId, or assistantId
   private setPhase(event: EventType, ownershipId?: string): void {
     // PART 4: Validate ownership - ignore updates from stale requests
-    // Accept requestId, streamId, or assistantId as ownership identifier
-    if (ownershipId && this.activeExecutionId && ownershipId !== this.activeExecutionId) {
-      logger.warn("chat_service", "phase_transition_ownership_failed", {
-        activeExecutionId: this.activeExecutionId,
-        attemptedOwnershipId: ownershipId,
-        event
-      });
-      return; // Reject stale event
+    // Accept requestId, streamId, assistantId, or sessionId as ownership identifier
+    // Allow phase transitions if:
+    // 1. No ownershipId provided (global operations)
+    // 2. ownershipId matches activeExecutionId
+    // 3. ownershipId matches current sessionId (session-level operations)
+    // 4. No activeExecutionId (idle state)
+    if (ownershipId && this.activeExecutionId) {
+      // Check if ownershipId matches activeExecutionId
+      if (ownershipId !== this.activeExecutionId) {
+        // Check if ownershipId is sessionId (allow session-level transitions)
+        if (ownershipId !== this.sessionId) {
+          logger.warn("chat_service", "phase_transition_ownership_failed", {
+            activeExecutionId: this.activeExecutionId,
+            sessionId: this.sessionId,
+            attemptedOwnershipId: ownershipId,
+            event
+          });
+          return; // Reject stale event
+        }
+      }
     }
 
     // STEP 1: Use PhaseManager.getPhase() as single source of truth
@@ -1124,6 +1136,7 @@ export class ChatService {
   }
 
   stopByAssistantMessageId(assistantId: string) {
+    logger.info("chat_service", "stop_by_assistant_message_id_called", { assistantId });
     if (!assistantId) {
       logger.warn("chat_service", "stop_by_assistant_id_missing", { assistantId });
       return;
@@ -1133,13 +1146,21 @@ export class ChatService {
       logger.warn("chat_service", "stop_by_assistant_id_message_not_found", { assistantId });
       return;
     }
+    logger.info("chat_service", "stop_by_assistant_message_id_found", { 
+      assistantId, 
+      deliveryStatus: msg.deliveryStatus,
+      isPartial: msg.isPartial,
+      activeDelivery: this.activeDelivery?.assistantId
+    });
     // If it's the active delivery, use controller
     if (this.activeDelivery && this.activeDelivery.assistantId === assistantId) {
+      logger.info("chat_service", "stop_active_delivery", { assistantId });
       this.activeDelivery.stopRequested = true;
       this.activeDelivery.controller.abort();
       return;
     }
     // Otherwise force cleanup
+    logger.info("chat_service", "stop_force_cleanup", { assistantId, sessionId: msg.sessionId });
     void this.forceStopForSession(msg.sessionId);
   }
 
