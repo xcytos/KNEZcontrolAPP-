@@ -725,8 +725,14 @@ export class ChatService {
     }
     
     // STEP 5: Use PhaseManager to reset to idle
+    // Only transition if not already in idle to avoid invalid FSM transitions
     if (this.phaseManager) {
-      this.setPhase("STREAM_END" as EventType, this.sessionId); // Use proper phase transition
+      const currentPhase = this.phaseManager.getPhase() as ChatPhase;
+      if (currentPhase !== "idle") {
+        this.setPhase("STREAM_END" as EventType, this.sessionId); // Use proper phase transition
+      } else {
+        logger.info("chat_service", "reset_to_idle_already_idle", { previousPhase, timestamp: Date.now() });
+      }
     }
     
     logger.info("chat_service", "reset_to_idle_completed", { previousPhase, timestamp: Date.now() });
