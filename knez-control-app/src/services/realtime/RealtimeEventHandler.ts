@@ -106,12 +106,12 @@ export class RealtimeEventHandler {
       logger.debug('realtime_handler', 'event_received', { eventType, payloadType: payload?.type });
 
       // Check if this is a real-time event
-      // TEMPORARY FIX: Allow all events through to fix no-response issue
-      // TODO: Revert this once backend properly emits realtime_ prefixed events
-      // if (!eventType || !eventType.startsWith('realtime_')) {
-      //   logger.debug('realtime_handler', 'event_filtered', { eventType, reason: 'not realtime' });
-      //   return; // Ignore non-realtime events
-      // }
+      // Allow all events through - backend may not use realtime_ prefix
+      // Events are filtered by type in the switch statement below
+      if (!eventType) {
+        logger.debug('realtime_handler', 'event_filtered', { eventType, reason: 'no event type' });
+        return;
+      }
 
       // Parse the real-time event
       const realtimeEvent: RealtimeEvent = {
