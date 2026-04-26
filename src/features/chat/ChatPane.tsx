@@ -13,7 +13,7 @@ import { VoiceInput } from "../voice/VoiceInput";
 import { chatService } from '../../services/ChatService';
 import { sessionDatabase } from '../../services/session/SessionDatabase';
 import { sessionController } from '../../services/session/SessionController';
-import { logger } from '../../services/utils/LogService';
+import { logger } from "../../services/utils/LogService";
 import { FolderOpen, History, Loader2, MessageSquarePlus, MoreVertical, Play, Search, Square, TerminalSquare, Puzzle, Sparkles, Zap, Bug, Database, ArrowUp, Download, Upload } from "lucide-react";
 import { SessionInspectorModal } from "./SessionInspectorModal";
 import { DebugPanel } from "./DebugPanel";
@@ -32,6 +32,7 @@ import { AuditModal } from "./modals/AuditModal";
 import { AvailableToolsModal } from "./modals/AvailableToolsModal";
 import { MemoryModal } from "./MemoryModal";
 import { ChatMemorySyncModal } from "./ChatMemorySyncModal";
+import { getConnectionManager } from "../../services/connection/ConnectionManager";
 // Manual approval removed - tools auto-approve
 // import { ToolApprovalModal } from "./ToolApprovalModal";
 type Props = {
@@ -78,6 +79,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [terminalRunning, setTerminalRunning] = useState(false);
   const termChildRef = useRef<Child | null>(null);
   const termOutRef = useRef<HTMLDivElement | null>(null);
+  const [activeConnectionType, setActiveConnectionType] = useState<'sse' | 'websocket' | 'hybrid'>('hybrid');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -202,6 +204,18 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     }, 100); // Poll every 100ms for phase changes
     return () => clearInterval(interval);
   }, [sessionId]);
+
+  // Listen to connection type changes from ConnectionManager
+  useEffect(() => {
+    const connectionManager = getConnectionManager();
+    const handleConnectionChange = (state: any) => {
+      if (isMounted) {
+        setActiveConnectionType(state.activeConnectionType);
+      }
+    };
+    connectionManager.on('connection_change', handleConnectionChange);
+    return () => connectionManager.off('connection_change', handleConnectionChange);
+  }, []);
 
   useEffect(() => {
     const unsub = sessionController.subscribe(({ sessionId: newSessionId }) => {
@@ -727,6 +741,14 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
             </div>
             <div className="hidden md:flex items-center gap-2 px-2 py-1 rounded border border-zinc-800 bg-zinc-950/40 text-[10px] font-mono text-zinc-400">
               <span>{online ? "online" : "offline"}</span>
+              <span>•</span>
+              <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
+                activeConnectionType === 'sse' ? 'bg-blue-900/30 text-blue-400 border border-blue-800' :
+                activeConnectionType === 'websocket' ? 'bg-green-900/30 text-green-400 border border-green-800' :
+                'bg-purple-900/30 text-purple-400 border border-purple-800'
+              }`}>
+                {activeConnectionType.toUpperCase()}
+              </span>
               <span>•</span>
               <span>{(lastAssistant?.metrics as any)?.modelId ?? backend?.model_id ?? "model:n/a"}</span>
               <span>•</span>
