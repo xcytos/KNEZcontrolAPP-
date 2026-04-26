@@ -105,6 +105,9 @@ export class ChatService {
   // STEP 5: System-level stream ownership enforcement
   private activeExecutionId: string | null = null;
 
+  // Idempotency guard - track finalized requests to prevent duplicate finalization
+  private finalizedRequests = new Set<string>();
+
   // PART 5: Remove Multiple Stream Triggers - Track if stream has started to disable fallback
   private streamStarted: boolean = false;
 
@@ -113,6 +116,22 @@ export class ChatService {
 
   // Handle stream chunks from StreamController (authoritative source)
   private handleStreamChunk(assistantId: string, chunk: string): void {
+    // STEP 4: Enforce ownership - validate that this assistantId owns the active stream
+    const activeStream = this.streamController.getActiveStream();
+    if (!activeStream) {
+      logger.warn("chat_service", "handle_stream_chunk_no_active_stream", { assistantId });
+      return;
+    }
+    
+    // Validate that the assistantId matches the active stream owner
+    if (this.activeStream?.assistantId !== assistantId) {
+      logger.warn("chat_service", "handle_stream_chunk_ownership_violation", { 
+        assistantId, 
+        activeAssistantId: this.activeStream?.assistantId 
+      });
+      return;
+    }
+    
     // Update state.messages (UI renders from state.messages)
     // ChatMessage uses 'text' field
     this.state.messages = this.state.messages.map(m =>
@@ -151,6 +170,13 @@ export class ChatService {
 
   // Single finalization point - correct order to prevent deadlocks
   private finalizeRequest(requestId: string, streamId: string | null): void {
+    // Idempotency guard - prevent duplicate finalization
+    if (this.finalizedRequests.has(requestId)) {
+      logger.warn("chat_service", "finalize_request_idempotency_guard", { requestId, reason: "Already finalized" });
+      return;
+    }
+    this.finalizedRequests.add(requestId);
+
     // 1. End stream FIRST
     if (streamId) {
       this.streamController.endStream(streamId);
@@ -375,7 +401,7 @@ export class ChatService {
       this.state.messages = [];
       this.state.assistantMessages = [];
       this.state.sequenceCounter = 0;
-      this.phaseManager?.forceSetPhase("idle");
+      this.setPhase("USER_SEND" as EventType, sessionId); // Use proper phase transition
       this.notify();
       
       const stored = localStorage.getItem(`chat_search_enabled:${sessionId}`);
@@ -385,9 +411,7 @@ export class ChatService {
       void this.load(sessionId);
       void this.flushOutgoingQueue();
     });
-    window.setInterval(() => {
-      void this.flushOutgoingQueue();
-    }, 500);
+    // Polling removed - flushOutgoingQueue is now event-driven (called on session change, sendMessage, etc.)
   }
 
   subscribe(listener: StateListener) {
@@ -514,11 +538,12 @@ export class ChatService {
     if (isStreamEnd) {
       const currentPhase = this.phaseManager?.getPhase() as ChatPhase;
       if (currentPhase !== "streaming" && currentPhase !== "idle" && currentPhase !== "finalizing") {
-        logger.warn("chat_service", "force_streaming_before_finalizing", {
+        logger.warn("chat_service", "invalid_phase_before_streaming", {
           currentPhase,
-          forcing_to: "streaming"
+          expected: "streaming"
         });
-        this.phaseManager?.forceSetPhase("streaming" as ChatPhase);
+        // Let FSM handle invalid state - do not force
+        return;
       }
     }
     
@@ -618,8 +643,7 @@ export class ChatService {
         logger.warn("chat_service", "reset_to_idle_failed", { error: String(e) });
       }
     }
-    // Keep ChatService state in sync for backward compatibility
-    this.phaseManager?.forceSetPhase("idle");
+    // PhaseManager handles phase - no force needed
     
     // End execution coordinator
     if (this.executionCoordinator) {
@@ -677,11 +701,8 @@ export class ChatService {
     
     // NEW: Use PhaseManager to reset to idle
     if (this.phaseManager) {
-      // Use forceSetPhase for reset to bypass FSM validation
-      this.phaseManager.forceSetPhase("idle");
+      this.setPhase("STREAM_END" as EventType, this.sessionId); // Use proper phase transition
     }
-    // Keep ChatService state in sync for backward compatibility (read-only)
-    this.phaseManager?.forceSetPhase("idle");
     this.state.currentStreamId = null;
     this.state.responseStart = undefined;
     this.state.responseEnd = undefined;
@@ -890,11 +911,8 @@ export class ChatService {
         type: "final",
         content: `⚠️ Failed to send message: ${String(error)}`
       });
-      // Transition to failed phase instead of resetToIdle
-      this.setPhase("ERROR" as EventType);
-      if (this.phaseManager) {
-        this.phaseManager.forceSetPhase("error");
-      }
+      // Transition to error phase via setPhase
+      this.setPhase("ERROR" as EventType, this.sessionId);
     }
   }
 
@@ -1056,8 +1074,23 @@ export class ChatService {
       return;
     }
 
-    // ADD 2: Validate stream ownership
+    // STEP 4: Enforce ownership - validate stream ownership before append
     const activeStream = this.streamController.getActiveStream();
+    if (!activeStream) {
+      logger.error("chat_service", "append_to_message_no_active_stream", { messageId });
+      throw new Error(`Cannot append to message ${messageId}: no active stream`);
+    }
+    
+    // Validate that the messageId is associated with the active stream
+    const activeAssistantId = this.activeStream?.assistantId;
+    if (activeAssistantId && messageId !== activeAssistantId) {
+      logger.error("chat_service", "append_to_message_ownership_violation", { 
+        messageId, 
+        activeAssistantId 
+      });
+      throw new Error(`Stream ownership violation: message ${messageId} cannot append (active stream belongs to ${activeAssistantId})`);
+    }
+    
     if (activeStream && !this.streamController.append(messageId, activeStream)) {
       logger.error("chat_service", "append_stream_ownership_violation", { messageId, activeStream });
       throw new Error(`Stream ownership violation: message ${messageId} cannot append to stream ${activeStream}`);
@@ -2762,7 +2795,14 @@ export class ChatService {
           toolExecutionTime = Date.now() - toolLoopStart;
         } catch (mcpErr) {
           logger.warn("mcp_execution", "tool_execution_failed", { error: String(mcpErr) });
-          // STEP 9: Use finalizeRequest instead of fallback
+          // Inject fallback message BEFORE finalize
+          this.state.messages = this.state.messages.map(m => {
+            if (m.id === assistantId) {
+              return { ...m, text: "⚠️ Tool execution failed. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true };
+            }
+            return m;
+          });
+          await sessionDatabase.updateMessage(assistantId, { text: "⚠️ Tool execution failed. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
           this.finalizeRequest(id, null);
           throw new AppError("KNEZ_STREAM_EMPTY", "Tool execution failed");
         }
@@ -2859,17 +2899,31 @@ export class ChatService {
       logger.info("streaming", "stream_start", { streamId, sessionId, assistantId });
 
       // T5: First-token watchdog — abort stream if no token received within 20s
-      firstTokenTimer = window.setTimeout(() => {
+      firstTokenTimer = window.setTimeout(async () => {
         // PART 5: If stream has already started, disable fallback stream
         if (this.streamStarted) {
           logger.warn("chat_service", "first_token_timeout_stream_already_started", { streamId, assistantId });
-          // STEP 9: Use finalizeRequest instead of fallback
+          // Inject fallback message BEFORE finalize
+          this.state.messages = this.state.messages.map(m => {
+            if (m.id === assistantId) {
+              return { ...m, text: "⚠️ Response timeout. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true };
+            }
+            return m;
+          });
+          await sessionDatabase.updateMessage(assistantId, { text: "⚠️ Response timeout. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
           this.finalizeRequest(id, streamId ?? null);
         } else {
           logger.warn("streaming", "first_token_timeout", { streamId, assistantId });
           // PART 6 FIX: Abort stream first to prevent KNEZ client fallback
           controller.abort();
-          // STEP 9: Use finalizeRequest instead of fallback
+          // Inject fallback message BEFORE finalize
+          this.state.messages = this.state.messages.map(m => {
+            if (m.id === assistantId) {
+              return { ...m, text: "⚠️ Response timeout. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true };
+            }
+            return m;
+          });
+          await sessionDatabase.updateMessage(assistantId, { text: "⚠️ Response timeout. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
           this.finalizeRequest(id, streamId ?? null);
         }
       }, 20000);
@@ -2945,7 +2999,14 @@ export class ChatService {
       if (outputClass === "plain_text") {
         processedText = this.sanitizeOutput(this.state.messages.find((m) => m.id === assistantId)?.text ?? "");
         if (!processedText.trim()) {
-          // STEP 9: Use finalizeRequest instead of recovery response
+          // Inject fallback message BEFORE finalize
+          this.state.messages = this.state.messages.map(m => {
+            if (m.id === assistantId) {
+              return { ...m, text: "⚠️ Unable to generate a proper response. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true };
+            }
+            return m;
+          });
+          await sessionDatabase.updateMessage(assistantId, { text: "⚠️ Unable to generate a proper response. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
           this.finalizeRequest(id, streamId ?? null);
           throw new AppError("KNEZ_STREAM_EMPTY", "Empty response after processing");
         }
@@ -2961,28 +3022,63 @@ export class ChatService {
             toolExecutionTime = Date.now() - toolLoopStart;
           } catch (mcpErr) {
             logger.warn("mcp_execution", "tool_execution_failed", { toolName: interp.toolCall.name, error: String(mcpErr) });
-            // STEP 9: Use finalizeRequest instead of fallback
+            // Inject fallback message BEFORE finalize
+            this.state.messages = this.state.messages.map(m => {
+              if (m.id === assistantId) {
+                return { ...m, text: "⚠️ Tool execution failed. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true };
+              }
+              return m;
+            });
+            await sessionDatabase.updateMessage(assistantId, { text: "⚠️ Tool execution failed. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
             this.finalizeRequest(id, streamId ?? null);
           }
         } else {
-          // STEP 9: Use finalizeRequest instead of fallback
+          // Inject fallback message BEFORE finalize
+          this.state.messages = this.state.messages.map(m => {
+            if (m.id === assistantId) {
+              return { ...m, text: "⚠️ Unable to process tool call. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true };
+            }
+            return m;
+          });
+          await sessionDatabase.updateMessage(assistantId, { text: "⚠️ Unable to process tool call. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
           this.finalizeRequest(id, streamId ?? null);
         }
       } else if (outputClass === "system_payload") {
         logger.warn("output_interpreter", "system_payload_blocked", { preview: interpretBuffer.slice(0, 80) });
-        // STEP 9: Use finalizeRequest instead of fallback
+        // Inject fallback message BEFORE finalize
+        this.state.messages = this.state.messages.map(m => {
+          if (m.id === assistantId) {
+            return { ...m, text: "⚠️ System payload blocked. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true };
+          }
+          return m;
+        });
+        await sessionDatabase.updateMessage(assistantId, { text: "⚠️ System payload blocked. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
         this.finalizeRequest(id, streamId ?? null);
       } else {
         if (outputClass === "tool_call") {
           logger.info("output_interpreter", "tool_call_mcp_disabled", { preview: interpretBuffer.slice(0, 80) });
         }
-        // STEP 9: Use finalizeRequest instead of fallback
+        // Inject fallback message BEFORE finalize
+        this.state.messages = this.state.messages.map(m => {
+          if (m.id === assistantId) {
+            return { ...m, text: "⚠️ Unable to generate response. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true };
+          }
+          return m;
+        });
+        await sessionDatabase.updateMessage(assistantId, { text: "⚠️ Unable to generate response. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
         this.finalizeRequest(id, streamId ?? null);
       }
 
       if (!processedText.trim()) {
         logger.error("response_guarantee", "empty_response_after_processing", { sessionId, assistantId });
-        // STEP 9: Use finalizeRequest instead of fallback
+        // Inject fallback message BEFORE finalize
+        this.state.messages = this.state.messages.map(m => {
+          if (m.id === assistantId) {
+            return { ...m, text: "⚠️ Unable to generate response. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true };
+          }
+          return m;
+        });
+        await sessionDatabase.updateMessage(assistantId, { text: "⚠️ Unable to generate response. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
         this.finalizeRequest(id, streamId ?? null);
       }
 
@@ -3176,6 +3272,14 @@ export class ChatService {
         const currentPhase = this.phaseManager?.getPhase() as ChatPhase;
         if (currentPhase === "thinking" || currentPhase === "streaming") {
           logger.warn("chat_service", "phase_stuck_resetting_to_stream_end", { currentPhase });
+          // Inject fallback message BEFORE finalize
+          this.state.messages = this.state.messages.map(m => {
+            if (m.id === assistantId) {
+              return { ...m, text: "⚠️ Request timed out. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true };
+            }
+            return m;
+          });
+          await sessionDatabase.updateMessage(assistantId, { text: "⚠️ Request timed out. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
           // ERROR phase removed in strict FSM - transition to STREAM_END instead
           this.finalizeRequest(id, streamId ?? null);
         }
