@@ -211,6 +211,8 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
           oldSessionId: sessionId, 
           newSessionId 
         });
+        // CRITICAL: Reset isSending on session change to prevent stuck state
+        setIsSending(false);
       }
     });
     return unsub;
@@ -334,6 +336,14 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     }
   }, [phase]);
 
+  // CRITICAL: Reset isSending if phase is idle but isSending is still true (stuck state)
+  useEffect(() => {
+    if (phase === "idle" && isSending) {
+      logger.warn("chat_pane", "isending_stuck_resetting", { phase, isSending });
+      setIsSending(false);
+    }
+  }, [phase, isSending]);
+
   const handleEdit = (id: string) => {
     const msg = messages.find(m => m.id === id);
     if (msg) {
@@ -347,6 +357,15 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
 
   const handleStop = (id: string) => {
     chatService.stopByAssistantMessageId(id);
+    // CRITICAL: Reset isSending immediately to unblock UI
+    setIsSending(false);
+  };
+
+  // Add a global stop handler for when no specific message ID is available
+  const handleGlobalStop = () => {
+    chatService.stopCurrentResponse();
+    // CRITICAL: Reset isSending immediately to unblock UI
+    setIsSending(false);
   };
 
   const handleRetry = (id: string) => {
@@ -1218,7 +1237,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
               {composerMode === "chat" && (phase === "streaming" || phase === "thinking" || phase === "tool_running" || phase === "sending" || phase === "failed") && (
                 <button
                   type="button"
-                  onClick={() => chatService.stopCurrentResponse()}
+                  onClick={handleGlobalStop}
                   className="px-4 py-2 rounded-lg text-sm font-medium bg-zinc-900 border border-zinc-800 text-zinc-300 hover:border-zinc-600 hover:text-white transition-colors"
                   title="Stop current response"
                 >
