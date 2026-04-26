@@ -103,8 +103,11 @@ export class RealtimeEventHandler {
       const eventType = eventData.event_type;
       const payload = eventData.payload;
 
+      logger.debug('realtime_handler', 'event_received', { eventType, payloadType: payload?.type });
+
       // Check if this is a real-time event
       if (!eventType || !eventType.startsWith('realtime_')) {
+        logger.debug('realtime_handler', 'event_filtered', { eventType, reason: 'not realtime' });
         return; // Ignore non-realtime events
       }
 
@@ -115,6 +118,8 @@ export class RealtimeEventHandler {
         data: payload.data,
         timestamp: payload.timestamp
       };
+
+      logger.debug('realtime_handler', 'realtime_event_parsed', { type: realtimeEvent.type });
 
       // Route to appropriate handler based on event type
       switch (realtimeEvent.type) {

@@ -28,12 +28,14 @@ export class ExecutionCoordinator {
    * @throws Error if an execution is already active
    */
   startExecution(): string {
+    console.log('[ExecutionCoordinator] startExecution called', { sessionId: this.sessionId, activeExecutionId: this.activeExecutionId });
     if (this.activeExecutionId) {
       logger.error("execution_coordinator", "EXECUTION_ALREADY_ACTIVE", {
         sessionId: this.sessionId,
         activeExecutionId: this.activeExecutionId,
         error: "Cannot start new execution while one is active"
       });
+      console.error('[ExecutionCoordinator] Execution already active', { activeExecutionId: this.activeExecutionId });
       throw new Error(`Execution already active: ${this.activeExecutionId}`);
     }
 
@@ -63,7 +65,8 @@ export class ExecutionCoordinator {
       logger.warn("execution_coordinator", "EXECUTION_ID_MISMATCH", {
         sessionId: this.sessionId,
         activeExecutionId: this.activeExecutionId,
-        attemptedEnd: executionId
+        attemptedEnd: executionId,
+        timestamp: Date.now()
       });
       return;
     }
@@ -81,8 +84,10 @@ export class ExecutionCoordinator {
       state: state ? {
         requestStarted: state.requestStarted,
         streamStarted: state.streamStarted,
-        streamCompleted: state.streamCompleted
-      } : null
+        streamCompleted: state.streamCompleted,
+        startedAt: state.startedAt
+      } : null,
+      timestamp: Date.now()
     });
   }
 
@@ -213,9 +218,37 @@ export class ExecutionCoordinator {
 
   /**
    * Check if an execution is currently active
+   * Returns true ONLY if execution is actually running with valid state
    */
   isActive(): boolean {
-    return this.activeExecutionId !== null;
+    if (this.activeExecutionId === null) {
+      return false;
+    }
+    
+    // Additional check: verify execution state exists and is not already completed
+    const state = this.executionState.get(this.activeExecutionId);
+    if (!state) {
+      // State missing - execution is not actually running
+      logger.warn("execution_coordinator", "isActive_state_missing", {
+        executionId: this.activeExecutionId,
+        sessionId: this.sessionId
+      });
+      this.activeExecutionId = null; // Clean up orphaned ID
+      return false;
+    }
+    
+    // Check if execution is already completed (streamCompleted = true)
+    if (state.streamCompleted) {
+      // Execution already completed - not actually running
+      logger.warn("execution_coordinator", "isActive_already_completed", {
+        executionId: this.activeExecutionId,
+        sessionId: this.sessionId
+      });
+      this.activeExecutionId = null; // Clean up completed execution
+      return false;
+    }
+    
+    return true;
   }
 
   /**

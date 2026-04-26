@@ -1,6 +1,6 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { ZoomControls } from './ZoomControls';
-import { Activity, GitBranch, X, Layers } from 'lucide-react';
+import { Activity, X, Layers, Play, Square, Radio, Network } from 'lucide-react';
 import { DiagnosticPanel, LayerDiagnostic, DiagnosticConfig } from './DiagnosticPanel';
 import { DiagnosticSimulation } from './DiagnosticSimulation';
 import { knezArchitecture, Layer, NodeStatus } from './knezArchitecture';
@@ -9,9 +9,55 @@ import { getTestNodePath } from './testNodePaths';
 import { usePacketAnimation } from './PacketAnimation';
 import { getEventBus } from '../../observability/eventBus/EventBus';
 import { getPacketSimulationEngine } from '../../observability/packetSimulation/PacketSimulationEngine';
+import { NodePaths } from '../../observability/NodeRegistry';
 
 type EdgeType = 'data' | 'control' | 'feedback';
 type GuardrailStatus = 'active' | 'tripped' | 'disabled';
+
+// PHASE 4: Execution Flow Registry - using NodeRegistry for consistency
+interface ExecutionFlow {
+  id: string;
+  name: string;
+  description: string;
+  input: string;
+  expected: string;
+  nodes: readonly string[];
+}
+
+const ExecutionFlows: ExecutionFlow[] = [
+  {
+    id: "chat_basic",
+    name: "Chat → Simple Response (HI)",
+    description: "Basic chat flow with simple response",
+    input: "Hi",
+    expected: "model_response",
+    nodes: NodePaths.chat_basic
+  },
+  {
+    id: "chat_tool",
+    name: "Chat → Tool Call Flow",
+    description: "Chat flow with tool execution",
+    input: "What time is it?",
+    expected: "tool_result",
+    nodes: NodePaths.chat_tool
+  },
+  {
+    id: "chat_memory",
+    name: "Chat → Memory Write + Recall",
+    description: "Memory persistence and retrieval",
+    input: "Remember: X. What did I say?",
+    expected: "memory_result",
+    nodes: NodePaths.chat_memory
+  },
+  {
+    id: "full_agent",
+    name: "Full Agent Flow (end-to-end)",
+    description: "Complete agent execution flow",
+    input: "Complex multi-step request",
+    expected: "agent_response",
+    nodes: NodePaths.full_agent
+  }
+];
 
 interface SystemNode {
   id: string;
@@ -71,10 +117,117 @@ export const InfrastructureVisualizer: React.FC = () => {
   const [errorPath, setErrorPath] = useState<string[]>([]);
   const [validationLogsOpen, setValidationLogsOpen] = useState(false);
   const [validationLogs, setValidationLogs] = useState<{ timestamp: number; event: string; details: string }[]>([]);
+  const [logFilter, setLogFilter] = useState<string>('all');
+  
+  // PHASE 1: Execution Entry Points
+  const [mode, setMode] = useState<'live' | 'test'>('test');
+  const [wsConnected, setWsConnected] = useState(false);
+  const [selectedFlow, setSelectedFlow] = useState('chat_basic');
+  const [isExecuting, setIsExecuting] = useState(false);
+  
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   
   const { isAnimating, startAnimation, stopAnimation } = usePacketAnimation();
+
+  // PHASE 1: Handler Functions
+  const handleModeSwitch = (newMode: 'live' | 'test') => {
+    // Cancel active trace
+    // Clear packets
+    // Reset graph state
+    // Reconnect WS if LIVE
+    if (mode === newMode) return;
+    
+    setMode(newMode);
+    
+    if (newMode === 'live') {
+      // Connect to WebSocket
+      const eventBus = getEventBus();
+      eventBus.connect();
+      setWsConnected(true);
+    } else {
+      // Disconnect from WebSocket
+      const eventBus = getEventBus();
+      eventBus.disconnect();
+      setWsConnected(false);
+    }
+    
+    // Reset execution state
+    setIsExecuting(false);
+    stopAnimation();
+    
+    // Reset node states
+    setNodes(prev => prev.map(node => ({
+      ...node,
+      eventState: 'idle',
+      active: false
+    })));
+    
+    // Clear validation logs
+    setValidationLogs([]);
+    
+    addValidationLog('mode_switch', `Switched to ${newMode.toUpperCase()} mode`);
+  };
+
+  const handleRunFlow = async () => {
+    if (isExecuting) return;
+    
+    const flow = ExecutionFlows.find(f => f.id === selectedFlow);
+    if (!flow) return;
+    
+    setIsExecuting(true);
+    addValidationLog('flow_started', `Running: ${flow.name} (${mode.toUpperCase()} mode)`);
+    
+    // Highlight expected path
+    setHighlightedPath(flow.nodes as string[]);
+    
+    // Start packet animation
+    startAnimation(flow.nodes as string[]);
+    
+    // STEP 2: Use ExecutionFlowRunner to execute the flow
+    const { getExecutionFlowRunner } = await import('../../observability/ExecutionFlowRunner');
+    const runner = getExecutionFlowRunner();
+    
+    try {
+      await runner.run(selectedFlow, mode);
+      addValidationLog('flow_completed', `Completed: ${flow.name}`);
+    } catch (error) {
+      addValidationLog('error', `Flow execution failed: ${error}`);
+    }
+    
+    setIsExecuting(false);
+    setHighlightedPath([]);
+    stopAnimation();
+  };
+
+  const handleStop = () => {
+    // STEP 2: Use ExecutionFlowRunner to stop execution
+    import('../../observability/ExecutionFlowRunner').then(({ getExecutionFlowRunner }) => {
+      const runner = getExecutionFlowRunner();
+      runner.stop();
+    });
+    
+    setIsExecuting(false);
+    stopAnimation();
+    setHighlightedPath([]);
+    
+    // Reset node states
+    setNodes(prev => prev.map(node => ({
+      ...node,
+      eventState: 'idle',
+      active: false
+    })));
+    
+    addValidationLog('execution_stopped', 'Execution stopped by user');
+  };
+
+  const addValidationLog = (event: string, details: string) => {
+    setValidationLogs(prev => [...prev, {
+      timestamp: Date.now(),
+      event,
+      details
+    }]);
+  };
 
   // Define zones from actual knezArchitecture layers
   const zones: Zone[] = useMemo(() => {
@@ -148,7 +301,7 @@ export const InfrastructureVisualizer: React.FC = () => {
   }, [zones]);
 
   const [nodes, setNodes] = useState<SystemNode[]>(initialNodes);
-  const [edges, setEdges] = useState<SystemEdge[]>(useMemo(() => {
+  const [edges] = useState<SystemEdge[]>(useMemo(() => {
     return knezArchitecture.connections.map(conn => ({
       from: conn.from,
       to: conn.to,
@@ -262,6 +415,25 @@ export const InfrastructureVisualizer: React.FC = () => {
     return '#ef4444'; // Slow (red)
   };
 
+  const getLogColor = (eventType: string): string => {
+    switch (eventType) {
+      case 'packet_created':
+      case 'packet_arrived':
+        return 'text-emerald-400';
+      case 'trace_started':
+      case 'trace_completed':
+        return 'text-indigo-400';
+      case 'node_state_changed':
+        return 'text-amber-400';
+      case 'error':
+        return 'text-red-400';
+      case 'websocket_connected':
+        return 'text-cyan-400';
+      default:
+        return 'text-zinc-400';
+    }
+  };
+
   const getEdgeDash = (type: EdgeType): string => {
     switch (type) {
       case 'data': return 'none';
@@ -271,95 +443,186 @@ export const InfrastructureVisualizer: React.FC = () => {
     }
   };
 
-  // Event-driven state propagation from GraphStateEngine (NO POLLING)
+  // PHASE 2: Event-driven state propagation from EventBus (UI = event subscriber ONLY)
   useEffect(() => {
     const eventBus = getEventBus();
 
-    // Subscribe to node status changes
-    const nodeStatusUnsubscribe = eventBus.subscribe('node_status_change', (event) => {
-      const { node_id, new_status } = event.payload as { node_id: string; new_status: string };
-      
+    // Subscribe to ALL events (wildcard subscription)
+    const unsubscribe = eventBus.subscribe('*', (event) => {
+      handleSystemEvent(event);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // PHASE 2: Comprehensive event handler
+  const handleSystemEvent = (event: any) => {
+    switch (event.event_type) {
+      case 'packet_created':
+        handlePacketCreated(event);
+        break;
+      case 'packet_moved':
+        handlePacketMoved(event);
+        break;
+      case 'packet_arrived':
+        handlePacketArrived(event);
+        break;
+      case 'node_state_changed':
+        handleNodeStateChanged(event);
+        break;
+      case 'trace_started':
+        handleTraceStarted(event);
+        break;
+      case 'trace_completed':
+        handleTraceCompleted(event);
+        break;
+      case 'error':
+        handleError(event);
+        break;
+      case 'websocket_connected':
+        handleWebSocketConnected(event);
+        break;
+    }
+  };
+
+  const handlePacketCreated = (event: any) => {
+    console.log("EVENT RECEIVED: packet_created", event);
+    const { from_node, to_node, packet_type } = event.payload as { 
+      from_node: string; 
+      to_node: string; 
+      packet_type?: string 
+    };
+    
+    // Trigger packet animation
+    const packetEngine = getPacketSimulationEngine();
+    packetEngine.createPacket(event);
+    packetEngine.startAnimation();
+    
+    // Log to validation panel
+    addValidationLog('packet_created', `${from_node} → ${to_node} (${packet_type || 'request_packet'})`);
+    
+    // Update source node state to active
+    setNodes(prev => prev.map(node => {
+      if (node.id === from_node) {
+        return { ...node, eventState: 'active', active: true };
+      }
+      return node;
+    }));
+  };
+
+  const handlePacketMoved = (event: any) => {
+    console.log("EVENT RECEIVED: packet_moved", event);
+    // Update packet position (handled by PacketSimulationEngine)
+    // This event is for visual interpolation
+    // Packet position updates are handled by the animation loop in PacketSimulationEngine
+  };
+
+  const handlePacketArrived = (event: any) => {
+    console.log("EVENT RECEIVED: packet_arrived", event);
+    const { to_node } = event.payload as { to_node: string };
+    
+    // Remove packet (handled by PacketSimulationEngine)
+    
+    // Update target node state to active/success
+    setNodes(prev => prev.map(node => {
+      if (node.id === to_node) {
+        return { ...node, eventState: 'success', active: true };
+      }
+      return node;
+    }));
+    
+    // Log to validation panel
+    addValidationLog('packet_arrived', `at ${to_node}`);
+  };
+
+  const handleNodeStateChanged = (event: any) => {
+    const { node_id, new_status } = event.payload as { 
+      node_id: string; 
+      new_status: string 
+    };
+    
+    setNodes(prev => prev.map(node => {
+      if (node.id === node_id) {
+        return {
+          ...node,
+          eventState: new_status as 'idle' | 'active' | 'success' | 'degraded' | 'failed',
+          active: new_status === 'active' || new_status === 'success'
+        };
+      }
+      return node;
+    }));
+    
+    addValidationLog('node_state_changed', `${node_id} → ${new_status}`);
+  };
+
+  const handleTraceStarted = (event: any) => {
+    console.log("EVENT RECEIVED: trace_started", event);
+    const { trace_id, flow_id, flow_name } = event.payload as { 
+      trace_id: string; 
+      flow_id?: string; 
+      flow_name?: string 
+    };
+    
+    addValidationLog('trace_started', `TRACE_ID: ${trace_id} (${flow_name || 'system'})`);
+    
+    // Highlight nodes in the trace path if available
+    if (flow_id) {
+      const flow = ExecutionFlows.find(f => f.id === flow_id);
+      if (flow) {
+        setHighlightedPath(flow.nodes as string[]);
+      }
+    }
+  };
+
+  const handleTraceCompleted = (event: any) => {
+    console.log("EVENT RECEIVED: trace_completed", event);
+    const { trace_id, success } = event.payload as { 
+      trace_id: string; 
+      success?: boolean 
+    };
+    
+    addValidationLog('trace_completed', `TRACE_ID: ${trace_id} (${success ? 'SUCCESS' : 'FAILED'})`);
+    
+    // Clear highlighted path
+    setHighlightedPath([]);
+    
+    // Reset node states to idle after short delay
+    setTimeout(() => {
+      setNodes(prev => prev.map(node => ({
+        ...node,
+        eventState: 'idle',
+        active: false
+      })));
+    }, 2000);
+  };
+
+  const handleError = (event: any) => {
+    const { error, node_id } = event.payload as { 
+      error: string; 
+      node_id?: string 
+    };
+    
+    addValidationLog('error', error);
+    
+    // Update node to failed state if specified
+    if (node_id) {
       setNodes(prev => prev.map(node => {
         if (node.id === node_id) {
-          return {
-            ...node,
-            eventState: new_status as 'idle' | 'active' | 'success' | 'degraded' | 'failed',
-            active: new_status === 'active' || new_status === 'success'
-          };
+          return { ...node, eventState: 'failed', active: false };
         }
         return node;
       }));
-    });
-
-    // Subscribe to edge status changes
-    const edgeStatusUnsubscribe = eventBus.subscribe('edge_status_change', (event) => {
-      const { edge_id, new_status, latency_ms } = event.payload as {
-        edge_id: string;
-        new_status: string;
-        latency_ms?: number;
-      };
-      const [from, to] = edge_id.split('→');
       
-      setEdges(prev => prev.map(edge => {
-        if (edge.from === from && edge.to === to) {
-          return {
-            ...edge,
-            eventState: new_status as 'idle' | 'active' | 'blocked' | 'failed',
-            active: new_status === 'active',
-            latencyMs: latency_ms
-          };
-        }
-        return edge;
-      }));
-    });
+      // Set error path
+      setErrorPath([node_id]);
+    }
+  };
 
-    // Subscribe to packet events for animation
-    const packetCreatedUnsubscribe = eventBus.subscribe('packet_created', (event) => {
-      // Trigger packet animation
-      const packetEngine = getPacketSimulationEngine();
-      packetEngine.startAnimation();
-      
-      // Log packet movement
-      const { from_node, to_node } = event.payload as { from_node: string; to_node: string };
-      setValidationLogs(prev => [...prev, {
-        timestamp: Date.now(),
-        event: 'packet_movement',
-        details: `${from_node} → ${to_node}`
-      }]);
-    });
-
-    // Subscribe to diagnostic test completion
-    const diagnosticUnsubscribe = eventBus.subscribe('diagnostic_test_completed', (event) => {
-      const { test_id, success, latency_ms } = event.payload as {
-        test_id: string;
-        success: boolean;
-        latency_ms: number;
-      };
-      setValidationLogs(prev => [...prev, {
-        timestamp: Date.now(),
-        event: 'diagnostic_test_completed',
-        details: `${test_id}: ${success ? 'SUCCESS' : 'FAILED'} (${latency_ms}ms)`
-      }]);
-    });
-
-    // Subscribe to trace events
-    const traceStartUnsubscribe = eventBus.subscribe('trace_start', (event) => {
-      const { trace_id } = event.payload as { trace_id: string };
-      setValidationLogs(prev => [...prev, {
-        timestamp: Date.now(),
-        event: 'trace_id_generated',
-        details: `TRACE_ID: ${trace_id}`
-      }]);
-    });
-
-    return () => {
-      nodeStatusUnsubscribe();
-      edgeStatusUnsubscribe();
-      packetCreatedUnsubscribe();
-      diagnosticUnsubscribe();
-      traceStartUnsubscribe();
-    };
-  }, []);
+  const handleWebSocketConnected = (event: any) => {
+    const { state } = event.payload as { state: string };
+    setWsConnected(state === 'connected');
+    addValidationLog('websocket_connected', state);
+  };
 
   // Subscribe to TestRunner state updates and drive visualization
   // Note: Integration logic in place, but subscription deferred due to type mismatch
@@ -471,7 +734,7 @@ export const InfrastructureVisualizer: React.FC = () => {
                 : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400'
             }`}
           >
-            <GitBranch className="w-4 h-4" />
+            <Network className="w-4 h-4" />
             {view === 'graph' ? 'Simulation View' : 'Graph View'}
           </button>
           <button
@@ -515,6 +778,98 @@ export const InfrastructureVisualizer: React.FC = () => {
             onReset={handleResetZoom}
           />
         </div>
+      </div>
+
+      {/* PHASE 1: Execution Entry Points - Control Bar */}
+      <div className={`flex items-center gap-4 px-6 py-3 border-b ${mode === 'live' ? 'bg-blue-950/50 border-blue-800' : 'bg-emerald-950/50 border-emerald-800'}`}>
+        {/* Mode Toggle */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => handleModeSwitch('live')}
+            className={`flex items-center gap-2 px-3 py-1.5 text-xs rounded transition-colors ${
+              mode === 'live' 
+                ? 'bg-blue-600 text-white' 
+                : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+            }`}
+          >
+            <Radio className="w-3 h-3" />
+            LIVE MODE
+          </button>
+          <button
+            onClick={() => handleModeSwitch('test')}
+            className={`flex items-center gap-2 px-3 py-1.5 text-xs rounded transition-colors ${
+              mode === 'test' 
+                ? 'bg-emerald-600 text-white' 
+                : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+            }`}
+          >
+            <Network className="w-3 h-3" />
+            TEST MODE
+          </button>
+        </div>
+
+        {/* WebSocket Status */}
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-zinc-900 rounded">
+          <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+          <span className="text-xs text-zinc-400">
+            WS: {wsConnected ? 'CONNECTED' : 'DISCONNECTED'}
+          </span>
+        </div>
+
+        {/* Flow Selector */}
+        <div className="flex items-center gap-2">
+          <select
+            value={selectedFlow}
+            onChange={(e) => setSelectedFlow(e.target.value)}
+            className="px-3 py-1.5 text-xs bg-zinc-800 text-zinc-300 rounded border border-zinc-700 focus:outline-none focus:border-zinc-600"
+            disabled={isExecuting}
+          >
+            {ExecutionFlows.map(flow => (
+              <option key={flow.id} value={flow.id}>{flow.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Run Flow / Stop Buttons */}
+        <div className="flex items-center gap-2">
+          {!isExecuting ? (
+            <button
+              onClick={handleRunFlow}
+              className="flex items-center gap-2 px-3 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded transition-colors"
+            >
+              <Play className="w-3 h-3" />
+              RUN FLOW
+            </button>
+          ) : (
+            <button
+              onClick={handleStop}
+              className="flex items-center gap-2 px-3 py-1.5 text-xs bg-red-600 hover:bg-red-700 text-white rounded transition-colors"
+            >
+              <Square className="w-3 h-3" />
+              STOP
+            </button>
+          )}
+        </div>
+
+        {/* Mode Badge */}
+        <div className={`ml-auto px-2 py-1 text-xs font-bold rounded ${
+          mode === 'live' ? 'bg-blue-600 text-white' : 'bg-emerald-600 text-white'
+        }`}>
+          {mode.toUpperCase()}
+        </div>
+
+        {/* Validation Logs Toggle */}
+        <button
+          onClick={() => setValidationLogsOpen(!validationLogsOpen)}
+          className={`flex items-center gap-2 px-3 py-1.5 text-xs rounded transition-colors ${
+            validationLogsOpen 
+              ? 'bg-cyan-600 text-white' 
+              : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+          }`}
+        >
+          <Activity className="w-3 h-3" />
+          LOGS
+        </button>
       </div>
 
       <div className="flex items-center gap-6 px-6 py-3 bg-zinc-950 border-b border-zinc-800 text-xs">
@@ -956,26 +1311,44 @@ export const InfrastructureVisualizer: React.FC = () => {
               <Activity className="w-4 h-4 text-cyan-500" />
               <h3 className="text-sm font-bold text-zinc-100">Validation Logs</h3>
             </div>
-            <button
-              onClick={() => setValidationLogsOpen(false)}
-              className="p-1 hover:bg-zinc-800 rounded transition-colors"
-            >
-              <X className="w-4 h-4 text-zinc-400" />
-            </button>
+            <div className="flex items-center gap-2">
+              <select
+                value={logFilter}
+                onChange={(e) => setLogFilter(e.target.value)}
+                className="px-2 py-1 text-xs bg-zinc-800 text-zinc-300 rounded border border-zinc-700"
+              >
+                <option value="all">All Events</option>
+                <option value="packet_created">Packets</option>
+                <option value="trace_started">Traces</option>
+                <option value="node_state_changed">Nodes</option>
+                <option value="error">Errors</option>
+                <option value="websocket_connected">WebSocket</option>
+              </select>
+              <button
+                onClick={() => setValidationLogsOpen(false)}
+                className="p-1 hover:bg-zinc-800 rounded transition-colors"
+              >
+                <X className="w-4 h-4 text-zinc-400" />
+              </button>
+            </div>
           </div>
           <div className="p-4 space-y-2 max-h-[60vh] overflow-auto">
             {validationLogs.length === 0 ? (
               <p className="text-xs text-zinc-500 text-center py-4">No validation events logged yet</p>
             ) : (
-              validationLogs.slice().reverse().map((log, idx) => (
-                <div key={idx} className="bg-zinc-800 rounded p-2 text-[10px]">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-medium text-cyan-400">{log.event}</span>
-                    <span className="text-zinc-500">{new Date(log.timestamp).toLocaleTimeString()}</span>
+              validationLogs
+                .slice()
+                .reverse()
+                .filter(log => logFilter === 'all' || log.event === logFilter)
+                .map((log, idx) => (
+                  <div key={idx} className="bg-zinc-800 rounded p-2 text-[10px]">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={`font-medium ${getLogColor(log.event)}`}>{log.event}</span>
+                      <span className="text-zinc-500">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                    <p className="text-zinc-300">{log.details}</p>
                   </div>
-                  <p className="text-zinc-300">{log.details}</p>
-                </div>
-              ))
+                ))
             )}
           </div>
         </div>

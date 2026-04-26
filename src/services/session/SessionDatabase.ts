@@ -26,6 +26,7 @@ export interface StoredMessage {
   deliveryError?: string;
   replyToMessageId?: string;
   correlationId?: string;
+  sequenceNumber?: number;
 }
 
 export interface StoredAssistantMessage {
@@ -145,7 +146,8 @@ export class SessionDatabase {
        deliveryStatus: m.deliveryStatus,
        deliveryError: m.deliveryError,
        replyToMessageId: m.replyToMessageId,
-       correlationId: m.correlationId
+       correlationId: m.correlationId,
+       sequenceNumber: m.sequenceNumber
      }));
      await db.messages.bulkPut(rows);
      // Update session timestamp
@@ -153,7 +155,9 @@ export class SessionDatabase {
   }
 
   async loadMessages(sessionId: string): Promise<ChatMessage[]> {
-     const rows = await db.messages.where('sessionId').equals(sessionId).sortBy('createdAt');
+     const rows = await db.messages.where('sessionId').equals(sessionId).toArray();
+     // Sort by sequenceNumber for deterministic ordering (not createdAt which can be the same for rapid messages)
+     rows.sort((a, b) => (a.sequenceNumber ?? 0) - (b.sequenceNumber ?? 0));
      return rows.map(r => ({
        id: r.id,
        sessionId: r.sessionId,
@@ -167,7 +171,8 @@ export class SessionDatabase {
        deliveryStatus: r.deliveryStatus,
        deliveryError: r.deliveryError,
        replyToMessageId: r.replyToMessageId,
-       correlationId: r.correlationId
+       correlationId: r.correlationId,
+       sequenceNumber: r.sequenceNumber
      }));
   }
 
@@ -195,7 +200,9 @@ export class SessionDatabase {
   }
 
   async loadAssistantMessages(sessionId: string): Promise<AssistantMessage[]> {
-    const rows = await db.assistantMessages.where('sessionId').equals(sessionId).sortBy('createdAt');
+    const rows = await db.assistantMessages.where('sessionId').equals(sessionId).toArray();
+    // Sort by sequenceNumber for deterministic ordering (not createdAt which can be the same for rapid messages)
+    rows.sort((a, b) => (a.sequenceNumber ?? 0) - (b.sequenceNumber ?? 0));
     return rows.map(r => ({
       id: r.id,
       sessionId: r.sessionId,

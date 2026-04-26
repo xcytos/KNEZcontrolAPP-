@@ -54,7 +54,7 @@ export const LineagePanel: React.FC<{ sessionId: string; onResume: (sid: string)
   if (loading) return <div className="p-4 text-xs text-zinc-500">Tracing lineage...</div>;
   if (!snapshot && !chain) return <div className="p-4 text-xs text-zinc-500">No lineage data available for this session.</div>;
   const headId = sessionId;
-  const acceptedFacts = Array.isArray((snapshot as any).accepted_facts) ? (snapshot as any).accepted_facts : [];
+  const acceptedFacts = snapshot && Array.isArray((snapshot as any).accepted_facts) ? (snapshot as any).accepted_facts : [];
 
   return (
     <div className="p-4 space-y-4">

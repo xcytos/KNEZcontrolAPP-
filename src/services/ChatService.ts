@@ -32,7 +32,7 @@ import { realtimeEventHandler } from "./realtime/RealtimeEventHandler";
 import { realtimeToolExecutor } from "./realtime/RealtimeToolExecutor";
 import { webSocketClient } from "./websocket/WebSocketClient";
 import { ToolExecutionBridge } from "./chat/tools/ToolExecutionBridge";
-import { StreamStartEventData } from '../domain/RealtimeProtocol';
+// StreamStartEventData import removed - WebSocket stream handlers removed (STEP 4)
 // STEP 3: Import EventBus and NodeRegistry for packet event emission
 import { getEventBus } from '../observability/eventBus/EventBus';
 import { NodeIds } from '../observability/NodeRegistry';
@@ -41,14 +41,8 @@ import { getTimeoutConfig, adaptiveTimeoutManager } from './utils/TimeoutConfig'
 // STREAM_MODE: WS_ONLY - Disable SSE fallback during stabilization
 const STREAM_MODE = "WS_ONLY" as const;
 
-export type ChatPhase =
-  | "idle"
-  | "sending"
-  | "thinking"
-  | "streaming"
-  | "finalizing"
-  | "done"
-  | "failed";
+// Import ChatPhase from PhaseManager for strict FSM consistency
+import { ChatPhase } from "./chat/core/PhaseManager";
 
 export type EventType =
   | "USER_SEND"
@@ -56,7 +50,7 @@ export type EventType =
   | "FIRST_TOKEN"
   | "STREAM_END"
   | "FINALIZING"
-  | "DONE";
+  | "ERROR";
 
 // NOTE: Phase transition validation now handled by PhaseManager
 // PHASE_TRANSITIONS constant removed as it's no longer used
@@ -64,7 +58,7 @@ export type EventType =
 export interface ChatState {
   messages: ChatMessage[];
   assistantMessages: AssistantMessage[]; // New block-based assistant messages
-  phase: ChatPhase;
+  // phase removed - PhaseManager is ONLY source of truth
   currentStreamId: string | null;
   activeTools: { search: boolean };
   searchProvider: "off" | "taqwin" | "proxy";
@@ -81,7 +75,7 @@ export class ChatService {
   private state: ChatState = {
     messages: [],
     assistantMessages: [],
-    phase: "idle",
+    // phase removed - PhaseManager is ONLY source of truth
     currentStreamId: null,
     activeTools: { search: false },
     searchProvider: "off",
@@ -110,16 +104,72 @@ export class ChatService {
   // PART 2: Single Stream Enforcement - Track active stream to prevent duplicates
   private activeStream: { streamId: string; assistantId: string; requestId: string } | null = null;
 
+  // STEP 5: System-level stream ownership enforcement
+  private activeExecutionId: string | null = null;
+  private activeStreamId: string | null = null;
+
   // PART 5: Remove Multiple Stream Triggers - Track if stream has started to disable fallback
   private streamStarted: boolean = false;
 
   // ADD 2: Stream Controller
   private streamController = new StreamController();
 
+  // Handle stream chunks from StreamController (authoritative source)
+  private handleStreamChunk(assistantId: string, chunk: string): void {
+    // Update state.messages (UI renders from state.messages)
+    // ChatMessage uses 'text' field
+    this.state.messages = this.state.messages.map(m =>
+      m.id === assistantId ? { ...m, text: (m.text || "") + chunk } : m
+    );
+    // Also update state.assistantMessages for WebSocket consistency
+    this.state.assistantMessages = this.state.assistantMessages.map(am => {
+      if (am.id === assistantId) {
+        const textBlockIndex = am.blocks.findIndex(b => b.type === 'text');
+        if (textBlockIndex >= 0) {
+          const updatedBlocks = [...am.blocks];
+          updatedBlocks[textBlockIndex] = {
+            type: 'text',
+            content: (updatedBlocks[textBlockIndex] as any).content + chunk
+          };
+          return { ...am, blocks: updatedBlocks };
+        } else {
+          return { ...am, blocks: [...am.blocks, { type: 'text', content: chunk }] };
+        }
+      }
+      return am;
+    });
+    // Throttle notifications during streaming
+    this.notify();
+  }
+
   // NEW: Modular chat core controllers
   private messageStore: MessageStore | null = null;
   private requestController: RequestController | null = null;
   private phaseManager: PhaseManager | null = null;
+
+  // Public getter for phase - PhaseManager is ONLY source of truth
+  getPhase(): ChatPhase {
+    return this.phaseManager?.getPhase() as ChatPhase ?? "idle";
+  }
+
+  // Single finalization point - correct order to prevent deadlocks
+  private finalizeRequest(requestId: string, streamId: string | null): void {
+    // 1. End stream FIRST
+    if (streamId) {
+      this.streamController.endStream(streamId);
+    }
+
+    // 2. Transition phase to STREAM_END (maps to "finalizing")
+    this.setPhase("STREAM_END", requestId);
+
+    // 3. Release lock (before FINALIZING to prevent deadlock)
+    this.releaseRequestLock(this.sessionId, requestId);
+
+    // 4. Finalize (maps to "idle")
+    this.setPhase("FINALIZING", requestId);
+
+    logger.info("chat_service", "request_finalized", { requestId, streamId });
+  }
 
   // TICKET-2: Cached health check to reduce timeouts
   private lastHealthCheck: { result: { status: string } | null; timestamp: number } | null = null;
@@ -128,8 +178,7 @@ export class ChatService {
   private responseAssembler: ResponseAssembler | null = null;
   private toolExecutionBridge: ToolExecutionBridge = new ToolExecutionBridge();
 
-  private async acquireRequestLock(sessionId: string, requestId: string): Promise<boolean> {
-    // NEW: Use RequestController for request lifecycle management
+  private acquireRequestLock(sessionId: string, requestId: string): boolean {
     if (this.requestController) {
       try {
         this.requestController.startRequest(requestId);
@@ -250,6 +299,11 @@ export class ChatService {
     this.executionCoordinator = new ExecutionCoordinator(this.sessionId);
     this.executionController = new ExecutionController(this.sessionId);
     
+    // Set up chunk callback for StreamController to notify ChatService
+    this.streamController.setChunkCallback((assistantId: string, chunk: string) => {
+      this.handleStreamChunk(assistantId, chunk);
+    });
+    
     // Connect WebSocket for real-time events
     realtimeEventHandler.connect(this.sessionId);
     realtimeToolExecutor.enable(this.sessionId);
@@ -260,105 +314,11 @@ export class ChatService {
       this.webSocketConnected = true;
     });
 
-    // Register WebSocket token handler
-    realtimeEventHandler.onToken((data) => {
-      // PHASE 5: Add EVENT_RECEIVED logging with phase context
-      logger.info("chat_service", "EVENT_RECEIVED", {
-        type: "TOKEN",
-        timestamp: Date.now(),
-        currentPhase: this.phaseManager?.getPhase() as ChatPhase,
-        token_index: data.index,
-        is_first: data.is_first
-      });
-
-      logger.info('chatservice', 'websocket_token_received', { token: data.token.slice(0, 10), index: data.index, is_first: data.is_first });
-
-      // SAFETY FALLBACK: If still in "thinking" phase on first token, force transition to "streaming"
-      // This handles WS_ONLY mode where STREAM_START might not be received
-      if ((data.is_first || data.index === 1) && this.phaseManager?.getPhase() === 'thinking') {
-        logger.warn("chat_service", "first_token_streaming_fallback", {
-          currentPhase: this.phaseManager?.getPhase() as ChatPhase,
-          forcing_to: "streaming",
-          reason: "STREAM_START not received, using first token as fallback"
-        });
-        this.phaseManager?.forceSetPhase('streaming');
-      }
-
-      // Find current assistant message being streamed (last assistant message in assistantMessages)
-      const assistantMsg = [...this.state.assistantMessages].reverse().find(m => m.role === 'assistant');
-      if (!assistantMsg) {
-        logger.warn('chatservice', 'websocket_token_no_assistant_message', { messageCount: this.state.assistantMessages.length });
-        return;
-      }
-
-      try {
-        // Append token to the text block in assistant message
-        const textBlockIndex = assistantMsg.blocks.findIndex(b => b.type === 'text');
-        if (textBlockIndex >= 0) {
-          assistantMsg.blocks[textBlockIndex] = {
-            type: 'text',
-            content: (assistantMsg.blocks[textBlockIndex] as any).content + data.token
-          };
-          this.notify();
-        } else {
-          // Create new text block if none exists
-          assistantMsg.blocks.push({ type: 'text', content: data.token });
-          this.notify();
-        }
-        logger.info('chatservice', 'websocket_token_appended', { assistantId: assistantMsg.id, tokenIndex: data.index, token: data.token.slice(0, 10) });
-      } catch (e) {
-        logger.error('chatservice', 'websocket_token_append_failed', { error: String(e) });
-      }
-    });
-
-    // Register WebSocket agent state handler
-    realtimeEventHandler.onAgentState((data) => {
-      // PHASE 5: Add EVENT_RECEIVED logging with phase context
-      logger.info("chat_service", "EVENT_RECEIVED", {
-        type: "AGENT_STATE",
-        timestamp: Date.now(),
-        currentPhase: this.phaseManager?.getPhase() as ChatPhase,
-        agent_state: data.state
-      });
-
-      logger.info('chatservice', 'websocket_agent_state', { state: data.state, message: data.message });
-      // Update phase based on agent state - map to EventType
-      if (data.state === 'streaming') {
-        this.setPhase('FIRST_TOKEN');
-      } else if (data.state === 'thinking') {
-        this.setPhase('MODEL_CALL_START');
-      }
-      // tool_running state no longer has a corresponding phase in strict FSM
-      // Tool execution is now handled at a different layer
-    });
-
-    // Register WebSocket stream_end handler
-    realtimeEventHandler.onStreamEnd((data) => {
-      // PHASE 5: Add EVENT_RECEIVED logging with phase context
-      logger.info("chat_service", "EVENT_RECEIVED", {
-        type: "STREAM_END",
-        timestamp: Date.now(),
-        currentPhase: this.phaseManager?.getPhase() as ChatPhase,
-        total_tokens: data.total_tokens
-      });
-
-      logger.info('chatservice', 'websocket_stream_end', { total_tokens: data.total_tokens, finish_reason: data.finish_reason });
-      // Mark message as complete
-      const assistantMsg = [...this.state.messages].reverse().find(m => m.from === 'assistant');
-      if (assistantMsg) {
-        this.state.messages = this.state.messages.map(m =>
-          m.id === assistantMsg.id ? { ...m, isPartial: false } : m
-        );
-        logger.info('chatservice', 'websocket_mark_message_complete', { assistantId: assistantMsg.id });
-      }
-      // Transition to finalizing phase
-      this.setPhase('STREAM_END');
-    });
-
-    // PHASE 1: Register WebSocket stream_start handler - PRIMARY TRIGGER for streaming phase
-    realtimeEventHandler.onStreamStart((data) => {
-      this.handleStreamStart(data);
-    });
+    // WebSocket stream handlers removed - HTTP stream is ONLY source (STEP 4)
+    // onToken handler removed - HTTP stream handles token delivery
+    // onAgentState handler removed - HTTP stream handles phase transitions
+    // onStreamEnd handler removed - HTTP stream handles finalization
+    // onStreamStart handler removed - HTTP stream handles stream start
     
     void this.load(this.sessionId);
     sessionController.subscribe(({ sessionId }) => {
@@ -377,6 +337,17 @@ export class ChatService {
           this.activeRequestLock = null;
         }
         
+        // NEW: Cancel active streams and requests when switching sessions
+        const { cancelledStream, cancelledRequest } = this.cancelActiveStream();
+        if (cancelledStream || cancelledRequest) {
+          logger.info("chat_service", "session_change_cancelled_active", {
+            previousSessionId,
+            newSessionId: sessionId,
+            cancelledStream,
+            cancelledRequest
+          });
+        }
+        
         // NEW: Reinitialize modular controllers only when session actually changes
         this.sessionId = sessionId;
         
@@ -392,6 +363,7 @@ export class ChatService {
         this.phaseManager = new PhaseManager(this.sessionId);
         
         // Reconnect WebSocket for new session
+        realtimeEventHandler.disconnect();
         realtimeEventHandler.connect(this.sessionId);
         realtimeToolExecutor.enable(this.sessionId);
       } else if (!previousSessionId) {
@@ -406,7 +378,7 @@ export class ChatService {
       this.state.messages = [];
       this.state.assistantMessages = [];
       this.state.sequenceCounter = 0;
-      this.state.phase = "idle";
+      this.phaseManager?.forceSetPhase("idle");
       this.notify();
       
       const stored = localStorage.getItem(`chat_search_enabled:${sessionId}`);
@@ -457,28 +429,25 @@ export class ChatService {
   private setPhase(event: EventType, ownershipId?: string): void {
     // PART 4: Validate ownership - ignore updates from stale requests
     // Accept requestId, streamId, or assistantId as ownership identifier
-    if (ownershipId && this.activeRequestLock) {
-      // Check if ownershipId matches the active request's requestId
-      if (ownershipId !== this.activeRequestLock.requestId) {
-        logger.warn("chat_service", "phase_update_ownership_rejected", {
-          ownershipId,
-          activeRequestId: this.activeRequestLock.requestId,
-          event
-        });
-        return;
-      }
+    if (ownershipId && this.activeExecutionId && ownershipId !== this.activeExecutionId) {
+      logger.warn("chat_service", "phase_transition_ownership_failed", {
+        activeExecutionId: this.activeExecutionId,
+        attemptedOwnershipId: ownershipId,
+        event
+      });
+      return; // Reject stale event
     }
 
-    // PHASE 2: Duplicate thinking prevention - ignore MODEL_CALL_START if already thinking
-    if (event === "MODEL_CALL_START") {
-      const currentPhase = this.phaseManager?.getPhase() as ChatPhase;
-      if (currentPhase === "thinking") {
-        logger.info("chat_service", "DUPLICATE_THINKING_IGNORED", {
-          event,
-          currentPhase
-        });
-        return;
-      }
+    // STEP 1: Use PhaseManager.getPhase() as single source of truth
+    const currentPhase = this.phaseManager?.getPhase() as ChatPhase;
+
+    // STEP 2: Prevent duplicate thinking transitions
+    if (event === "FIRST_TOKEN" && currentPhase === "thinking") {
+      logger.info("chat_service", "DUPLICATE_THINKING_IGNORED", {
+        event,
+        currentPhase
+      });
+      return;
     }
 
     const phaseTransition: Record<EventType, ChatPhase> = {
@@ -486,8 +455,8 @@ export class ChatService {
       MODEL_CALL_START: "thinking",
       FIRST_TOKEN: "streaming",
       STREAM_END: "finalizing",
-      FINALIZING: "done",
-      DONE: "idle"
+      FINALIZING: "idle",
+      ERROR: "error"
     };
 
     const newPhase = phaseTransition[event];
@@ -496,28 +465,41 @@ export class ChatService {
       return;
     }
 
+    // STEP 3: Lock lifecycle coupled to FSM
+    // Acquire lock on USER_SEND
+    if (event === "USER_SEND" && ownershipId) {
+      const lockAcquired = this.acquireRequestLock(this.sessionId, ownershipId);
+      if (!lockAcquired) {
+        logger.warn("chat_service", "lock_acquire_failed_on_user_send", { ownershipId });
+        return; // Block phase transition if lock cannot be acquired
+      }
+      // STEP 5: Set system-level execution ownership
+      this.activeExecutionId = ownershipId;
+    }
+    // Release lock on STREAM_END
+    if (event === "STREAM_END" && ownershipId) {
+      this.releaseRequestLock(this.sessionId, ownershipId);
+      // STEP 5: Clear system-level execution ownership
+      this.activeExecutionId = null;
+      this.activeStreamId = null;
+    }
+
     // START WATCHDOG when transitioning to streaming or finalizing
+    // STEP 6: Watchdog is observer-only - logs warnings but does NOT mutate state
     if (newPhase === "streaming" || newPhase === "finalizing") {
       this.streamingStartTime = Date.now();
       if (this.streamingWatchdogInterval) {
         clearInterval(this.streamingWatchdogInterval);
       }
       this.streamingWatchdogInterval = setInterval(() => {
-        const currentPhase = this.phaseManager?.getPhase() as ChatPhase ?? this.state.phase;
+        const currentPhase = this.phaseManager?.getPhase() as ChatPhase;
         const stuckDuration = this.streamingStartTime ? Date.now() - this.streamingStartTime : 0;
         if (currentPhase === "streaming" && stuckDuration > 60000) {
-          logger.warn("chat_service", "streaming_watchdog_force_reset", { stuckDuration, ownershipId });
-          this.setPhase("STREAM_END", ownershipId);
-        } else if (currentPhase === "finalizing" && stuckDuration > 10000) {
-          logger.warn("chat_service", "finalizing_watchdog_force_reset", { stuckDuration, ownershipId });
-          // Force transition to done when stuck in finalizing
-          this.phaseManager?.forceSetPhase("done" as ChatPhase);
-          this.state.phase = "done";
-          this.streamingStartTime = null;
-          if (this.streamingWatchdogInterval) {
-            clearInterval(this.streamingWatchdogInterval);
-            this.streamingWatchdogInterval = null;
-          }
+          logger.warn("chat_service", "streaming_watchdog_stuck_detected", { stuckDuration, ownershipId });
+          // Observer-only: log warning, do NOT mutate state
+        } else if (currentPhase === "finalizing" && stuckDuration > 2000) {
+          logger.warn("chat_service", "finalizing_watchdog_stuck_detected", { stuckDuration, ownershipId });
+          // Observer-only: log warning, do NOT mutate state
         }
       }, 5000); // Check every 5 seconds
     }
@@ -532,16 +514,15 @@ export class ChatService {
     // STEP 5: Phase recovery - on STREAM_END, force phase even if FSM rejects
     const isStreamEnd = event === "STREAM_END";
     
-    // PHASE 4: Safety before finalizing - force streaming if not already streaming
+    // PHASE 4: Safety before finalizing - force streaming if not already streaming, but skip if already idle or finalizing
     if (isStreamEnd) {
       const currentPhase = this.phaseManager?.getPhase() as ChatPhase;
-      if (currentPhase !== "streaming") {
+      if (currentPhase !== "streaming" && currentPhase !== "idle" && currentPhase !== "finalizing") {
         logger.warn("chat_service", "force_streaming_before_finalizing", {
           currentPhase,
           forcing_to: "streaming"
         });
         this.phaseManager?.forceSetPhase("streaming" as ChatPhase);
-        this.state.phase = "streaming"; // Keep in sync
       }
     }
     
@@ -562,12 +543,11 @@ export class ChatService {
     }
 
     // Keep ChatService state in sync for backward compatibility (read-only)
-    this.state.phase = newPhase;
+    // Phase sync removed - PhaseManager is ONLY source of truth
 
-    // Emit DONE event after transitioning to done to trigger idle transition
-    if (newPhase === "done") {
-      this.setPhase("DONE");
-    }
+    // Emit DONE event after transitioning to idle to trigger idle transition
+    // (DONE event removed - FINALIZING now directly transitions to idle)
+    // No action needed - transition complete
 
     // STEP 1: Guarantee execution end on STREAM_END - MUST happen ALWAYS
     if (isStreamEnd && this.executionCoordinator) {
@@ -627,10 +607,10 @@ export class ChatService {
     // Reset phase to idle using PhaseManager (strict FSM validation)
     if (this.phaseManager) {
       try {
-        // Try to transition through done → idle if possible
+        // Try to transition to idle
         const currentPhase = this.phaseManager.getPhase();
-        if (currentPhase === "done") {
-          this.phaseManager.setPhase("idle" as ChatPhase);
+        if (currentPhase === "idle") {
+          // Already idle, no action needed
         } else {
           // Log that we cannot force reset - let FSM handle naturally
           logger.warn("chat_service", "cannot_force_reset_fsm_violation", { 
@@ -643,7 +623,7 @@ export class ChatService {
       }
     }
     // Keep ChatService state in sync for backward compatibility
-    this.state.phase = "idle";
+    this.phaseManager?.forceSetPhase("idle");
     
     // End execution coordinator
     if (this.executionCoordinator) {
@@ -701,15 +681,11 @@ export class ChatService {
     
     // NEW: Use PhaseManager to reset to idle
     if (this.phaseManager) {
-      try {
-        this.phaseManager.setPhase("idle" as ChatPhase);
-      } catch (e) {
-        // Ignore errors during reset - force to idle
-        logger.warn("chat_service", "reset_to_idle_phase_error", { error: String(e), previousPhase });
-      }
+      // Use forceSetPhase for reset to bypass FSM validation
+      this.phaseManager.forceSetPhase("idle");
     }
     // Keep ChatService state in sync for backward compatibility (read-only)
-    this.state.phase = "idle";
+    this.phaseManager?.forceSetPhase("idle");
     this.state.currentStreamId = null;
     this.state.responseStart = undefined;
     this.state.responseEnd = undefined;
@@ -718,76 +694,7 @@ export class ChatService {
     this.notify();
   }
 
-  // PHASE 2: Handle STREAM_START event - PRIMARY TRIGGER for streaming phase
-  private handleStreamStart(data: StreamStartEventData): void {
-    const currentPhase = this.phaseManager?.getPhase() as ChatPhase;
-    
-    // PHASE 5: Add EVENT_RECEIVED logging with phase context
-    logger.info("chat_service", "EVENT_RECEIVED", {
-      type: "STREAM_START",
-      timestamp: Date.now(),
-      currentPhase,
-      backend_id: data.backend_id,
-      model: data.model
-    });
-    
-    // STEP 2.1: STREAM_START → streaming (MANDATORY - PRIMARY TRIGGER)
-    if (currentPhase === "thinking") {
-      logger.info("chat_service", "TRANSITION_ENFORCED", {
-        from: "thinking",
-        to: "streaming",
-        trigger: "STREAM_START",
-        backend_id: data.backend_id,
-        model: data.model
-      });
-      this.setPhase("FIRST_TOKEN", this.state.currentStreamId ?? undefined);
-    } else {
-      logger.warn("chat_service", "stream_start_unexpected_phase", {
-        currentPhase,
-        backend_id: data.backend_id,
-        model: data.model
-      });
-    }
-  }
-
-  // STEP 3: Hard reset function - clears stream, execution state, sets phase idle
-  private forceResetToIdle(): void {
-    const previousPhase = this.phaseManager?.getPhase() ?? this.state.phase;
-    
-    logger.warn("chat_service", "force_reset_to_idle_triggered", { previousPhase, timestamp: Date.now() });
-    
-    // FIX CATEGORY 4: Cleanup activeRequestLock to prevent orphaned locks
-    if (this.activeRequestLock) {
-      logger.warn("chat_service", "clearing_request_lock_in_force_reset", {
-        activeSession: this.activeRequestLock.sessionId,
-        activeRequest: this.activeRequestLock.requestId,
-        previousPhase
-      });
-      this.activeRequestLock = null;
-    }
-    
-    // Clear stream
-    this.state.currentStreamId = null;
-    
-    // Clear execution state
-    if (this.executionCoordinator && this.executionCoordinator.isActive()) {
-      const executionId = this.executionCoordinator.getCurrentExecutionId();
-      if (executionId) {
-        logger.info("chat_service", "force_reset_ending_execution", { executionId });
-        this.executionCoordinator.endExecution(executionId);
-      }
-    }
-    
-    // Set phase to idle directly (PhaseManager no longer supports forceSetPhase)
-    // This is a hard reset - we bypass FSM validation intentionally for error recovery
-    // Keep ChatService state in sync
-    this.state.phase = "idle";
-    this.state.responseStart = undefined;
-    this.state.responseEnd = undefined;
-    
-    logger.info("chat_service", "force_reset_to_idle_completed", { previousPhase, timestamp: Date.now() });
-    this.notify();
-  }
+  // handleStreamStart removed - WebSocket stream handlers removed (STEP 4)
 
   // Block-based assistant message methods
   private createAssistantMessage(sessionId: string, initialBlocks: Block[] = [], id?: string): AssistantMessage {
@@ -880,101 +787,11 @@ export class ChatService {
     this.notify();
   }
 
-  async sendMessage(text: string, forceContext?: string): Promise<void> {
-    if (!text.trim()) return;
-
-    try {
-      // FIX 4: Emit packet_created for UI → ChatService using NodeIds
-      this.emitPacketEvent('packet_created', NodeIds.UI, NodeIds.ChatService, 'request_packet');
-
-      // Stop any current delivery for this session to prioritize new message
-      if (this.activeDelivery && this.activeDelivery.sessionId === this.sessionId) {
-        logger.info("chat", "stopping_current_delivery_for_new_message", { sessionId: this.sessionId });
-        this.activeDelivery.stopRequested = true;
-        this.activeDelivery.controller.abort();
-      }
-
-      const now = new Date().toISOString();
-      const userId = newMessageId();
-      const assistantId = `${userId}-assistant`;
-
-      const userMsg: ChatMessage = {
-        id: userId,
-        sessionId: this.sessionId,
-        from: "user",
-        text: text,
-        createdAt: now,
-        sequenceNumber: this.getNextSequenceNumber(),
-        deliveryStatus: "delivered",
-        correlationId: userId
-      };
-
-      // Fallback to old method - MessageStore not working properly
-      let assistantMsg: AssistantMessage;
-      assistantMsg = this.createAssistantMessage(this.sessionId, [], assistantId);
-      this.state.messages = [...this.state.messages, userMsg];
-      this.state.assistantMessages = [...this.state.assistantMessages, assistantMsg];
-
-      this.notify();
-      observe("chat_send_attempt", { sessionId: this.sessionId, message: text });
-      await this.ensureSessionExists(this.sessionId);
-      await sessionDatabase.saveMessages(this.sessionId, [userMsg]);
-      await sessionDatabase.saveAssistantMessage(this.sessionId, assistantMsg);
-      
-      // FIX 4: Emit packet_moved for ChatService processing using NodeIds
-      this.emitPacketEvent('packet_moved', NodeIds.UI, NodeIds.ChatService, 'request_packet');
-      
-      void this.tryEmit(
-        "chat_user_message",
-        { message_id: userId, from: "user", correlation_id: userId },
-        this.sessionId
-      );
-      
-      // FIX 4: Emit packet_created for ChatService → Router using NodeIds
-      this.emitPacketEvent('packet_created', NodeIds.ChatService, NodeIds.Router, 'request_packet');
-      
-      const existing = (await sessionDatabase.listOutgoing()).filter((x) => x.sessionId === this.sessionId);
-      if (existing.length >= this.maxOutgoingPerSession) {
-        const errorMsg = `Queue limit reached (${this.maxOutgoingPerSession}). Wait for the current responses to finish.`;
-        logger.warn("chat", "Queue limit reached", { sessionId: this.sessionId });
-        tabErrorStore.mark("chat");
-        tabErrorStore.mark("logs");
-        // Update assistant message with error block
-        this.appendBlockToAssistantMessage(assistantId, { type: "final", content: `⚠️ ${errorMsg}` });
-        return;
-      }
-      await sessionDatabase.enqueueOutgoing({
-        id: userId,
-        sessionId: this.sessionId,
-        text,
-        searchEnabled: this.state.activeTools.search,
-        createdAt: now
-      });
-      
-      // FIX 4: Emit packet_arrived at Router using NodeIds
-      this.emitPacketEvent('packet_arrived', NodeIds.ChatService, NodeIds.Router, 'request_packet');
-      
-      void this.flushOutgoingQueue(forceContext ? { [userId]: forceContext } : undefined);
-    } catch (error) {
-      logger.error("chat", "send_message_failed", { error: String(error), sessionId: this.sessionId });
-      // Add error block to assistant message if it exists
-      const assistantId = `${this.state.messages[this.state.messages.length - 1]?.id || newMessageId()}-assistant`;
-      this.appendBlockToAssistantMessage(assistantId, {
-        type: "final",
-        content: `⚠️ Failed to send message: ${String(error)}`
-      });
-      // Transition to failed phase instead of resetToIdle
-      this.setPhase("ERROR" as EventType);
-      if (this.phaseManager) {
-        this.phaseManager.forceSetPhase("failed");
-      }
-    }
-  }
-
-  async sendMessageForSession(
-    sessionId: string,
+  // STEP 8: Single entry point for all requests - orchestrateRequest
+  private async orchestrateRequest(
     text: string,
-    options?: { searchEnabled?: boolean; forceContext?: string }
+    sessionId: string,
+    options?: { searchEnabled?: boolean; forceContext?: string; systemMessage?: string }
   ): Promise<string> {
     if (!text.trim()) return "";
 
@@ -1022,50 +839,114 @@ export class ChatService {
     if (this.sessionId === sessionId && this.messageStore) {
       this.messageStore.createMessage(userMsg);
       this.messageStore.createMessage(assistantMsg);
-      // Sync ChatService state from MessageStore for backward compatibility
-      this.state.messages = this.messageStore.getAllMessages();
-      this.state.assistantMessages = this.messageStore.getAllAssistantMessages();
-      this.notify();
-    } else if (this.sessionId === sessionId) {
-      // Fallback to old method
-      this.state.messages = [...this.state.messages, userMsg, assistantMsg];
-      this.notify();
     }
 
-    await this.ensureSessionExists(sessionId);
+    // Persist messages
     await sessionDatabase.saveMessages(sessionId, [userMsg, assistantMsg]);
-    void this.tryEmit(
-      "chat_user_message",
-      { message_id: userId, from: "user", correlation_id: userId },
-      sessionId
-    );
-    const existing = (await sessionDatabase.listOutgoing()).filter((x) => x.sessionId === sessionId);
-    if (existing.length >= this.maxOutgoingPerSession) {
-      const errorMsg = `Queue limit reached (${this.maxOutgoingPerSession}). Wait for the current responses to finish.`;
-      logger.warn("chat", "Queue limit reached", { sessionId });
-      tabErrorStore.mark("chat");
-      tabErrorStore.mark("logs");
-      await sessionDatabase.updateMessage(assistantId, { deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, refusal: true, text: "⚠️ Failed to generate response" });
-      if (this.sessionId === sessionId) {
-        this.state.messages = this.state.messages.map((m) => m.id === assistantId ? { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, refusal: true, text: "⚠️ Failed to generate response" } : m);
-        this.notify();
-      }
-      return userId;
-    }
+
+    // Add to outgoing queue using enqueueOutgoing
     await sessionDatabase.enqueueOutgoing({
       id: userId,
       sessionId,
       text,
-      searchEnabled: options?.searchEnabled ?? false,
+      searchEnabled: options?.searchEnabled ?? this.state.activeTools.search,
+      attempts: 0,
       createdAt: now
     });
-    void this.flushOutgoingQueue(options?.forceContext ? { [userId]: options.forceContext } : undefined);
+
+    // Trigger phase transition to USER_SEND
+    this.setPhase("USER_SEND", userId);
+
     return userId;
+  }
+
+  async sendMessage(text: string, systemMessage?: string): Promise<void> {
+    logger.info("chat_service", "send_message_called", { text, sessionId: this.sessionId, systemMessage });
+    
+    // Block sending if not idle or already sending (unless resuming)
+    const currentPhase = this.phaseManager?.getPhase() as ChatPhase;
+    if (currentPhase !== "idle" && !systemMessage) {
+      logger.warn("chat_service", "send_blocked_already_sending", { phase: currentPhase, text });
+      return;
+    }
+
+    try {
+      // FIX 4: Emit packet_created for UI → ChatService using NodeIds
+      this.emitPacketEvent('packet_created', NodeIds.UI, NodeIds.ChatService, 'request_packet');
+
+      // NEW: Cancel active streams and requests to prioritize new message
+      const { cancelledStream, cancelledRequest } = this.cancelActiveStream();
+      if (cancelledStream || cancelledRequest) {
+        logger.info("chat_service", "new_message_cancelled_previous", {
+          sessionId: this.sessionId,
+          cancelledStream,
+          cancelledRequest
+        });
+      }
+
+      // Stop any current delivery for this session to prioritize new message
+      if (this.activeDelivery && this.activeDelivery.sessionId === this.sessionId) {
+        logger.info("chat", "stopping_current_delivery_for_new_message", { sessionId: this.sessionId });
+        this.activeDelivery.stopRequested = true;
+        this.activeDelivery.controller.abort();
+      }
+
+      // STEP 8: Use single entry point orchestrateRequest
+      await this.orchestrateRequest(text, this.sessionId, {
+        searchEnabled: this.state.activeTools.search,
+        systemMessage
+      });
+      
+      // FIX 4: Emit packet_arrived at Router using NodeIds
+      this.emitPacketEvent('packet_arrived', NodeIds.ChatService, NodeIds.Router, 'request_packet');
+      
+      void this.flushOutgoingQueue();
+    } catch (error) {
+      logger.error("chat", "send_message_failed", { error: String(error), sessionId: this.sessionId });
+      // Add error block to assistant message if it exists
+      const assistantId = `${this.state.messages[this.state.messages.length - 1]?.id || newMessageId()}-assistant`;
+      this.appendBlockToAssistantMessage(assistantId, {
+        type: "final",
+        content: `⚠️ Failed to send message: ${String(error)}`
+      });
+      // Transition to failed phase instead of resetToIdle
+      this.setPhase("ERROR" as EventType);
+      if (this.phaseManager) {
+        this.phaseManager.forceSetPhase("error");
+      }
+    }
+  }
+
+  async sendMessageForSession(
+    sessionId: string,
+    text: string,
+    options?: { searchEnabled?: boolean; forceContext?: string }
+  ): Promise<string> {
+    // STEP 8: Use single entry point orchestrateRequest
+    return await this.orchestrateRequest(text, sessionId, options);
   }
 
   // Exposed for Tests
   getMessages() { return this.state.messages; }
   clear() { this.state.messages = []; this.notify(); }
+
+  // Cancel active stream and request (for new session or new message prioritization)
+  cancelActiveStream(): { cancelledStream: string | null, cancelledRequest: string | null } {
+    const cancelledStream = this.streamController.cancelActiveStream();
+    const cancelledRequest = this.requestController?.cancelActiveRequest() || null;
+    
+    if (cancelledStream || cancelledRequest) {
+      logger.info("chat_service", "active_stream_cancelled", { 
+        sessionId: this.sessionId,
+        cancelledStream,
+        cancelledRequest
+      });
+      // Reset sending state
+      this.state.currentStreamId = null;
+    }
+    
+    return { cancelledStream, cancelledRequest };
+  }
 
   // ADD 4: Tool → Model Bridge - ensures model is called after tool execution
   // Note: The agent loop already handles Tool → Model bridge by pushing tool results to conversation
@@ -1148,7 +1029,10 @@ export class ChatService {
 
     // PART 7: Ensure content is not empty - fallback if empty
     const currentAssistant = this.state.messages.find(m => m.id === assistantId);
-    if (!currentAssistant) return;
+    if (!currentAssistant) {
+      logger.error("chat_service", "finalization_failed_assistant_missing_after_reload", { assistantId });
+      return;
+    }
     
     if (!currentAssistant.text || currentAssistant.text.trim() === "") {
       logger.warn("chat_service", "finalization_empty_content_fallback", { assistantId });
@@ -1226,9 +1110,15 @@ export class ChatService {
   }
 
   stopByAssistantMessageId(assistantId: string) {
-    if (!assistantId) return;
+    if (!assistantId) {
+      logger.warn("chat_service", "stop_by_assistant_id_missing", { assistantId });
+      return;
+    }
     const msg = this.state.messages.find(m => m.id === assistantId);
-    if (!msg) return;
+    if (!msg) {
+      logger.warn("chat_service", "stop_by_assistant_id_message_not_found", { assistantId });
+      return;
+    }
     // If it's the active delivery, use controller
     if (this.activeDelivery && this.activeDelivery.assistantId === assistantId) {
       this.activeDelivery.stopRequested = true;
@@ -1424,7 +1314,7 @@ export class ChatService {
         return m;
       });
       if (this.sessionId === sessionId) {
-        this.setPhase("STREAM_END", assistantId);
+        this.finalizeRequest(assistantId, null);
       }
     }
   }
@@ -1437,7 +1327,7 @@ export class ChatService {
 
   private async flushOutgoingQueue(forceContexts?: Record<string, string>) {
     if (this.queueFlushInFlight) return;
-    const currentPhase = this.phaseManager?.getPhase() as ChatPhase ?? this.state.phase;
+    const currentPhase = this.phaseManager?.getPhase() as ChatPhase;
     // Only process if idle - ensures sequential processing, one message at a time
     if (currentPhase !== "idle") return;
     this.queueFlushInFlight = true;
@@ -1838,7 +1728,7 @@ export class ChatService {
       },
       onFinal: (output) => {
         finalOutput = output;
-        this.setPhase("STREAM_END", assistantId);
+        this.finalizeRequest(assistantId, null);
         // Remove text blocks to prevent duplication with final block
         const assistantMsg = this.state.assistantMessages.find(m => m.id === assistantId);
         if (assistantMsg) {
@@ -2540,14 +2430,16 @@ export class ChatService {
             const interp = interpretOutput(finalBuffer);
             finalClass = interp.classification;
             if (finalClass === "plain_text") {
-              this.appendToMessage(assistantId, finalBuffer);
+              // Use StreamController.appendChunk (authoritative)
+              this.streamController.appendChunk(streamId, finalBuffer);
               finalBuffer = "";
             } else {
               break;
             }
           }
         } else if (finalClass === "plain_text") {
-          this.appendToMessage(assistantId, chunk);
+          // Use StreamController.appendChunk (authoritative)
+          this.streamController.appendChunk(streamId, chunk);
         }
       }
     } catch (err) {
@@ -2557,7 +2449,8 @@ export class ChatService {
       const interp = interpretOutput(finalBuffer);
       finalClass = interp.classification;
       if (finalClass === "plain_text") {
-        this.appendToMessage(assistantId, finalBuffer);
+        // Use StreamController.appendChunk (authoritative)
+        this.streamController.appendChunk(streamId, finalBuffer);
       }
     }
     if (finalClass === "plain_text") {
@@ -2568,105 +2461,18 @@ export class ChatService {
     return "⚠️ Unable to generate a final summary. Please try again.";
   }
 
-  // PART 5: Controlled fallback generation - ensures proper phase transitions
-  private async generateFallbackResponse(sessionId: string, assistantId: string, id: string): Promise<void> {
-    logger.warn("chat_service", "fallback_triggered", { sessionId, assistantId });
+  // generateFallbackResponse removed - legacy fallback logic removed (STEP 9)
+  // Errors now handled via finalizeRequest()
 
-    // PART 5: Transition to finalizing before generating fallback
-    if (this.sessionId === sessionId) {
-      this.setPhase("STREAM_END", id);
-    }
-
-    const fallbackText = "Unable to generate response. Please try again.";
-
-    // PART 5: Commit fallback as assistant message
-    await sessionDatabase.updateMessage(assistantId, {
-      deliveryStatus: "delivered",
-      text: fallbackText,
-      isPartial: false,
-      refusal: true,
-      metrics: { finishReason: "fallback", responseTimeMs: Date.now() - (this.state.responseStart || Date.now()) } as any
-    });
-
-    await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered" });
-    await sessionDatabase.removeOutgoing(id);
-
-    if (this.sessionId === sessionId) {
-      this.state.messages = this.state.messages.map((m) => {
-        if (m.id === id) return { ...m, deliveryStatus: "delivered" };
-        if (m.id === assistantId) {
-          return { ...m, deliveryStatus: "delivered", text: fallbackText, isPartial: false, refusal: true };
-        }
-        return m;
-      });
-      this.notify();
-    }
-  }
-
-  private async generateRecoveryResponse(input: {
-    sessionId: string;
-    baseMessages: Array<{ role: string; content: string }>;
-    assistantId: string;
-    streamId: string;
-    controller: AbortController;
-    onMeta?: (meta: { model?: string }) => void;
-  }): Promise<string> {
-    const { sessionId, baseMessages, assistantId, streamId, controller, onMeta } = input;
-    const recoveryMessages = [
-      ...baseMessages,
-      { role: "user", content: "Provide a clean human-readable answer to the previous question. No JSON. No tool calls. Plain text only." },
-    ];
-    this.state.messages = this.state.messages.map((m) =>
-      m.id === assistantId ? { ...m, text: "", hasReceivedFirstToken: false } : m
-    );
-    this.notify();
-    // Buffer and classify recovery stream — Law #2: ALL model output must be interpreted
-    let recoveryBuffer = "";
-    let recoveryClass: OutputClass | null = null;
-    try {
-      for await (const chunk of knezClient.chatCompletionsStream(recoveryMessages as any, sessionId, { signal: controller.signal, onMeta })) {
-        if (streamId !== this.state.currentStreamId) break;
-        if (controller.signal.aborted) break;
-        if (recoveryClass === null) {
-          recoveryBuffer += chunk;
-          if (canClassifyEarly(recoveryBuffer)) {
-            const interp = interpretOutput(recoveryBuffer);
-            recoveryClass = interp.classification;
-            if (recoveryClass === "plain_text") {
-              this.appendToMessage(assistantId, recoveryBuffer);
-              recoveryBuffer = "";
-            } else {
-              break;
-            }
-          }
-        } else if (recoveryClass === "plain_text") {
-          this.appendToMessage(assistantId, chunk);
-        }
-      }
-    } catch (err) {
-      logger.warn("output_interpreter", "recovery_stream_failed", { error: String(err) });
-    }
-    if (recoveryClass === null && recoveryBuffer) {
-      const interp = interpretOutput(recoveryBuffer);
-      recoveryClass = interp.classification;
-      if (recoveryClass === "plain_text") {
-        this.appendToMessage(assistantId, recoveryBuffer);
-      }
-    }
-    if (recoveryClass === "plain_text") {
-      const accText = this.state.messages.find((m) => m.id === assistantId)?.text ?? "";
-      return accText.trim() || "⚠️ Unable to generate a proper response. Please try again.";
-    }
-    logger.warn("output_interpreter", "recovery_also_non_plain", { classification: recoveryClass, preview: recoveryBuffer.slice(0, 80) });
-    return "⚠️ Unable to generate a proper response. Please try again.";
-  }
+  // generateRecoveryResponse removed - legacy recovery logic removed (STEP 9)
+  // Errors now handled via finalizeRequest()
 
   private async deliverQueueItem(id: string, forceContext?: string) {
     const item = await sessionDatabase.getOutgoing(id);
     if (!item) return;
 
     // STEP 4: Hard lock check - reject if execution is already active
-    console.log('[ChatService] deliverQueueItem called', { id, sessionId: item.sessionId, currentPhase: this.state.phase });
+    console.log('[ChatService] deliverQueueItem called', { id, sessionId: item.sessionId, currentPhase: this.phaseManager?.getPhase() });
     if (this.executionCoordinator && this.executionCoordinator.isActive()) {
       const activeExecutionId = this.executionCoordinator.getCurrentExecutionId();
       const executionState = activeExecutionId ? this.executionCoordinator.getExecutionState(activeExecutionId) : null;
@@ -2682,30 +2488,22 @@ export class ChatService {
           startedAt: executionState.startedAt,
           ageMs: Date.now() - executionState.startedAt
         } : null,
-        currentPhase: this.state.phase,
+        currentPhase: this.phaseManager?.getPhase(),
         timestamp: Date.now()
       });
       await sessionDatabase.removeOutgoing(id);
       return;
     }
 
-    // STEP 3: Acquire request lock BEFORE starting execution to ensure exactly one startExecution per request
-    const lockAcquired = await this.acquireRequestLock(item.sessionId, id);
-    if (!lockAcquired) {
-      logger.warn("chat_service", "deliver_queue_item_lock_failed", { sessionId: item.sessionId, id });
-      await sessionDatabase.removeOutgoing(id);
-      return;
-    }
-
     // STEP 2: Prevent execution start in non-idle - force reset if needed
-    const currentPhase = this.phaseManager?.getPhase() as ChatPhase ?? this.state.phase;
+    const currentPhase = this.phaseManager?.getPhase() as ChatPhase;
     if (currentPhase !== "idle") {
       logger.warn("chat_service", "execution_start_in_non_idle_phase", { 
         currentPhase, 
         sessionId: item.sessionId, 
         id 
       });
-      this.forceResetToIdle();
+      this.resetToIdle();
     }
 
     // STEP 3: Start execution lifecycle tracking AFTER both locks are acquired
@@ -2717,7 +2515,7 @@ export class ChatService {
         executionId, 
         sessionId: item.sessionId, 
         id,
-        currentPhase: this.state.phase,
+        currentPhase: this.phaseManager?.getPhase(),
         timestamp: Date.now()
       });
     }
@@ -2751,9 +2549,8 @@ export class ChatService {
           // ERROR phase removed in strict FSM - errors logged instead
           logger.error("chat_service", "health_check_failed", { id, sessionId: item.sessionId });
         }
-        // TICKET-3: Always release request lock on early return
-        this.releaseRequestLock(item.sessionId, id);
-        this.resetToIdle();
+        // Single finalization point - correct order to prevent deadlocks
+        this.finalizeRequest(id, null);
         return;
       }
     } catch (healthErr) {
@@ -2777,9 +2574,8 @@ export class ChatService {
         });
         logger.error("chat_service", "health_check_exception", { id, sessionId: item.sessionId, error: String(healthErr) });
       }
-      // TICKET-3: Always release request lock on early return
-      this.releaseRequestLock(item.sessionId, id);
-      this.resetToIdle();
+      // Single finalization point - correct order to prevent deadlocks
+      this.finalizeRequest(id, null);
       return;
     }
 
@@ -2985,8 +2781,8 @@ export class ChatService {
           toolExecutionTime = Date.now() - toolLoopStart;
         } catch (mcpErr) {
           logger.warn("mcp_execution", "tool_execution_failed", { error: String(mcpErr) });
-          // PART 5: Use controlled fallback instead of recovery response
-          await this.generateFallbackResponse(sessionId, assistantId, id);
+          // STEP 9: Use finalizeRequest instead of fallback
+          this.finalizeRequest(id, null);
           throw new AppError("KNEZ_STREAM_EMPTY", "Tool execution failed");
         }
 
@@ -3037,7 +2833,7 @@ export class ChatService {
             return m;
           });
           this.state.currentStreamId = null;
-          this.setPhase("STREAM_END", id);
+          this.finalizeRequest(id, streamId);
         }
         // FIX B: Cleanup stream ownership
         this.streamController.end(assistantId, streamId!);
@@ -3086,14 +2882,14 @@ export class ChatService {
         // PART 5: If stream has already started, disable fallback stream
         if (this.streamStarted) {
           logger.warn("chat_service", "first_token_timeout_stream_already_started", { streamId, assistantId });
-          // PART 6: Finalize with fallback content instead of starting new stream
-          void this.generateFallbackResponse(sessionId, assistantId, id);
+          // STEP 9: Use finalizeRequest instead of fallback
+          this.finalizeRequest(id, streamId ?? null);
         } else {
           logger.warn("streaming", "first_token_timeout", { streamId, assistantId });
           // PART 6 FIX: Abort stream first to prevent KNEZ client fallback
           controller.abort();
-          // Then generate fallback response
-          void this.generateFallbackResponse(sessionId, assistantId, id);
+          // STEP 9: Use finalizeRequest instead of fallback
+          this.finalizeRequest(id, streamId ?? null);
         }
       }, 20000);
 
@@ -3134,7 +2930,8 @@ export class ChatService {
             outputClass = interp.classification;
             logger.info("streaming", "classification_decided", { streamId, outputClass });
             if (outputClass === "plain_text") {
-              this.appendToMessage(assistantId, interpretBuffer);
+              // Use StreamController.appendChunk (authoritative)
+              this.streamController.appendChunk(streamId, interpretBuffer);
               interpretBuffer = ""; // free buffer after flush
             } else {
               logger.info("streaming", "stream_stop_non_plain_text", { streamId, outputClass });
@@ -3142,7 +2939,8 @@ export class ChatService {
             }
           }
         } else if (outputClass === "plain_text") {
-          this.appendToMessage(assistantId, chunk);
+          // Use StreamController.appendChunk (authoritative)
+          this.streamController.appendChunk(streamId, chunk);
         }
       }
 
@@ -3155,7 +2953,8 @@ export class ChatService {
         const interp = interpretOutput(interpretBuffer);
         outputClass = interp.classification;
         if (outputClass === "plain_text") {
-          this.appendToMessage(assistantId, interpretBuffer);
+          // Use StreamController.appendChunk (authoritative)
+          this.streamController.appendChunk(streamId, interpretBuffer);
         }
       }
 
@@ -3165,7 +2964,9 @@ export class ChatService {
       if (outputClass === "plain_text") {
         processedText = this.sanitizeOutput(this.state.messages.find((m) => m.id === assistantId)?.text ?? "");
         if (!processedText.trim()) {
-          processedText = await this.generateRecoveryResponse({ sessionId, baseMessages: injectedMessages as any, assistantId, streamId: streamId!, controller, onMeta });
+          // STEP 9: Use finalizeRequest instead of recovery response
+          this.finalizeRequest(id, streamId ?? null);
+          throw new AppError("KNEZ_STREAM_EMPTY", "Empty response after processing");
         }
       } else if (outputClass === "tool_call" && ChatService.MCP_ENABLED) {
         const interp = interpretOutput(interpretBuffer);
@@ -3179,29 +2980,29 @@ export class ChatService {
             toolExecutionTime = Date.now() - toolLoopStart;
           } catch (mcpErr) {
             logger.warn("mcp_execution", "tool_execution_failed", { toolName: interp.toolCall.name, error: String(mcpErr) });
-            // PART 5: Use controlled fallback instead of recovery response
-            await this.generateFallbackResponse(sessionId, assistantId, id);
+            // STEP 9: Use finalizeRequest instead of fallback
+            this.finalizeRequest(id, streamId ?? null);
           }
         } else {
-          // PART 5: Use controlled fallback for invalid tool calls
-          await this.generateFallbackResponse(sessionId, assistantId, id);
+          // STEP 9: Use finalizeRequest instead of fallback
+          this.finalizeRequest(id, streamId ?? null);
         }
       } else if (outputClass === "system_payload") {
         logger.warn("output_interpreter", "system_payload_blocked", { preview: interpretBuffer.slice(0, 80) });
-        // PART 5: Use controlled fallback for system payloads
-        await this.generateFallbackResponse(sessionId, assistantId, id);
+        // STEP 9: Use finalizeRequest instead of fallback
+        this.finalizeRequest(id, streamId ?? null);
       } else {
         if (outputClass === "tool_call") {
           logger.info("output_interpreter", "tool_call_mcp_disabled", { preview: interpretBuffer.slice(0, 80) });
         }
-        // PART 5: Use controlled fallback for unhandled output classes
-        await this.generateFallbackResponse(sessionId, assistantId, id);
+        // STEP 9: Use finalizeRequest instead of fallback
+        this.finalizeRequest(id, streamId ?? null);
       }
 
       if (!processedText.trim()) {
         logger.error("response_guarantee", "empty_response_after_processing", { sessionId, assistantId });
-        // PART 5: Use controlled fallback for empty responses
-        await this.generateFallbackResponse(sessionId, assistantId, id);
+        // STEP 9: Use finalizeRequest instead of fallback
+        this.finalizeRequest(id, streamId ?? null);
       }
 
       const responseTimeMs = Date.now() - responseStart;
@@ -3233,7 +3034,7 @@ export class ChatService {
         });
         if (streamId === this.state.currentStreamId) {
           this.state.currentStreamId = null;
-          this.setPhase("STREAM_END", assistantId);
+          this.finalizeRequest(assistantId, streamId);
         }
       }
 
@@ -3356,15 +3157,9 @@ export class ChatService {
       }
     } finally {
       // PART 2: Guaranteed cleanup - always execute regardless of errors
+      // Single finalization point - correct order to prevent deadlocks
+      this.finalizeRequest(id, streamId ?? null);
 
-      // ADD 5: Release request lock
-      this.releaseRequestLock(item.sessionId, id);
-
-      // PART 2: Clear active stream ownership
-      if (streamId) {
-        this.streamController.end(assistantId || `${id}-assistant`, streamId);
-      }
-      
       // PART 2: Clear active stream tracking
       if (this.activeStream?.requestId === id) {
         logger.info("chat_service", "active_stream_cleared", { streamId: this.activeStream.streamId, assistantId: this.activeStream.assistantId });
@@ -3394,14 +3189,14 @@ export class ChatService {
       if (this.sessionId === sessionId) {
         if (streamId !== undefined && streamId === this.state.currentStreamId) {
           this.state.currentStreamId = null;
-          this.setPhase("STREAM_END", id);
+          this.finalizeRequest(id, streamId);
         }
         // PART 2: Ensure phase is not stuck in thinking/streaming
-        const currentPhase = this.phaseManager?.getPhase() as ChatPhase ?? this.state.phase;
+        const currentPhase = this.phaseManager?.getPhase() as ChatPhase;
         if (currentPhase === "thinking" || currentPhase === "streaming") {
           logger.warn("chat_service", "phase_stuck_resetting_to_stream_end", { currentPhase });
           // ERROR phase removed in strict FSM - transition to STREAM_END instead
-          this.setPhase("STREAM_END", id);
+          this.finalizeRequest(id, streamId ?? null);
         }
       }
     }
