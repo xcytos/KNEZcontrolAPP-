@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_updated": "2026-04-12T19:30:00Z",
+  "last_updated": "2026-04-26T00:00:00Z",
   "memory_files": [
     {
       "id": "mem-001",
@@ -124,6 +124,50 @@
       "status": "active"
     },
     {
+      "id": "mem-021",
+      "path": ".taqwin/memory/development/websocket-optimization-phase1-backend.md",
+      "domain": "development",
+      "type": "documentation",
+      "tags": ["websocket", "optimization", "backend", "heartbeat", "health-monitoring", "queuing", "backpressure", "batching", "ack", "cleanup"],
+      "size_bytes": null,
+      "created_at": "2026-04-26",
+      "last_modified": "2026-04-26",
+      "status": "active"
+    },
+    {
+      "id": "mem-022",
+      "path": ".taqwin/memory/development/websocket-optimization-phase3-security.md",
+      "domain": "development",
+      "type": "documentation",
+      "tags": ["websocket", "optimization", "security", "rate-limiting", "origin-validation", "message-validation", "ip-blocking"],
+      "size_bytes": null,
+      "created_at": "2026-04-26",
+      "last_modified": "2026-04-26",
+      "status": "active"
+    },
+    {
+      "id": "mem-023",
+      "path": ".taqwin/memory/development/websocket-optimization-phase4-validation.md",
+      "domain": "development",
+      "type": "documentation",
+      "tags": ["websocket", "optimization", "validation", "testing", "performance"],
+      "size_bytes": null,
+      "created_at": "2026-04-26",
+      "last_modified": "2026-04-26",
+      "status": "active"
+    },
+    {
+      "id": "mem-024",
+      "path": ".taqwin/memory/controlapp/websocket-optimization-phase2-frontend.md",
+      "domain": "controlapp",
+      "type": "documentation",
+      "tags": ["websocket", "optimization", "frontend", "reconnection", "queuing", "ack", "backpressure", "health-monitoring", "ordering", "persistence"],
+      "size_bytes": null,
+      "created_at": "2026-04-26",
+      "last_modified": "2026-04-26",
+      "status": "active"
+    },
+    {
       "id": "mem-011",
       "path": ".taqwin/memory/mcp/README.md",
       "domain": "mcp",
@@ -164,7 +208,7 @@
       "tags": ["index", "memory", "inventory"],
       "size_bytes": null,
       "created_at": "2026-04-12",
-      "last_modified": "2026-04-12",
+      "last_modified": "2026-04-26",
       "status": "active"
     },
     {
@@ -221,6 +265,50 @@
       "created_at": "2026-04-12",
       "last_modified": "2026-04-12",
       "status": "active"
+    },
+    {
+      "id": "mem-025",
+      "path": ".taqwin/history/R010.md",
+      "domain": "system",
+      "type": "history",
+      "tags": ["history", "websocket", "optimization", "backend", "phase1"],
+      "size_bytes": null,
+      "created_at": "2026-04-26",
+      "last_modified": "2026-04-26",
+      "status": "active"
+    },
+    {
+      "id": "mem-026",
+      "path": ".taqwin/history/R011.md",
+      "domain": "system",
+      "type": "history",
+      "tags": ["history", "websocket", "optimization", "frontend", "phase2"],
+      "size_bytes": null,
+      "created_at": "2026-04-26",
+      "last_modified": "2026-04-26",
+      "status": "active"
+    },
+    {
+      "id": "mem-027",
+      "path": ".taqwin/history/R012.md",
+      "domain": "system",
+      "type": "history",
+      "tags": ["history", "websocket", "optimization", "security", "phase3"],
+      "size_bytes": null,
+      "created_at": "2026-04-26",
+      "last_modified": "2026-04-26",
+      "status": "active"
+    },
+    {
+      "id": "mem-028",
+      "path": ".taqwin/history/R013.md",
+      "domain": "system",
+      "type": "history",
+      "tags": ["history", "websocket", "optimization", "validation", "phase4"],
+      "size_bytes": null,
+      "created_at": "2026-04-26",
+      "last_modified": "2026-04-26",
+      "status": "active"
     }
   ],
   "domains": {
@@ -236,12 +324,12 @@
     },
     "controlapp": {
       "description": "Control App memory",
-      "file_count": 1,
+      "file_count": 2,
       "status": "active"
     },
     "development": {
       "description": "Development memory",
-      "file_count": 2,
+      "file_count": 5,
       "status": "active"
     },
     "legacy": {
@@ -266,16 +354,16 @@
     },
     "system": {
       "description": "System memory files",
-      "file_count": 8,
+      "file_count": 12,
       "status": "active"
     }
   },
   "statistics": {
-    "total_files": 21,
+    "total_files": 29,
     "total_domains": 9,
     "legacy_files": 5,
-    "domain_files": 8,
-    "system_files": 8,
-    "last_index_update": "2026-04-12T19:30:00Z"
+    "domain_files": 11,
+    "system_files": 12,
+    "last_index_update": "2026-04-26T00:00:00Z"
   }
 }

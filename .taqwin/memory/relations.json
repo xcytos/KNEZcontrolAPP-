@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_updated": "2026-04-12T19:30:00Z",
+  "last_updated": "2026-04-26T00:00:00Z",
   "relations": [
     {
       "id": "rel-001",
@@ -369,6 +369,166 @@
       "type": "history_to_memory",
       "description": "R006.md links to mcp/ domain",
       "created_at": "2026-04-12"
+    },
+    {
+      "id": "rel-047",
+      "source": "TICKET-010",
+      "target": "mem-021",
+      "type": "ticket_to_memory",
+      "description": "TICKET-010 creates websocket-optimization-phase1-backend.md",
+      "created_at": "2026-04-26"
+    },
+    {
+      "id": "rel-048",
+      "source": "TICKET-010",
+      "target": "mem-024",
+      "type": "ticket_to_memory",
+      "description": "TICKET-010 creates websocket-optimization-phase2-frontend.md",
+      "created_at": "2026-04-26"
+    },
+    {
+      "id": "rel-049",
+      "source": "TICKET-010",
+      "target": "mem-022",
+      "type": "ticket_to_memory",
+      "description": "TICKET-010 creates websocket-optimization-phase3-security.md",
+      "created_at": "2026-04-26"
+    },
+    {
+      "id": "rel-050",
+      "source": "TICKET-010",
+      "target": "mem-023",
+      "type": "ticket_to_memory",
+      "description": "TICKET-010 creates websocket-optimization-phase4-validation.md",
+      "created_at": "2026-04-26"
+    },
+    {
+      "id": "rel-051",
+      "source": "TICKET-010",
+      "target": "mem-025",
+      "type": "ticket_to_history",
+      "description": "TICKET-010 creates R010.md (Phase 1)",
+      "created_at": "2026-04-26"
+    },
+    {
+      "id": "rel-052",
+      "source": "TICKET-010",
+      "target": "mem-026",
+      "type": "ticket_to_history",
+      "description": "TICKET-010 creates R011.md (Phase 2)",
+      "created_at": "2026-04-26"
+    },
+    {
+      "id": "rel-053",
+      "source": "TICKET-010",
+      "target": "mem-027",
+      "type": "ticket_to_history",
+      "description": "TICKET-010 creates R012.md (Phase 3)",
+      "created_at": "2026-04-26"
+    },
+    {
+      "id": "rel-054",
+      "source": "TICKET-010",
+      "target": "mem-028",
+      "type": "ticket_to_history",
+      "description": "TICKET-010 creates R013.md (Phase 4)",
+      "created_at": "2026-04-26"
+    },
+    {
+      "id": "rel-055",
+      "source": "mem-025",
+      "target": "mem-021",
+      "type": "history_to_memory",
+      "description": "R010.md links to websocket-optimization-phase1-backend.md",
+      "created_at": "2026-04-26"
+    },
+    {
+      "id": "rel-056",
+      "source": "mem-026",
+      "target": "mem-024",
+      "type": "history_to_memory",
+      "description": "R011.md links to websocket-optimization-phase2-frontend.md",
+      "created_at": "2026-04-26"
+    },
+    {
+      "id": "rel-057",
+      "source": "mem-027",
+      "target": "mem-022",
+      "type": "history_to_memory",
+      "description": "R012.md links to websocket-optimization-phase3-security.md",
+      "created_at": "2026-04-26"
+    },
+    {
+      "id": "rel-058",
+      "source": "mem-028",
+      "target": "mem-023",
+      "type": "history_to_memory",
+      "description": "R013.md links to websocket-optimization-phase4-validation.md",
+      "created_at": "2026-04-26"
+    },
+    {
+      "id": "rel-059",
+      "source": "mem-025",
+      "target": "mem-010",
+      "type": "history_to_memory",
+      "description": "R010.md links to development/ domain",
+      "created_at": "2026-04-26"
+    },
+    {
+      "id": "rel-060",
+      "source": "mem-026",
+      "target": "mem-009",
+      "type": "history_to_memory",
+      "description": "R011.md links to controlapp/ domain",
+      "created_at": "2026-04-26"
+    },
+    {
+      "id": "rel-061",
+      "source": "mem-021",
+      "target": "mem-024",
+      "type": "memory_to_memory",
+      "description": "Phase 1 backend links to Phase 2 frontend",
+      "created_at": "2026-04-26"
+    },
+    {
+      "id": "rel-062",
+      "source": "mem-024",
+      "target": "mem-022",
+      "type": "memory_to_memory",
+      "description": "Phase 2 frontend links to Phase 3 security",
+      "created_at": "2026-04-26"
+    },
+    {
+      "id": "rel-063",
+      "source": "mem-022",
+      "target": "mem-023",
+      "type": "memory_to_memory",
+      "description": "Phase 3 security links to Phase 4 validation",
+      "created_at": "2026-04-26"
+    },
+    {
+      "id": "rel-064",
+      "source": "mem-025",
+      "target": "mem-026",
+      "type": "history_link",
+      "description": "R010.md (Phase 1) links to R011.md (Phase 2)",
+      "created_at": "2026-04-26"
+    },
+    {
+      "id": "rel-065",
+      "source": "mem-026",
+      "target": "mem-027",
+      "type": "history_link",
+      "description": "R011.md (Phase 2) links to R012.md (Phase 3)",
+      "created_at": "2026-04-26"
+    },
+    {
+      "id": "rel-066",
+      "source": "mem-027",
+      "target": "mem-028",
+      "type": "history_link",
+      "description": "R012.md (Phase 3) links to R013.md (Phase 4)",
+      "created_at": "2026-04-26"
     }
   ],
   "relation_types": {
@@ -384,17 +544,17 @@
     "memory_to_history": "Memory file to history file link"
   },
   "statistics": {
-    "total_relations": 48,
+    "total_relations": 66,
     "domain_migration_relations": 5,
     "domain_definition_relations": 7,
     "domain_relationship_relations": 12,
     "system_link_relations": 1,
-    "ticket_to_memory_relations": 6,
-    "ticket_to_history_relations": 4,
-    "history_to_memory_relations": 4,
-    "history_link_relations": 2,
-    "memory_to_memory_relations": 1,
+    "ticket_to_memory_relations": 10,
+    "ticket_to_history_relations": 8,
+    "history_to_memory_relations": 8,
+    "history_link_relations": 5,
+    "memory_to_memory_relations": 4,
     "memory_to_history_relations": 1,
-    "last_update": "2026-04-12T19:30:00Z"
+    "last_update": "2026-04-26T00:00:00Z"
   }
 }

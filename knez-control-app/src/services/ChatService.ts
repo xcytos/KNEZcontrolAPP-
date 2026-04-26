@@ -31,6 +31,7 @@ import { realtimeEventHandler } from "./realtime/RealtimeEventHandler";
 import { realtimeToolExecutor } from "./realtime/RealtimeToolExecutor";
 import { webSocketClient } from "./websocket/WebSocketClient";
 import { ToolExecutionBridge } from "./chat/tools/ToolExecutionBridge";
+import { getConnectionManager } from "./connection/ConnectionManager";
 // StreamStartEventData import removed - WebSocket stream handlers removed (STEP 4)
 // STEP 3: Import EventBus and NodeRegistry for packet event emission
 import { getEventBus } from '../observability/eventBus/EventBus';
@@ -81,9 +82,12 @@ export class ChatService {
     pendingToolApproval: null,
     sequenceCounter: 0
   };
-  // Track WebSocket connection state
+  // Track WebSocket connection state (moved to ConnectionManager)
   private webSocketConnected = false;
   private sessionId: string;
+  
+  // ConnectionManager for dual-channel architecture (SSE + WebSocket)
+  private connectionManager = getConnectionManager();
   
   // NEW: Execution control layer
   private executionCoordinator: ExecutionCoordinator;
@@ -166,6 +170,11 @@ export class ChatService {
   // Public getter for phase - PhaseManager is ONLY source of truth
   getPhase(): ChatPhase {
     return this.phaseManager?.getPhase() as ChatPhase ?? "idle";
+  }
+  
+  // Public getter for connection state - ConnectionManager is source of truth
+  getConnectionState() {
+    return this.connectionManager.getConnectionState();
   }
 
   // Single finalization point - correct order to prevent deadlocks
@@ -695,7 +704,7 @@ export class ChatService {
     // STEP 2: Clear ALL execution state to prevent stuck states
     this.activeDelivery = null;
     this.activeExecutionId = null;
-    this.activeStreamId = null;
+    this.activeStream = null;
     this.state.currentStreamId = null;
     this.state.responseStart = undefined;
     this.state.responseEnd = undefined;

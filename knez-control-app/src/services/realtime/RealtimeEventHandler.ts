@@ -5,7 +5,8 @@
  * This service connects to the backend WebSocket and dispatches events to registered handlers.
  */
 
-import { webSocketClient, WebSocketMessage } from '../websocket/WebSocketClient';
+import { webSocketClient } from '../websocket/WebSocketClient';
+import { WebSocketMessage } from '../../domain/WebSocketProtocol';
 import { logger } from '../utils/LogService';
 import {
   RealtimeEvent,
