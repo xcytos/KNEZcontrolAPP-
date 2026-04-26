@@ -401,7 +401,9 @@ export class ChatService {
       this.state.messages = [];
       this.state.assistantMessages = [];
       this.state.sequenceCounter = 0;
-      this.setPhase("USER_SEND" as EventType, sessionId); // Use proper phase transition
+      // Don't set phase to USER_SEND on session change - stay in idle
+      // This prevents stuck "Sending prompt..." state on new session
+      // this.setPhase("USER_SEND" as EventType, sessionId); // REMOVED
       this.notify();
       
       const stored = localStorage.getItem(`chat_search_enabled:${sessionId}`);
@@ -690,7 +692,18 @@ export class ChatService {
     // STEP 1: Use PhaseManager.getPhase() as single source of truth
     const previousPhase = this.phaseManager?.getPhase() as ChatPhase;
     
-    // NEW: End any active execution in ExecutionCoordinator
+    // STEP 2: Clear ALL execution state to prevent stuck states
+    this.activeDelivery = null;
+    this.activeExecutionId = null;
+    this.activeStreamId = null;
+    this.state.currentStreamId = null;
+    this.state.responseStart = undefined;
+    this.state.responseEnd = undefined;
+    
+    // STEP 3: Clear finalized requests set to allow new requests
+    this.finalizedRequests.clear();
+    
+    // STEP 4: End any active execution in ExecutionCoordinator
     if (this.executionCoordinator && this.executionCoordinator.isActive()) {
       const executionId = this.executionCoordinator.getCurrentExecutionId();
       if (executionId) {
@@ -711,13 +724,10 @@ export class ChatService {
       }
     }
     
-    // NEW: Use PhaseManager to reset to idle
+    // STEP 5: Use PhaseManager to reset to idle
     if (this.phaseManager) {
       this.setPhase("STREAM_END" as EventType, this.sessionId); // Use proper phase transition
     }
-    this.state.currentStreamId = null;
-    this.state.responseStart = undefined;
-    this.state.responseEnd = undefined;
     
     logger.info("chat_service", "reset_to_idle_completed", { previousPhase, timestamp: Date.now() });
     this.notify();
@@ -1286,12 +1296,14 @@ export class ChatService {
   }
 
   async forceStopForSession(sessionId: string) {
+    logger.info("chat_service", "force_stop_for_session_called", { sessionId });
     let outgoingId: string | null = null;
     let assistantId: string | null = null;
 
     if (this.activeDelivery && this.activeDelivery.sessionId === sessionId) {
       outgoingId = this.activeDelivery.outgoingId;
       assistantId = this.activeDelivery.assistantId;
+      logger.info("chat_service", "force_stop_active_delivery", { outgoingId, assistantId });
       this.activeDelivery.stopRequested = true;
       this.activeDelivery.controller.abort();
     } else {
@@ -1304,10 +1316,16 @@ export class ChatService {
       if (pick) {
         outgoingId = pick.id;
         assistantId = `${pick.id}-assistant`;
+        logger.info("chat_service", "force_stop_queue_message", { outgoingId, assistantId, status: pick.status });
       }
     }
 
-    if (!outgoingId || !assistantId) return;
+    if (!outgoingId || !assistantId) {
+      logger.warn("chat_service", "force_stop_no_active_message", { sessionId });
+      // Even if no message found, reset to idle to clear any stuck state
+      this.resetToIdle();
+      return;
+    }
 
     // Clear ALL outgoing messages for this session to ensure queue priority
     const allOutgoing = await sessionDatabase.listOutgoing();
@@ -1352,6 +1370,10 @@ export class ChatService {
         this.finalizeRequest(assistantId, null);
       }
     }
+    
+    // CRITICAL: Reset to idle to clear all execution state
+    logger.info("chat_service", "force_stop_resetting_to_idle", { sessionId });
+    this.resetToIdle();
   }
 
   private async ensureSessionExists(sessionId: string) {
