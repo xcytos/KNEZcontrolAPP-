@@ -46,7 +46,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   // Use ChatService state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [assistantMessages, setAssistantMessages] = useState<AssistantMessage[]>([]);
-  const [phase, setPhase] = useState<"idle" | "sending" | "thinking" | "tool_running" | "streaming" | "finalizing" | "done" | "error" | "failed">("idle");
+  const [phase, setPhase] = useState<"idle" | "sending" | "thinking" | "tool_running" | "streaming" | "finalizing" | "done" | "error" | "failed" | "stopped">("idle");
   const [activeTools, setActiveTools] = useState<{ search: boolean }>({ search: false });
   const [searchProvider, setSearchProvider] = useState<"off" | "taqwin" | "proxy">("off");
   const [insertAboveIdx, setInsertAboveIdx] = useState<number | null>(null);
@@ -79,7 +79,9 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [terminalRunning, setTerminalRunning] = useState(false);
   const termChildRef = useRef<Child | null>(null);
   const termOutRef = useRef<HTMLDivElement | null>(null);
-  const [activeConnectionType, setActiveConnectionType] = useState<'sse' | 'websocket' | 'hybrid'>('hybrid');
+  const [activeConnectionType, setActiveConnectionType] = useState<'sse' | 'websocket'>('websocket');
+  const [showRetryWebSocket, setShowRetryWebSocket] = useState(false);
+  const [lastFailedAssistantId, setLastFailedAssistantId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -213,8 +215,17 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
         setActiveConnectionType(state.activeConnectionType);
       }
     };
+    const handleConnectionSwitch = (data: any) => {
+      if (isMounted && data.from === 'sse' && data.to === 'websocket') {
+        setShowRetryWebSocket(true);
+      }
+    };
     connectionManager.on('connection_change', handleConnectionChange);
-    return () => connectionManager.off('connection_change', handleConnectionChange);
+    connectionManager.on('connection_switch', handleConnectionSwitch);
+    return () => {
+      connectionManager.off('connection_change', handleConnectionChange);
+      connectionManager.off('connection_switch', handleConnectionSwitch);
+    };
   }, []);
 
   useEffect(() => {
@@ -350,6 +361,14 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     }
   }, [phase]);
 
+  // Track last failed assistant message ID for retry
+  useEffect(() => {
+    if (phase === "failed" && assistantMessages.length > 0) {
+      const lastAssistant = assistantMessages[assistantMessages.length - 1];
+      setLastFailedAssistantId(lastAssistant.id);
+    }
+  }, [phase, assistantMessages]);
+
   // CRITICAL: Reset isSending if phase is idle but isSending is still true (stuck state)
   useEffect(() => {
     if (phase === "idle" && isSending) {
@@ -373,6 +392,8 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     chatService.stopByAssistantMessageId(id);
     // CRITICAL: Reset isSending immediately to unblock UI
     setIsSending(false);
+    // Set phase to stopped to show stopped state in UI
+    setPhase("stopped");
   };
 
   // Add a global stop handler for when no specific message ID is available
@@ -380,6 +401,8 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     chatService.stopCurrentResponse();
     // CRITICAL: Reset isSending immediately to unblock UI
     setIsSending(false);
+    // Set phase to stopped to show stopped state in UI
+    setPhase("stopped");
   };
 
   const handleRetry = (id: string) => {
@@ -514,7 +537,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
 
   // P5.2 T6: AgentProgressBar — shows thinking/executing/generating stages based on phase
   const AgentProgressBar: React.FC<{
-    phase: "idle" | "sending" | "thinking" | "tool_running" | "streaming" | "finalizing" | "done" | "error" | "failed";
+    phase: "idle" | "sending" | "thinking" | "tool_running" | "streaming" | "finalizing" | "done" | "error" | "failed" | "stopped";
     messages: ChatMessage[];
   }> = ({ phase, messages }) => {
     const [isCollapsed, setIsCollapsed] = useState(false);
@@ -744,8 +767,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
               <span>•</span>
               <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
                 activeConnectionType === 'sse' ? 'bg-blue-900/30 text-blue-400 border border-blue-800' :
-                activeConnectionType === 'websocket' ? 'bg-green-900/30 text-green-400 border border-green-800' :
-                'bg-purple-900/30 text-purple-400 border border-purple-800'
+                'bg-green-900/30 text-green-400 border border-green-800'
               }`}>
                 {activeConnectionType.toUpperCase()}
               </span>
@@ -1049,7 +1071,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
             })()}
 
             {/* Prominent status indicator when AI is processing - hide when streaming has started to avoid duplicate icons */}
-            {(phase === "sending" || phase === "thinking" || phase === "tool_running" || phase === "failed") && (
+            {(phase === "sending" || phase === "thinking" || phase === "tool_running" || phase === "failed" || phase === "stopped") && (
               <div className="flex gap-3 max-w-full min-w-0 animate-in fade-in slide-in-from-bottom-2 duration-300">
                 <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-xs font-medium text-white shadow-lg shadow-indigo-500/20">
                   AI
@@ -1058,30 +1080,47 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                   <div className="flex items-center gap-2 mb-2">
                     <span className="text-xs font-medium text-zinc-400">Assistant</span>
                     <div className="flex items-center gap-2">
-                      {phase === "sending" && (
-                        <>
-                          <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-                          <span className="text-xs text-zinc-400">Sending prompt...</span>
-                        </>
-                      )}
-                      {phase === "thinking" && (
-                        <>
-                          <div className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
-                          <span className="text-xs text-zinc-400">ChatPane-Status-Thinking...</span>
-                        </>
-                      )}
-                      {phase === "failed" && (
-                        <>
-                          <div className="w-2 h-2 rounded-full bg-red-400" />
-                          <span className="text-xs text-zinc-400">Failed</span>
-                        </>
-                      )}
-                      {phase === "tool_running" && (
-                        <>
-                          <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-                          <span className="text-xs text-zinc-400">Executing tools...</span>
-                        </>
-                      )}
+                      {(() => {
+                        switch (phase) {
+                          case "sending":
+                            return (
+                              <>
+                                <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+                                <span className="text-xs text-zinc-400">Sending prompt...</span>
+                              </>
+                            );
+                          case "thinking":
+                            return (
+                              <>
+                                <div className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
+                                <span className="text-xs text-zinc-400">ChatPane-Status-Thinking...</span>
+                              </>
+                            );
+                          case "failed":
+                            return (
+                              <>
+                                <div className="w-2 h-2 rounded-full bg-red-400" />
+                                <span className="text-xs text-zinc-400">Failed</span>
+                              </>
+                            );
+                          case "stopped":
+                            return (
+                              <>
+                                <div className="w-2 h-2 rounded-full bg-gray-400" />
+                                <span className="text-xs text-zinc-400">Stopped</span>
+                              </>
+                            );
+                          case "tool_running":
+                            return (
+                              <>
+                                <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                                <span className="text-xs text-zinc-400">Executing tools...</span>
+                              </>
+                            );
+                          default:
+                            return null;
+                        }
+                      })()}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 text-sm text-zinc-400">
@@ -1089,7 +1128,23 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                     <span>
                       {phase === "sending" && "Your prompt has been received and is being sent to the AI model..."}
                       {phase === "thinking" && "ChatPane-Text-Thinking: The AI is analyzing your request and formulating a response..."}
-                      {phase === "failed" && "The request failed. Please try again."}
+                      {phase === "failed" && (
+                        <>
+                          The request failed. Please try again.
+                          {showRetryWebSocket && lastFailedAssistantId && (
+                            <button
+                              onClick={() => {
+                                setShowRetryWebSocket(false);
+                                void chatService.retryByAssistantMessageId(lastFailedAssistantId);
+                              }}
+                              className="ml-2 px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded"
+                            >
+                              Retry with WebSocket
+                            </button>
+                          )}
+                        </>
+                      )}
+                      {phase === "stopped" && "The request was stopped."}
                       {phase === "tool_running" && "The AI is executing tools to gather information..."}
                     </span>
                   </div>
