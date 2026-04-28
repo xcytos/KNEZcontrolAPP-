@@ -17,10 +17,10 @@ import { logger } from '../utils/LogService';
 export interface ConnectionState {
   ws: 'connected' | 'reconnecting' | 'disconnected' | 'dead';
   backend: 'healthy' | 'degraded' | 'unreachable';
-  model: 'loaded' | 'unloaded' | 'unknown';
+  model: 'loaded' | 'unloaded';
   lastConnectedAt?: number;
   reconnectAttempts: number;
-  activeConnectionType: 'sse' | 'websocket' | 'hybrid';
+  activeConnectionType: 'sse' | 'websocket';
 }
 
 export interface SSERequest {
@@ -40,8 +40,8 @@ export interface SystemState {
 
 export interface ModelStatus {
   modelId: string;
-  state: 'unknown' | 'loading' | 'loaded' | 'unloaded' | 'error';
-  ollamaState: 'unknown' | 'running' | 'stopped' | 'error';
+  state: 'unknown' | 'unknown' | 'loading' | 'loaded' | 'unloaded' | 'error';
+  ollamaState: 'unknown' | 'unknown' | 'running' | 'stopped' | 'error';
   loadedAt?: number;
   lastCheck: number;
   error?: string;
@@ -69,7 +69,7 @@ export class ConnectionManager {
       connection: {
         ws: 'disconnected',
         backend: 'unreachable',
-        model: 'unknown',
+        model: 'unloaded',
         reconnectAttempts: 0,
         activeConnectionType: 'websocket'
       },
@@ -411,14 +411,14 @@ export class ConnectionManager {
   /**
    * Get active connection type.
    */
-  getActiveConnectionType(): 'sse' | 'websocket' | 'hybrid' {
+  getActiveConnectionType(): 'sse' | 'websocket' {
     return this.state.connection.activeConnectionType;
   }
 
   /**
    * Set active connection type.
    */
-  setActiveConnectionType(type: 'sse' | 'websocket' | 'hybrid'): void {
+  setActiveConnectionType(type: 'sse' | 'websocket'): void {
     this.state.connection.activeConnectionType = type;
     this.emit('connection_change', this.state.connection);
   }

@@ -539,10 +539,22 @@ export class ChatService {
         const stuckDuration = this.streamingStartTime ? Date.now() - this.streamingStartTime : 0;
         if (currentPhase === "streaming" && stuckDuration > 60000) {
           logger.warn("chat_service", "streaming_watchdog_stuck_detected", { stuckDuration, ownershipId });
-          // Observer-only: log warning, do NOT mutate state
+          // Emergency reset if stuck > 60 seconds
+          if (stuckDuration > 90000 && this.phaseManager) {
+            logger.error("chat_service", "streaming_watchdog_emergency_reset", { stuckDuration, ownershipId });
+            this.phaseManager.emergencyReset();
+            if (this.requestController) this.requestController.reset();
+            if (this.streamController) this.streamController.reset();
+          }
         } else if (currentPhase === "finalizing" && stuckDuration > 2000) {
           logger.warn("chat_service", "finalizing_watchdog_stuck_detected", { stuckDuration, ownershipId });
-          // Observer-only: log warning, do NOT mutate state
+          // Emergency reset if stuck > 10 seconds
+          if (stuckDuration > 10000 && this.phaseManager) {
+            logger.error("chat_service", "finalizing_watchdog_emergency_reset", { stuckDuration, ownershipId });
+            this.phaseManager.emergencyReset();
+            if (this.requestController) this.requestController.reset();
+            if (this.streamController) this.streamController.reset();
+          }
         }
       }, 5000); // Check every 5 seconds
     }
@@ -557,16 +569,18 @@ export class ChatService {
     // STEP 5: Phase recovery - on STREAM_END, force phase even if FSM rejects
     const isStreamEnd = event === "STREAM_END";
     
-    // PHASE 4: Safety before finalizing - force streaming if not already streaming, but skip if already idle or finalizing
+    // PHASE 4: Safety before finalizing - allow STREAM_END from thinking or streaming states
+    // This handles error cases where stream ends before reaching streaming phase
     if (isStreamEnd) {
       const currentPhase = this.phaseManager?.getPhase() as ChatPhase;
-      if (currentPhase !== "streaming" && currentPhase !== "idle" && currentPhase !== "finalizing") {
+      const validPhases = ["thinking", "streaming", "idle", "finalizing"];
+      if (!validPhases.includes(currentPhase)) {
         logger.warn("chat_service", "invalid_phase_before_streaming", {
           currentPhase,
-          expected: "streaming"
+          expected: "thinking or streaming"
         });
-        // Let FSM handle invalid state - do not force
-        return;
+        // Log but allow transition to prevent deadlock
+        logger.info("chat_service", "stream_end_recovery_allowed", { currentPhase });
       }
     }
     
@@ -616,14 +630,13 @@ export class ChatService {
 
     // NEW: Track execution lifecycle with ExecutionCoordinator
     if (this.executionCoordinator) {
-      const executionId = this.executionCoordinator.getCurrentExecutionId();
-      const fromPhase = this.phaseManager?.getPhase() as ChatPhase;
+      const previousPhase = this.phaseManager?.getPhase() as ChatPhase;
       logger.info("chat_service", "phase_transition", {
         event,
-        from: fromPhase,
+        from: previousPhase,
         to: newPhase,
         ownershipId,
-        executionId
+        executionId: this.activeExecutionId
       });
     } else {
       const fromPhase = this.phaseManager?.getPhase() as ChatPhase;
@@ -893,6 +906,10 @@ export class ChatService {
       createdAt: now
     });
 
+    // Flush queue BEFORE phase transition (while still in idle phase)
+    // This ensures the message gets delivered immediately
+    void this.flushOutgoingQueue();
+
     // Trigger phase transition to USER_SEND
     this.setPhase("USER_SEND", userId);
 
@@ -939,7 +956,7 @@ export class ChatService {
       // FIX 4: Emit packet_arrived at Router using NodeIds
       this.emitPacketEvent('packet_arrived', NodeIds.ChatService, NodeIds.Router, 'request_packet');
       
-      void this.flushOutgoingQueue();
+      // Don't flush queue here - queue is flushed when phase transitions to idle in resetToIdle
     } catch (error) {
       logger.error("chat", "send_message_failed", { error: String(error), sessionId: this.sessionId });
       // Add error block to assistant message if it exists
@@ -1386,9 +1403,23 @@ export class ChatService {
       }
     }
     
-    // CRITICAL: Reset to idle to clear all execution state
-    logger.info("chat_service", "force_stop_resetting_to_idle", { sessionId });
-    this.resetToIdle();
+    // CRITICAL: Use forceSetPhase to bypass strict FSM during session switch
+    // This prevents "Strict FSM violation" errors when switching sessions during active execution
+    if (this.phaseManager) {
+      this.phaseManager.forceSetPhase("idle");
+    }
+    
+    // CRITICAL: Force-clear any leaked locks in RequestController
+    if (this.requestController) {
+      this.requestController.reset();
+    }
+    
+    // CRITICAL: Force-clear any stuck streams in StreamController
+    if (this.streamController) {
+      this.streamController.reset();
+    }
+    
+    logger.info("chat_service", "force_stop_fsm_bypass_complete", { sessionId });
   }
 
   private async ensureSessionExists(sessionId: string) {
@@ -1400,8 +1431,8 @@ export class ChatService {
   private async flushOutgoingQueue(forceContexts?: Record<string, string>) {
     if (this.queueFlushInFlight) return;
     const currentPhase = this.phaseManager?.getPhase() as ChatPhase;
-    // Only process if idle - ensures sequential processing, one message at a time
-    if (currentPhase !== "idle") return;
+    // Allow processing if idle or sending - message is enqueued in sending phase
+    if (currentPhase !== "idle" && currentPhase !== "sending") return;
     this.queueFlushInFlight = true;
     try {
       const now = Date.now();
@@ -1411,7 +1442,7 @@ export class ChatService {
         .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
 
       const currentSessionId = this.sessionId;
-      // Only process current session messages when phase is idle
+      // Only process current session messages when phase is idle or sending
       const current = currentSessionId ? eligible.filter((x) => x.sessionId === currentSessionId) : [];
       
       // Process only the oldest message from current session (sequential processing)
@@ -2567,9 +2598,9 @@ export class ChatService {
       return;
     }
 
-    // STEP 2: Prevent execution start in non-idle - force reset if needed
+    // STEP 2: Prevent execution start in non-idle or non-sending - force reset if needed
     const currentPhase = this.phaseManager?.getPhase() as ChatPhase;
-    if (currentPhase !== "idle") {
+    if (currentPhase !== "idle" && currentPhase !== "sending") {
       logger.warn("chat_service", "execution_start_in_non_idle_phase", { 
         currentPhase, 
         sessionId: item.sessionId, 
@@ -3169,7 +3200,7 @@ export class ChatService {
         });
         if (streamId === this.state.currentStreamId) {
           this.state.currentStreamId = null;
-          this.finalizeRequest(assistantId, streamId);
+          this.finalizeRequest(id, streamId);
         }
       }
 

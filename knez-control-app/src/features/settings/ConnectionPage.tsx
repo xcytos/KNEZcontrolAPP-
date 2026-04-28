@@ -55,7 +55,8 @@ export const ConnectionPage: React.FC<{
   onForceStart?: (force?: boolean) => void;
   onStop?: () => void;
 }> = ({ systemStatus, systemOutput, onForceStart, onStop }) => {
-  const [endpoint, setEndpoint] = useState("http://127.0.0.1:8000");
+  const knezPort = (import.meta.env.VITE_KNEZ_PORT as string) || "8000";
+  const [endpoint, setEndpoint] = useState(`http://127.0.0.1:${knezPort}`);
   const [health, setHealth] = useState<KnezHealthResponse | null>(null);
   const [modelState, setModelState] = useState<"unloaded" | "loading" | "loaded">("unloaded");
   const [modelLoadingProgress, setModelLoadingProgress] = useState(0);
@@ -658,7 +659,7 @@ export const ConnectionPage: React.FC<{
             status={ollamaStatus}
             metadata={{
               reachable: health?.ollama?.reachable ? "YES" : "NO",
-              endpoint: "localhost:11434",
+              endpoint: `localhost:${(import.meta.env.VITE_OLLAMA_PORT as string) || "11434"}`,
             }}
             actions={
               !health?.ollama?.reachable && isTauri && onForceStart ? (

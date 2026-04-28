@@ -63,7 +63,8 @@ export function useSystemOrchestrator(onReady?: () => void) {
     let ollamaAvailable = false;
     try {
       // First check if Ollama is already running via HTTP
-      const ollamaHttpCheck = await fetch("http://localhost:11434/api/tags", { signal: AbortSignal.timeout(2000) });
+      const ollamaPort = (import.meta.env.VITE_OLLAMA_PORT as string) || "11434";
+      const ollamaHttpCheck = await fetch(`http://localhost:${ollamaPort}/api/tags`, { signal: AbortSignal.timeout(2000) });
       if (ollamaHttpCheck.ok) {
         ollamaAvailable = true;
         setOutput((prev) => prev + "[System Check] ✓ Ollama is already running and reachable.");
@@ -188,7 +189,8 @@ export function useSystemOrchestrator(onReady?: () => void) {
       setOutput((prev) => prev + "[Ollama] Checking if Ollama is already running...");
       let ollamaAlreadyRunning = false;
       try {
-        const testResp = await fetch("http://localhost:11434/api/tags");
+        const ollamaPort = (import.meta.env.VITE_OLLAMA_PORT as string) || "11434";
+        const testResp = await fetch(`http://localhost:${ollamaPort}/api/tags`);
         if (testResp.ok) {
           ollamaAlreadyRunning = true;
           setOutput((prev) => prev + "[Ollama] ✓ Already running and reachable.\n");
@@ -234,7 +236,8 @@ export function useSystemOrchestrator(onReady?: () => void) {
         let ollamaReady = false;
         for (let i = 0; i < 20; i++) {
           try {
-            const testResp = await fetch("http://localhost:11434/api/tags");
+            const ollamaPort = (import.meta.env.VITE_OLLAMA_PORT as string) || "11434";
+            const testResp = await fetch(`http://localhost:${ollamaPort}/api/tags`);
             if (testResp.ok) {
               ollamaReady = true;
               const data = await testResp.json() as any;
@@ -290,7 +293,8 @@ export function useSystemOrchestrator(onReady?: () => void) {
         
         setOutput((prev) => prev + "[KNEZ] Configuration:");
         setOutput((prev) => prev + "[KNEZ]   Model: qwen2.5:7b-instruct-q4_K_M");
-        setOutput((prev) => prev + "[KNEZ]   Endpoint: http://127.0.0.1:8000");
+        const knezPort = (import.meta.env.VITE_KNEZ_PORT as string) || "8000";
+        setOutput((prev) => prev + `[KNEZ]   Endpoint: http://127.0.0.1:${knezPort}`);
         const knezPath = "C:\\Users\\syedm\\Downloads\\ASSETS\\controlAPP\\KNEZ";
         setOutput((prev) => prev + `[KNEZ]   Path: ${knezPath}`);
         
@@ -402,7 +406,8 @@ export function useSystemOrchestrator(onReady?: () => void) {
       setOutput((prev) => prev + "\n[3/3] Loading model...");
       setOutput((prev) => prev + "[Model] Sending warmup request to load model into memory...");
       try {
-        const warmupResp = await fetch("http://127.0.0.1:8000/system/load-model", {
+        const knezPort = (import.meta.env.VITE_KNEZ_PORT as string) || "8000";
+        const warmupResp = await fetch(`http://127.0.0.1:${knezPort}/system/load-model`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -450,12 +455,13 @@ export function useSystemOrchestrator(onReady?: () => void) {
      try {
        setOutput((prev) => prev + "\n[Stop] Stopping KNEZ and Ollama...");
        isLaunching.current = false; // Reset launch guard to allow new startup
+       const ollamaPort = (import.meta.env.VITE_OLLAMA_PORT as string) || "11434";
        const killScript =
          "$ErrorActionPreference='SilentlyContinue';" +
          "$k=(Get-NetTCPConnection -LocalPort 8000 -State Listen | Select-Object -First 1 -ExpandProperty OwningProcess);" +
          "if($k){Write-Host \"Killing KNEZ pid=$k\"; taskkill /PID $k /T /F | Out-Host}else{Write-Host \"No listener on 8000\"};" +
-         "$o=(Get-NetTCPConnection -LocalPort 11434 -State Listen | Select-Object -First 1 -ExpandProperty OwningProcess);" +
-         "if($o){Write-Host \"Killing Ollama pid=$o\"; taskkill /PID $o /T /F | Out-Host}else{Write-Host \"No listener on 11434\"}";
+         `$o=(Get-NetTCPConnection -LocalPort ${ollamaPort} -State Listen | Select-Object -First 1 -ExpandProperty OwningProcess);` +
+         `if($o){Write-Host \"Killing Ollama pid=$o\"; taskkill /PID $o /T /F | Out-Host}else{Write-Host \"No listener on ${ollamaPort}\"}`;
        const command = Command.create("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", killScript]);
        command.on("close", (data) => {
          setOutput((prev) => prev + `\n[Stop exited with code ${data.code}]`);

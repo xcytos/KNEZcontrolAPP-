@@ -214,7 +214,6 @@ pub fn run() {
             }
 
             app.manage(mcp_host::McpHostRuntime::new(app.handle().clone()));
-            app.handle().plugin(tauri_plugin_shell::init())?;
             app.handle().plugin(tauri_plugin_fs::init())?;
             app.handle().plugin(tauri_plugin_http::init())?;
             Ok(())
