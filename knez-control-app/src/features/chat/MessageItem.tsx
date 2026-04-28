@@ -129,19 +129,20 @@ const MessageItemInner: React.FC<{
       data-testid="message-bubble"
       data-role={msg.from}
       data-message-id={msg.id}
-      className={`max-w-[85%] rounded-2xl p-4 shadow-sm ${
+      className={`max-w-[85%] rounded-2xl p-4 shadow-sm my-3 ${
           msg.from === "user"
             ? "bg-zinc-800 text-zinc-100 rounded-tr-sm"
             : msg.refusal
-              ? "bg-red-900/10 border border-red-900/30 text-red-200 rounded-tl-sm"
+              ? "bg-red-950/40 border border-red-800/50 text-red-100 rounded-tl-sm"
               : (msg.from as string) === 'tool_execution'
-                ? "bg-transparent text-zinc-300 pl-0 pt-0 w-full max-w-full" // Transparent and full width for tool execution
-                : "bg-transparent text-zinc-300 pl-0 pt-0" // Transparent for assistant (Claude style)
+                ? "bg-transparent text-zinc-300 pl-0 pt-0 w-full max-w-full my-2" // Transparent and full width for tool execution
+                : "bg-transparent text-zinc-300 pl-0 pt-0 my-2" // Transparent for assistant (Claude style)
         }`}
       >
         {/* Header Label - hide for tool_execution to merge with response */}
         {(msg.from as string) !== 'tool_execution' && (
-          <div className="text-xs font-bold text-zinc-500 mb-1">
+          <div className={`text-xs font-bold mb-1 flex items-center gap-2 ${msg.refusal ? 'text-red-400' : 'text-zinc-500'}`}>
+             {msg.refusal && <span className="text-red-400">⚠️</span>}
              {(msg.from as string) === 'user' ? 'You' :
               (msg.from as string) === 'assistant' || (msg.from as string) === 'knez' ? 'Assistant' :
               (msg.from as string) === 'tool_result' ? 'Tool Result' :
