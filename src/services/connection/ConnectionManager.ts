@@ -71,7 +71,7 @@ export class ConnectionManager {
         backend: 'unreachable',
         model: 'unknown',
         reconnectAttempts: 0,
-        activeConnectionType: 'hybrid'
+        activeConnectionType: 'websocket'
       },
       activeSSERequests: new Map(),
       modelStatus: new Map(),
@@ -376,6 +376,9 @@ export class ConnectionManager {
 
       request.status = 'completed';
       this.state.activeSSERequests.delete(request.id);
+      // Set back to websocket when SSE completes
+      this.state.connection.activeConnectionType = 'websocket';
+      this.emit('connection_change', this.state.connection);
     } catch (error) {
       if ((error as Error).name !== 'AbortError') {
         request.status = 'error';

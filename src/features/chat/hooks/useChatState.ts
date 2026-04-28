@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { ChatMessage } from '../../../domain/DataContracts';
 
-type ChatPhase = "idle" | "sending" | "thinking" | "tool_running" | "streaming" | "finalizing" | "done" | "error";
+type ChatPhase = "idle" | "sending" | "thinking" | "tool_running" | "streaming" | "finalizing" | "done" | "error" | "failed" | "stopped";
 
 export const useChatState = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
