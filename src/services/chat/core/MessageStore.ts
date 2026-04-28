@@ -39,6 +39,8 @@ export class MessageStore {
       message.sequenceNumber = this.getNextSequenceNumber();
     }
     this.messages.set(message.id, message);
+    // Persist to database
+    void sessionDatabase.saveMessages(this.sessionId, [message]);
     logger.debug("message_store", "message_created", { messageId: message.id });
   }
 
@@ -99,6 +101,8 @@ export class MessageStore {
       sequenceNumber: sequenceNumber ?? this.getNextSequenceNumber()
     };
     this.assistantMessages.set(assistantId, msg);
+    // Persist to database
+    void sessionDatabase.saveAssistantMessage(this.sessionId, msg);
     logger.debug("message_store", "assistant_message_created", { assistantId });
     return msg;
   }
@@ -118,6 +122,8 @@ export class MessageStore {
       throw new Error(`Assistant message not found: ${id}`);
     }
     Object.assign(msg, updates);
+    // Persist to database
+    void sessionDatabase.saveAssistantMessage(this.sessionId, msg);
     logger.debug("message_store", "assistant_message_updated", { assistantId: id });
   }
 

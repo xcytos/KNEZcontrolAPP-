@@ -1503,7 +1503,7 @@ export class ChatService {
     const base = messages.filter((m) => m.id !== assistantPlaceholderId);
     const userMessages = base.filter((m) => m.from === "user");
     const currentUserIdx = userMessages.findIndex((m) => m.id === currentUserMessageId);
-    const sliceStart = Math.max(0, (currentUserIdx >= 0 ? currentUserIdx : userMessages.length) - 3);
+    const sliceStart = Math.max(0, (currentUserIdx >= 0 ? currentUserIdx : userMessages.length) - 20);
     const selectedUsers = userMessages.slice(sliceStart, currentUserIdx >= 0 ? currentUserIdx + 1 : userMessages.length);
 
     const selected: ChatMessage[] = [];
