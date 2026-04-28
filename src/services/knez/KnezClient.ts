@@ -123,11 +123,12 @@ type TaqwinResponse = {
 const PROFILE_STORAGE_KEY = "knez_connection_profile";
 const SESSION_STORAGE_KEY = "knez_session_id";
 
+const DEFAULT_KNEZ_PORT = import.meta.env.VITE_KNEZ_PORT || "8000";
 const DEFAULT_PROFILE: KnezConnectionProfile = {
   id: "local-default",
   type: "local",
   transport: "http",
-  endpoint: "http://127.0.0.1:8000",
+  endpoint: `http://127.0.0.1:${DEFAULT_KNEZ_PORT}`,
   trustLevel: "untrusted",
 };
 
@@ -149,57 +150,6 @@ function safeJsonParse<T>(raw: string): T | null {
   } catch {
     return null;
   }
-}
-
-async function healthViaShell(url: string, timeoutMs: number): Promise<KnezHealthResponse> {
-  const { Command } = await import("@tauri-apps/plugin-shell");
-  const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
-  const out = await Command.create("cmd", ["/d", "/s", "/c", "curl", "-sS", "--max-time", String(timeoutSec), url]).execute();
-  if (out.code === 0) {
-    const data = safeJsonParse<KnezHealthResponse>(out.stdout);
-    if (!data) {
-      throw new AppError("KNEZ_HEALTH_FAILED", `Health check invalid JSON (cmd)`, { url, stdout: out.stdout });
-    }
-    return data;
-  }
-  throw new AppError("KNEZ_HEALTH_FAILED", `Health check failed (cmd code ${out.code})`, { url, stderr: out.stderr });
-}
-
-async function postJsonViaShell<T>(url: string, payload: any, timeoutMs: number): Promise<T> {
-  const { Command } = await import("@tauri-apps/plugin-shell");
-  const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000));
-  const body = JSON.stringify(payload ?? {});
-  // Use a temp file or stdin if body is large? For now, stick to simple curl, but escape double quotes?
-  // Windows cmd argument escaping is tricky.
-  // Better approach: echo body | curl -d @- ...
-  // But pipe is tricky with Command.
-  // Alternative: write to temp file?
-  // Or just escape double quotes: " -> \"
-  const escapedBody = body.replace(/"/g, '\\"');
-  
-  const out = await Command.create("cmd", [
-    "/d",
-    "/s",
-    "/c",
-    "curl",
-    "-sS",
-    "--max-time",
-    String(timeoutSec),
-    "-H",
-    "Content-Type: application/json",
-    "-d",
-    escapedBody,
-    url,
-  ]).execute();
-  
-  if (out.code === 0) {
-    const data = safeJsonParse<T>(out.stdout);
-    if (!data) {
-      throw new AppError("KNEZ_FETCH_FAILED", `Shell POST invalid JSON (cmd): ${url}`, { url, stdout: out.stdout });
-    }
-    return data;
-  }
-  throw new AppError("KNEZ_FETCH_FAILED", `Shell POST failed (cmd code ${out.code})`, { url, stderr: out.stderr });
 }
 
 const testFailOnce = new Set<string>();
@@ -265,7 +215,8 @@ export class KnezClient {
 
   private async fetchAndLogModels(): Promise<void> {
     try {
-      const resp = await fetch("http://localhost:11434/api/tags");
+      const ollamaPort = (import.meta.env.VITE_OLLAMA_PORT as string) || "11434";
+      const resp = await fetch(`http://localhost:${ollamaPort}/api/tags`);
       if (resp.ok) {
         const data = await resp.json() as any;
         const models = data?.models ?? [];
@@ -392,18 +343,6 @@ export class KnezClient {
       logger.info("knez_client", "Session created by backend", { sessionId });
       return sessionId;
     } catch (e: any) {
-      if (isTauriRuntime()) {
-        try {
-          const data = await postJsonViaShell<{ session_id: string }>(url, { agent_id: null }, 5000);
-          const sessionId = data.session_id;
-          this.setSessionId(sessionId);
-          logger.info("knez_client", "Session created by backend (shell)", { sessionId });
-          return sessionId;
-        } catch (shellErr: any) {
-          if (shellErr instanceof AppError) throw shellErr;
-          throw new AppError("KNEZ_SESSION_CREATE_FAILED", `Failed to create session: ${url}`, { url, reason: String(shellErr?.message ?? shellErr) });
-        }
-      }
       if (e instanceof AppError) throw e;
       throw new AppError("KNEZ_SESSION_CREATE_FAILED", `Failed to create session: ${url}`, { url, reason: String(e?.message ?? e) });
     }
@@ -436,16 +375,6 @@ export class KnezClient {
     } catch (e: any) {
       if (e?.name === "AbortError") {
         throw new AppError("KNEZ_TIMEOUT", `Health check timed out: ${url}`, { timeoutMs, url });
-      }
-      if (isTauriRuntime()) {
-        try {
-          const data = await healthViaShell(url, timeoutMs);
-          logger.debugThrottled("knez_health_ok_shell", 180000, "knez_client", "Health check passed (shell)", { backends: data.backends.length });
-          return data;
-        } catch (shellErr: any) {
-          if (shellErr instanceof AppError) throw shellErr;
-          throw new AppError("KNEZ_FETCH_FAILED", `Failed to fetch: ${url}`, { url, reason: String(shellErr?.message ?? shellErr) });
-        }
       }
       throw new AppError("KNEZ_FETCH_FAILED", `Failed to fetch: ${url}`, { url, reason: String(e?.message ?? e) });
     } finally {
@@ -999,11 +928,7 @@ export class KnezClient {
         }
         raw = (await resp.json()) as any;
       } catch (e: any) {
-        if (isTauriRuntime()) {
-          raw = await postJsonViaShell<any>(url, payload, 30000);
-        } else {
-          throw e;
-        }
+        throw e;
       }
       if (raw && typeof raw.error === "string") {
         const err = raw as KnezErrorResponse;

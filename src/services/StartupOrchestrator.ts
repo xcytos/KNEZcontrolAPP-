@@ -29,8 +29,9 @@ export class StartupOrchestrator {
   private maxRetries: number = 30; // 30 seconds max wait
   private retryCount: number = 0;
 
-  private constructor(backendUrl: string = 'http://127.0.0.1:8000') {
-    this.backendUrl = backendUrl;
+  private constructor(backendUrl?: string) {
+    const knezPort = (import.meta.env.VITE_KNEZ_PORT as string) || "8000";
+    this.backendUrl = backendUrl || `http://127.0.0.1:${knezPort}`;
   }
 
   static getInstance(backendUrl?: string): StartupOrchestrator {

@@ -48,7 +48,8 @@ export const ConnectionSettings: React.FC<{
   systemOutput: string;
   onForceStart?: () => void;
 }> = ({ onClose, systemStatus, systemOutput, onForceStart }) => {
-  const [endpoint, setEndpoint] = useState("http://127.0.0.1:8000");
+  const knezPort = (import.meta.env.VITE_KNEZ_PORT as string) || "8000";
+  const [endpoint, setEndpoint] = useState(`http://127.0.0.1:${knezPort}`);
   const [status, setStatus] = useState<"idle" | "checking" | "healthy" | "failed">("idle");
   const [health, setHealth] = useState<KnezHealthResponse | null>(null);
   const [mcp, setMcp] = useState<McpRegistrySnapshot | null>(null);

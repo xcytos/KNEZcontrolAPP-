@@ -291,9 +291,10 @@ let eventBusInstance: EventBus | null = null;
 
 export function getEventBus(config?: EventBusConfig): EventBus {
   if (!eventBusInstance) {
-    // PHASE 6: Use default config with correct WebSocket URL
+    // PHASE 6: Use default config with configurable WebSocket URL
+    const knezPort = (import.meta.env.VITE_KNEZ_PORT as string) || "8000";
     const defaultConfig: EventBusConfig = {
-      wsUrl: 'ws://127.0.0.1:8000/ws',
+      wsUrl: `ws://127.0.0.1:${knezPort}/ws`,
       reconnectInterval: 3000,
       maxReconnectAttempts: 5
     };

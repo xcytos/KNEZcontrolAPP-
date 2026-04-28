@@ -133,9 +133,10 @@ function AppContent() {
 
   useEffect(() => {
     const endpoint = knezClient.getProfile().endpoint;
+    const knezPort = (import.meta.env.VITE_KNEZ_PORT as string) || "8000";
     const isLocal =
-      endpoint.includes("localhost:8000") ||
-      endpoint.includes("127.0.0.1:8000") ||
+      endpoint.includes(`localhost:${knezPort}`) ||
+      endpoint.includes(`127.0.0.1:${knezPort}`) ||
       endpoint.includes("localhost:8001") ||
       endpoint.includes("127.0.0.1:8001");
     const w = window as any;

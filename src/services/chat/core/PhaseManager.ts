@@ -118,4 +118,16 @@ export class PhaseManager {
       to: "idle"
     });
   }
+
+  // Emergency reset - bypasses all validation for deadlock recovery
+  emergencyReset(): void {
+    const previousPhase = this.currentPhase;
+    this.currentPhase = "idle";
+    logger.error("phase_manager", "emergency_reset_triggered", { 
+      sessionId: this.sessionId, 
+      from: previousPhase, 
+      to: "idle",
+      reason: "deadlock_recovery"
+    });
+  }
 }

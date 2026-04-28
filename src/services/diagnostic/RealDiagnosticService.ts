@@ -27,8 +27,9 @@ interface LayerDiagnosticSummary {
 export class RealDiagnosticService {
   private baseUrl: string;
   
-  constructor(baseUrl: string = 'http://127.0.0.1:8000') {
-    this.baseUrl = baseUrl;
+  constructor(baseUrl?: string) {
+    const knezPort = (import.meta.env.VITE_KNEZ_PORT as string) || "8000";
+    this.baseUrl = baseUrl || `http://127.0.0.1:${knezPort}`;
   }
 
   /**

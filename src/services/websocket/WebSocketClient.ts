@@ -378,9 +378,10 @@ export class WebSocketClient {
   }
 
   private getWebSocketUrl(sessionId: string): string {
-    // STEP 1: Use backend URL directly (port 8000) instead of frontend dev server
+    // STEP 1: Use backend URL directly with configurable port instead of hardcoded 8000
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = '127.0.0.1:8000'; // Backend server, not frontend dev server
+    const knezPort = (import.meta.env.VITE_KNEZ_PORT as string) || "8000";
+    const host = `127.0.0.1:${knezPort}`; // Backend server, not frontend dev server
 
     return `${protocol}//${host}/ws/${sessionId}`;
   }
