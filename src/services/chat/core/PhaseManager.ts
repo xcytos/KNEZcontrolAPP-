@@ -53,13 +53,12 @@ export class PhaseManager {
     }
 
     if (!validTransitions.includes(newPhase)) {
-      logger.warn("phase_manager", "INVALID_TRANSITION_IGNORED", { 
+      logger.error("phase_manager", "INVALID_TRANSITION", { 
         sessionId: this.sessionId, 
         from: this.currentPhase, 
-        to: newPhase,
-        error: "Strict FSM violation - transition ignored"
+        to: newPhase
       });
-      return false; // Return false instead of throwing
+      throw new Error(`FSM violation: ${this.currentPhase} → ${newPhase}`);
     }
 
     const previousPhase = this.currentPhase;

@@ -13,8 +13,9 @@ export class MessageStore {
   private sessionId: string;
   private sequenceCounter: number = 0;
 
-  constructor(sessionId: string) {
+  constructor(sessionId: string, initialSequenceCounter: number = 0) {
     this.sessionId = sessionId;
+    this.sequenceCounter = initialSequenceCounter;
   }
 
   async load(): Promise<void> {
@@ -49,9 +50,9 @@ export class MessageStore {
     return this.assistantMessages.get(id);
   }
 
-  getAllMessages(): ChatMessage[] {
-    return Array.from(this.messages.values()).sort((a, b) => {
-      const timeDiff = Date.parse(a.createdAt) - Date.parse(b.createdAt);
+  getAllAssistantMessages(): AssistantMessage[] {
+    return Array.from(this.assistantMessages.values()).sort((a, b) => {
+      const timeDiff = a.createdAt - b.createdAt;
       // Use sequenceNumber as secondary sort for deterministic ordering when timestamps are close (within 1 second)
       if (Math.abs(timeDiff) < 1000) {
         return (a.sequenceNumber || 0) - (b.sequenceNumber || 0);
@@ -60,9 +61,9 @@ export class MessageStore {
     });
   }
 
-  getAllAssistantMessages(): AssistantMessage[] {
-    return Array.from(this.assistantMessages.values()).sort((a, b) => {
-      const timeDiff = a.createdAt - b.createdAt;
+  getAllMessages(): ChatMessage[] {
+    return Array.from(this.messages.values()).sort((a, b) => {
+      const timeDiff = Date.parse(a.createdAt) - Date.parse(b.createdAt);
       // Use sequenceNumber as secondary sort for deterministic ordering when timestamps are close (within 1 second)
       if (Math.abs(timeDiff) < 1000) {
         return (a.sequenceNumber || 0) - (b.sequenceNumber || 0);
@@ -87,7 +88,7 @@ export class MessageStore {
     logger.debug("message_store", "message_updated", { messageId: id });
   }
 
-  createAssistantMessage(assistantId: string, initialBlocks: Block[] = []): AssistantMessage {
+  createAssistantMessage(assistantId: string, initialBlocks: Block[] = [], sequenceNumber?: number): AssistantMessage {
     const msg: AssistantMessage = {
       id: assistantId,
       sessionId: this.sessionId,
@@ -95,7 +96,7 @@ export class MessageStore {
       state: MessageState.CREATED,
       blocks: initialBlocks,
       createdAt: Date.now(),
-      sequenceNumber: this.getNextSequenceNumber()
+      sequenceNumber: sequenceNumber ?? this.getNextSequenceNumber()
     };
     this.assistantMessages.set(assistantId, msg);
     logger.debug("message_store", "assistant_message_created", { assistantId });

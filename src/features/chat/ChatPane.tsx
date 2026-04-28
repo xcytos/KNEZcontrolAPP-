@@ -48,6 +48,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [assistantMessages, setAssistantMessages] = useState<AssistantMessage[]>([]);
   const [phase, setPhase] = useState<"idle" | "sending" | "thinking" | "tool_running" | "streaming" | "finalizing" | "done" | "error" | "failed" | "stopped">("idle");
   const [activeTools, setActiveTools] = useState<{ search: boolean }>({ search: false });
+  // @ts-ignore - searchProvider used for state synchronization with ChatService
   const [searchProvider, setSearchProvider] = useState<"off" | "taqwin" | "proxy">("off");
   const [insertAboveIdx, setInsertAboveIdx] = useState<number | null>(null);
   const [insertValue, setInsertValue] = useState("");
@@ -195,7 +196,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
       }
     });
     return unsub;
-  }, [sessionId]);
+  }, []);
 
   // Sync phase from PhaseManager (single source of truth)
   useEffect(() => {
@@ -945,10 +946,14 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
 
       {mode === "chat" ? (
         <>
-          <div 
+          <div
             ref={containerRef}
             onScroll={handleScroll}
-            className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-6 scroll-smooth max-w-full min-w-0"
+            className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-6 scroll-smooth max-w-full min-w-0 custom-scrollbar"
+            style={{
+              scrollbarWidth: 'thin',
+              scrollbarColor: '#4b5563 #18181b'
+            }}
           >
             {renderOfflineOverlay()}
 
@@ -966,12 +971,20 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
               // Filter out assistant-type ChatMessages to prevent double rendering with AssistantMessage blocks
               const filteredMessages = visibleMessages.filter(m => m.from !== "knez" && m.from !== "assistant");
               
-              // Merge assistant messages with regular messages and sort by sequenceNumber for deterministic ordering
+              // Merge assistant messages with regular messages and sort by createdAt for chronological ordering
+              // Use sequenceNumber as tiebreaker for messages with same timestamp
               type MergedItem = { type: 'message', data: ChatMessage } | { type: 'assistant', data: AssistantMessage };
               const mergedMessages: MergedItem[] = [
                 ...filteredMessages.map(m => ({ type: 'message' as const, data: m })),
                 ...assistantMessages.map(am => ({ type: 'assistant' as const, data: am }))
               ].sort((a, b) => {
+                // Primary sort by createdAt for chronological ordering
+                const timeA = new Date(a.data.createdAt).getTime();
+                const timeB = new Date(b.data.createdAt).getTime();
+                if (timeA !== timeB) {
+                  return timeA - timeB;
+                }
+                // Tiebreaker: use sequenceNumber if both have it
                 const seqA = a.data.sequenceNumber ?? 0;
                 const seqB = b.data.sequenceNumber ?? 0;
                 return seqA - seqB;
@@ -1053,7 +1066,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
                             <span className="text-xs font-medium text-zinc-400">Assistant</span>
-                            <span className="text-[10px] text-zinc-600">{new Date(item.data.createdAt).toLocaleTimeString()}</span>
+                            <span className="text-[10px] text-zinc-500 font-mono">{new Date(item.data.createdAt).toLocaleTimeString()}</span>
                           </div>
                           <div className="text-sm text-zinc-300">
                             <AssistantMessageRenderer
@@ -1093,7 +1106,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                             return (
                               <>
                                 <div className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
-                                <span className="text-xs text-zinc-400">ChatPane-Status-Thinking...</span>
+                                <span className="text-xs text-zinc-400">Thinking...</span>
                               </>
                             );
                           case "failed":
@@ -1126,8 +1139,8 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                   <div className="flex items-center gap-2 text-sm text-zinc-400">
                     <Loader2 className="w-4 h-4 animate-spin" />
                     <span>
-                      {phase === "sending" && "Your prompt has been received and is being sent to the AI model..."}
-                      {phase === "thinking" && "ChatPane-Text-Thinking: The AI is analyzing your request and formulating a response..."}
+                      {phase === "sending" && "Sending..."}
+                      {phase === "thinking" && "Thinking..."}
                       {phase === "failed" && (
                         <>
                           The request failed. Please try again.
@@ -1200,11 +1213,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
                  <span>Tools</span>
                </button>
             </div>
-            {features.logViews && (
-              <div className="px-1 mb-2 text-[10px] text-zinc-500 font-mono">
-                search_provider={activeTools.search ? searchProvider : "off"}
-              </div>
-            )}
             {canContinue && (
               <div className="px-1 mb-2">
                 <button

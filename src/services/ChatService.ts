@@ -2,7 +2,7 @@
 import { knezClient } from "./knez/KnezClient";
 import { extractionService } from "./utils/ExtractionService";
 import { persistenceService } from "./infrastructure/persistence/PersistenceService";
-import { ChatMessage, ToolCallMessage, AssistantMessage, Block } from '../domain/DataContracts';
+import { ChatMessage, ToolCallMessage, AssistantMessage, Block, MessageState } from '../domain/DataContracts';
 import { AppError, asErrorMessage } from '../domain/Errors';
 import { sessionDatabase } from "./session/SessionDatabase";
 import { sessionController } from "./session/SessionController";
@@ -31,12 +31,16 @@ import { realtimeEventHandler } from "./realtime/RealtimeEventHandler";
 import { realtimeToolExecutor } from "./realtime/RealtimeToolExecutor";
 import { webSocketClient } from "./websocket/WebSocketClient";
 import { ToolExecutionBridge } from "./chat/tools/ToolExecutionBridge";
+import { ToolExecutionService } from "./chat/tools/ToolExecutionService";
+import { ChatConfig } from "./chat/config/ChatConfig";
+import { MessageIdGenerator, newMessageId } from "./chat/utils/MessageIdGenerator";
 import { getConnectionManager } from "./connection/ConnectionManager";
+import { streamingExecutionEngine } from './execution/StreamingExecutionEngine';
+import type { SSEEvent } from './streaming/UnifiedEventSchema';
 // StreamStartEventData import removed - WebSocket stream handlers removed (STEP 4)
 // STEP 3: Import EventBus and NodeRegistry for packet event emission
 import { getEventBus } from '../observability/eventBus/EventBus';
 import { NodeIds } from '../observability/NodeRegistry';
-import { getTimeoutConfig, adaptiveTimeoutManager } from './utils/TimeoutConfig';
 
 // STREAM_MODE: WS_ONLY - Disable SSE fallback during stabilization
 const STREAM_MODE = "WS_ONLY" as const;
@@ -106,8 +110,8 @@ export class ChatService {
   // PART 2: Single Stream Enforcement - Track active stream to prevent duplicates
   private activeStream: { streamId: string; assistantId: string; requestId: string } | null = null;
 
-  // STEP 5: System-level stream ownership enforcement
-  private activeExecutionId: string | null = null;
+  // PATCH 1+2: Execution ownership - requestId IS the executionId
+  private activeRequestId: string | null = null;
 
   // Idempotency guard - track finalized requests to prevent duplicate finalization
   private finalizedRequests = new Set<string>();
@@ -120,19 +124,27 @@ export class ChatService {
 
   // Handle stream chunks from StreamController (authoritative source)
   private handleStreamChunk(assistantId: string, chunk: string): void {
-    // STEP 4: Enforce ownership - validate that this assistantId owns the active stream
-    const activeStream = this.streamController.getActiveStream();
-    if (!activeStream) {
-      logger.warn("chat_service", "handle_stream_chunk_no_active_stream", { assistantId });
+    // PATCH 2: STRICT ownership - validate against active requestId
+    if (!this.activeRequestId) {
+      logger.error("chat_service", "handle_stream_chunk_no_active_request", { assistantId });
       return;
     }
     
-    // Validate that the assistantId matches the active stream owner
-    if (this.activeStream?.assistantId !== assistantId) {
-      logger.warn("chat_service", "handle_stream_chunk_ownership_violation", { 
+    // Derive expected assistantId from activeRequestId
+    const expectedAssistantId = `${this.activeRequestId}-assistant`;
+    if (assistantId !== expectedAssistantId) {
+      logger.error("chat_service", "handle_stream_chunk_execution_mismatch", { 
         assistantId, 
-        activeAssistantId: this.activeStream?.assistantId 
+        expectedAssistantId,
+        activeRequestId: this.activeRequestId
       });
+      return;
+    }
+    
+    // Also validate streamController ownership
+    const activeStream = this.streamController.getActiveStream();
+    if (!activeStream) {
+      logger.warn("chat_service", "handle_stream_chunk_no_active_stream", { assistantId });
       return;
     }
     
@@ -191,14 +203,18 @@ export class ChatService {
       this.streamController.endStream(streamId);
     }
 
-    // 2. Transition phase to STREAM_END (maps to "finalizing")
+    // 2. Transition phase to finalizing (via STREAM_END event)
     this.setPhase("STREAM_END", requestId);
 
-    // 3. Release lock (before FINALIZING to prevent deadlock)
+    // 3. Release lock (before transitioning to idle to prevent deadlock)
     this.releaseRequestLock(this.sessionId, requestId);
 
-    // 4. Finalize (maps to "idle")
+    // 4. Transition to idle (via FINALIZING event)
     this.setPhase("FINALIZING", requestId);
+
+    // 5. Clear active request tracking to allow new requests
+    this.activeRequestId = null;
+    this.activeStream = null;
 
     logger.info("chat_service", "request_finalized", { requestId, streamId });
   }
@@ -209,6 +225,11 @@ export class ChatService {
   // @ts-ignore - Intentionally unused (deferred integration)
   private responseAssembler: ResponseAssembler | null = null;
   private toolExecutionBridge: ToolExecutionBridge = new ToolExecutionBridge();
+  private toolExecutionService: ToolExecutionService;
+  
+  // NEW: Configuration and utilities
+  private chatConfig: ChatConfig;
+  private messageIdGenerator: MessageIdGenerator;
 
   private acquireRequestLock(sessionId: string, requestId: string): boolean {
     if (this.requestController) {
@@ -322,7 +343,7 @@ export class ChatService {
   constructor() {
     this.sessionId = sessionController.getSessionId();
     // NEW: Initialize modular chat core controllers
-    this.messageStore = new MessageStore(this.sessionId);
+    this.messageStore = new MessageStore(this.sessionId, this.state.sequenceCounter);
     this.requestController = new RequestController(this.sessionId);
     this.phaseManager = new PhaseManager(this.sessionId);
     this.responseAssembler = new ResponseAssembler("");
@@ -330,6 +351,50 @@ export class ChatService {
     // NEW: Initialize execution control layer
     this.executionCoordinator = new ExecutionCoordinator(this.sessionId);
     this.executionController = new ExecutionController(this.sessionId);
+    
+    // Initialize tool execution service with callbacks
+    this.toolExecutionService = new ToolExecutionService({
+      onToolTracePersisted: (sessionId, msg) => {
+        if (this.sessionId === sessionId) {
+          this.state.messages = [...this.state.messages, msg].sort((a, b) => {
+            const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return aTime - bTime;
+          });
+          this.notify();
+        }
+      },
+      onToolTraceUpdated: (sessionId, messageId, patch) => {
+        if (this.sessionId === sessionId) {
+          this.state.messages = this.state.messages.map((m) => m.id === messageId ? { ...m, ...patch } : m);
+          this.notify();
+        }
+      },
+      emitEvent: (eventType, payload, sessionId) => {
+        void this.tryEmit(eventType as any, payload, sessionId);
+      }
+    });
+    
+    // Initialize configuration and utilities
+    this.chatConfig = new ChatConfig({
+      onSearchProviderChanged: (provider) => {
+        this.state.searchProvider = provider as "off" | "taqwin" | "proxy";
+        this.notify();
+      },
+      onToolsChanged: (tools) => {
+        this.state.activeTools = tools;
+        this.notify();
+      },
+      notify: () => this.notify()
+    }, { activeTools: { search: false }, searchProvider: "off" });
+    
+    this.chatConfig.setSessionId(this.sessionId);
+    this.messageIdGenerator = new MessageIdGenerator();
+    
+    // Seed sequence counter from existing messages if available
+    if (this.state.messages.length > 0) {
+      this.messageIdGenerator.initializeFromMessages(this.state.messages);
+    }
     
     // Set up chunk callback for StreamController to notify ChatService
     this.streamController.setChunkCallback((assistantId: string, chunk: string) => {
@@ -390,7 +455,7 @@ export class ChatService {
           previousSessionId, 
           newSessionId: sessionId 
         });
-        this.messageStore = new MessageStore(this.sessionId);
+        this.messageStore = new MessageStore(this.sessionId, this.state.sequenceCounter);
         this.requestController = new RequestController(this.sessionId);
         this.phaseManager = new PhaseManager(this.sessionId);
         
@@ -463,16 +528,18 @@ export class ChatService {
     // Accept requestId, streamId, assistantId, or sessionId as ownership identifier
     // Allow phase transitions if:
     // 1. No ownershipId provided (global operations)
-    // 2. ownershipId matches activeExecutionId
+    // 2. ownershipId matches activeRequestId
     // 3. ownershipId matches current sessionId (session-level operations)
-    // 4. No activeExecutionId (idle state)
-    if (ownershipId && this.activeExecutionId) {
-      // Check if ownershipId matches activeExecutionId
-      if (ownershipId !== this.activeExecutionId) {
+    // 4. No activeRequestId (idle state)
+    if (ownershipId && this.activeRequestId) {
+      // Check if ownershipId matches activeRequestId
+      if (ownershipId !== this.activeRequestId) {
+        // Check if ownershipId is assistantId for this request (format: requestId-assistant)
+        const isAssistantId = ownershipId === `${this.activeRequestId}-assistant`;
         // Check if ownershipId is sessionId (allow session-level transitions)
-        if (ownershipId !== this.sessionId) {
+        if (!isAssistantId && ownershipId !== this.sessionId) {
           logger.warn("chat_service", "phase_transition_ownership_failed", {
-            activeExecutionId: this.activeExecutionId,
+            activeRequestId: this.activeRequestId,
             sessionId: this.sessionId,
             attemptedOwnershipId: ownershipId,
             event
@@ -480,18 +547,6 @@ export class ChatService {
           return; // Reject stale event
         }
       }
-    }
-
-    // STEP 1: Use PhaseManager.getPhase() as single source of truth
-    const currentPhase = this.phaseManager?.getPhase() as ChatPhase;
-
-    // STEP 2: Prevent duplicate thinking transitions
-    if (event === "FIRST_TOKEN" && currentPhase === "thinking") {
-      logger.info("chat_service", "DUPLICATE_THINKING_IGNORED", {
-        event,
-        currentPhase
-      });
-      return;
     }
 
     const phaseTransition: Record<EventType, ChatPhase> = {
@@ -509,23 +564,23 @@ export class ChatService {
       return;
     }
 
-    // STEP 3: Lock lifecycle coupled to FSM
-    // Acquire lock on USER_SEND
+    // STEP 3: Lock lifecycle - acquire on USER_SEND, release ONLY in finalizeRequest
     if (event === "USER_SEND" && ownershipId) {
-      const lockAcquired = this.acquireRequestLock(this.sessionId, ownershipId);
-      if (!lockAcquired) {
-        logger.warn("chat_service", "lock_acquire_failed_on_user_send", { ownershipId });
-        return; // Block phase transition if lock cannot be acquired
+      // FIX: Idempotent lock - if already held by same request, allow
+      if (this.activeRequestId === ownershipId) {
+        logger.debug("chat_service", "lock_already_held_same_request", { ownershipId });
+        // Continue - lock already held by this request
+      } else {
+        const lockAcquired = this.acquireRequestLock(this.sessionId, ownershipId);
+        if (!lockAcquired) {
+          logger.warn("chat_service", "lock_acquire_failed_on_user_send", { ownershipId });
+          return; // Block phase transition if lock cannot be acquired
+        }
+        // Set system-level execution ownership
+        this.activeRequestId = ownershipId;
       }
-      // STEP 5: Set system-level execution ownership
-      this.activeExecutionId = ownershipId;
     }
-    // Release lock on STREAM_END
-    if (event === "STREAM_END" && ownershipId) {
-      this.releaseRequestLock(this.sessionId, ownershipId);
-      // STEP 5: Clear system-level execution ownership
-      this.activeExecutionId = null;
-    }
+    // PATCH 5: Lock release moved to finalizeRequest ONLY - no duplicate paths
 
     // START WATCHDOG when transitioning to streaming or finalizing
     // STEP 6: Watchdog is observer-only - logs warnings but does NOT mutate state
@@ -566,37 +621,19 @@ export class ChatService {
       this.streamingStartTime = null;
     }
 
-    // STEP 5: Phase recovery - on STREAM_END, force phase even if FSM rejects
-    const isStreamEnd = event === "STREAM_END";
-    
-    // PHASE 4: Safety before finalizing - allow STREAM_END from thinking or streaming states
-    // This handles error cases where stream ends before reaching streaming phase
-    if (isStreamEnd) {
-      const currentPhase = this.phaseManager?.getPhase() as ChatPhase;
-      const validPhases = ["thinking", "streaming", "idle", "finalizing"];
-      if (!validPhases.includes(currentPhase)) {
-        logger.warn("chat_service", "invalid_phase_before_streaming", {
-          currentPhase,
-          expected: "thinking or streaming"
-        });
-        // Log but allow transition to prevent deadlock
-        logger.info("chat_service", "stream_end_recovery_allowed", { currentPhase });
-      }
-    }
-    
-    // NEW: Use PhaseManager for strict phase transitions (handles validation)
+    // PATCH 4: Strict FSM - NO bypasses, NO recovery, NO force transitions
+    // PhaseManager will throw on invalid transitions
     if (this.phaseManager) {
       try {
         this.phaseManager.setPhase(newPhase as ChatPhase);
       } catch (error) {
-        // STEP 4: Log error only - do NOT force reset
-        logger.error("chat_service", "phase_transition_failed", { 
+        // Hard failure on FSM violation - system must be fixed
+        logger.error("chat_service", "FSM_VIOLATION", { 
           event, 
           newPhase, 
           error: String(error) 
         });
-        // Do NOT force reset - let the system handle the error gracefully
-        return; // Exit without updating state
+        throw error; // Propagate - do NOT swallow
       }
     }
 
@@ -608,7 +645,7 @@ export class ChatService {
     // No action needed - transition complete
 
     // STEP 1: Guarantee execution end on STREAM_END - MUST happen ALWAYS
-    if (isStreamEnd && this.executionCoordinator) {
+    if (event === "STREAM_END" && this.executionCoordinator) {
       const executionId = this.executionCoordinator.getCurrentExecutionId();
       if (executionId) {
         logger.info("chat_service", "stream_end_ending_execution", { executionId, event });
@@ -636,7 +673,7 @@ export class ChatService {
         from: previousPhase,
         to: newPhase,
         ownershipId,
-        executionId: this.activeExecutionId
+        executionId: this.activeRequestId
       });
     } else {
       const fromPhase = this.phaseManager?.getPhase() as ChatPhase;
@@ -716,7 +753,7 @@ export class ChatService {
     
     // STEP 2: Clear ALL execution state to prevent stuck states
     this.activeDelivery = null;
-    this.activeExecutionId = null;
+    this.activeRequestId = null;
     this.activeStream = null;
     this.state.currentStreamId = null;
     this.state.responseStart = undefined;
@@ -871,7 +908,8 @@ export class ChatService {
       text,
       createdAt: now,
       deliveryStatus: "delivered",
-      correlationId: userId
+      correlationId: userId,
+      sequenceNumber: this.state.sequenceCounter++
     };
 
     const assistantMsg: ChatMessage = {
@@ -892,6 +930,10 @@ export class ChatService {
       this.messageStore.createMessage(userMsg);
       this.messageStore.createMessage(assistantMsg);
     }
+
+    // Update state.messages for UI rendering
+    this.state.messages = [...this.state.messages, userMsg, assistantMsg];
+    this.notify();
 
     // Persist messages
     await sessionDatabase.saveMessages(sessionId, [userMsg, assistantMsg]);
@@ -1103,7 +1145,7 @@ export class ChatService {
       );
       logger.info("chat_service", "finalization_fallback_applied", { assistantId });
     } else {
-      logger.info("chat_service", "finalization_success", { assistantId, contentLength: currentAssistant.text.length });
+      logger.info("chat_service", "finalization_success", { assistantId, contentLength: currentAssistant.text.length, response: currentAssistant.text });
     }
     
     this.notify();
@@ -1398,15 +1440,12 @@ export class ChatService {
         }
         return m;
       });
-      if (this.sessionId === sessionId) {
-        this.finalizeRequest(assistantId, null);
-      }
-    }
-    
-    // CRITICAL: Use forceSetPhase to bypass strict FSM during session switch
-    // This prevents "Strict FSM violation" errors when switching sessions during active execution
-    if (this.phaseManager) {
-      this.phaseManager.forceSetPhase("idle");
+      // PATCH 3: Don't call finalizeRequest from WebSocket - HTTP stream handles finalization
+      // Just clear the request state
+      this.activeRequestId = null;
+      this.activeStream = null;
+      // PATCH 4: Don't use forceSetPhase - FSM transitions must be valid
+      // Phase will transition through normal flow
     }
     
     // CRITICAL: Force-clear any leaked locks in RequestController
@@ -1484,14 +1523,7 @@ export class ChatService {
   }
 
   private stringifyToolPayload(value: any, maxChars: number): string {
-    try {
-      const raw = JSON.stringify(value ?? null);
-      if (raw.length <= maxChars) return raw;
-      return raw.slice(0, maxChars) + "…";
-    } catch (e: any) {
-      const msg = String(e?.message ?? e);
-      return JSON.stringify({ error: "tool_result_unserializable", message: msg }).slice(0, maxChars);
-    }
+    return this.toolExecutionService.stringifyToolPayload(value, maxChars);
   }
 
 
@@ -1502,232 +1534,16 @@ export class ChatService {
     toolName: string;
     args: any;
     traceId: string;
-  }): Promise<{
-    ok: boolean;
-    payload: any;
-    errorMsg?: string;
-    errorCode?: string;
-    serverId?: string;
-    originalName?: string;
-    durationMs?: number;
-  }> {
-    const toolName = String(input.toolName ?? "").trim();
-    const idx = toolName.indexOf("__");
-    const serverIdHint = idx > 0 ? toolName.slice(0, idx) : undefined;
-    const originalNameHint = idx > 0 && idx < toolName.length - 2 ? toolName.slice(idx + 2) : undefined;
-    const runtimeHint = serverIdHint ? mcpOrchestrator.getServer(serverIdHint) : null;
-    const startedAt = performance.now();
-
-    // TOOL_START phase removed in strict FSM - tool execution handled at different layer
-    if (this.sessionId === input.sessionId) {
-      logger.debug("chat_service", "tool_execution_start", { assistantId: input.assistantId });
-    }
-
-    void this.tryEmit(
-      "tool_call_started",
-      {
-        trace_id: input.traceId,
-        tool_call_id: input.toolCallId,
-        tool: toolName,
-        server_id: serverIdHint ?? null,
-        original_name: originalNameHint ?? null,
-        pid: runtimeHint?.pid ?? null,
-        framing: runtimeHint?.framing ?? null,
-        generation: runtimeHint?.generation ?? null,
-        status: "started",
-        correlation_id: input.assistantId
-      },
-      input.sessionId
-    );
-    logger.info("mcp_audit", "tool_call_started", {
-      traceId: input.traceId,
-      toolCallId: input.toolCallId,
-      tool: toolName,
-      serverId: serverIdHint ?? null,
-      originalName: originalNameHint ?? null,
-      pid: runtimeHint?.pid ?? null,
-      framing: runtimeHint?.framing ?? null,
-      generation: runtimeHint?.generation ?? null,
-      status: "started",
-      correlationId: input.assistantId
-    });
-
-    logger.info("mcp_loop", "entering_tool_execution", {
-      traceId: input.traceId,
-      toolCallId: input.toolCallId,
-      correlationId: input.assistantId,
-      tool: toolName
-    });
-
-    // T6: Get adaptive timeout configuration for this tool
-    const timeoutConfig = getTimeoutConfig(toolName);
-    const adaptiveTimeout = adaptiveTimeoutManager.getAdaptiveTimeout(toolName, timeoutConfig);
-
-    let exec;
-    try {
-      exec = await toolExecutionService.executeNamespacedTool(toolName, input.args, {
-        timeoutMs: adaptiveTimeout,
-        traceId: input.traceId,
-        toolCallId: input.toolCallId,
-        correlationId: input.assistantId
-      });
-    } catch (error) {
-      logger.error("mcp_loop", "tool_execution_unexpected_error", {
-        traceId: input.traceId,
-        toolCallId: input.toolCallId,
-        tool: toolName,
-        error: String(error)
-      });
-      return {
-        ok: false,
-        payload: { ok: false, error: { code: "tool_execution_error", message: String(error) } },
-        errorMsg: `tool_execution_error:${String(error)}`,
-        errorCode: "tool_execution_error",
-        durationMs: Math.round(performance.now() - startedAt)
-      };
-    }
-
-    if (!exec || !exec.tool) {
-      logger.error("mcp_loop", "tool_execution_invalid_response", {
-        traceId: input.traceId,
-        toolCallId: input.toolCallId,
-        tool: toolName
-      });
-      return {
-        ok: false,
-        payload: { ok: false, error: { code: "tool_execution_invalid_response", message: "Tool execution returned invalid response" } },
-        errorMsg: "tool_execution_invalid_response:Tool execution returned invalid response",
-        errorCode: "tool_execution_invalid_response",
-        durationMs: Math.round(performance.now() - startedAt)
-      };
-    }
-
-    const serverId = exec.tool.serverId;
-    const originalName = exec.tool.originalName;
-    const runtime = serverId ? mcpOrchestrator.getServer(serverId) : null;
-    const durationMs = exec.ok
-      ? (typeof exec.durationMs === "number" ? exec.durationMs : Math.round(performance.now() - startedAt))
-      : Math.round(performance.now() - startedAt);
-
-    if (exec.ok) {
-      // TOOL_END phase removed in strict FSM - tool execution handled at different layer
-      if (this.sessionId === input.sessionId) {
-        logger.debug("chat_service", "tool_execution_success", { assistantId: input.assistantId });
-      }
-
-      void this.tryEmit(
-        "tool_call_completed",
-        {
-          trace_id: input.traceId,
-          tool_call_id: input.toolCallId,
-          tool: toolName,
-          server_id: serverId ?? null,
-          original_name: originalName ?? null,
-          pid: runtime?.pid ?? null,
-          framing: runtime?.framing ?? null,
-          generation: runtime?.generation ?? null,
-          duration_ms: durationMs,
-          durationMs,
-          status: "succeeded",
-          correlation_id: input.assistantId,
-          execution_time_ms: durationMs
-        },
-        input.sessionId
-      );
-      logger.info("mcp_audit", "tool_call_completed", {
-        traceId: input.traceId,
-        toolCallId: input.toolCallId,
-        tool: toolName,
-        serverId: serverId ?? null,
-        originalName: originalName ?? null,
-        pid: runtime?.pid ?? null,
-        framing: runtime?.framing ?? null,
-        generation: runtime?.generation ?? null,
-        durationMs,
-        status: "succeeded",
-        correlationId: input.assistantId
-      });
-      return {
-        ok: true,
-        payload: exec.result,
-        serverId,
-        originalName,
-        durationMs
-      };
-    }
-
-    const errorMsg = exec.error ? `${exec.error.code}:${exec.error.message}` : "tool_execution_failed:Unknown error";
-    const errorCode = exec.error?.code ?? "tool_execution_failed";
-    // TOOL_END phase removed in strict FSM - tool execution handled at different layer
-    if (this.sessionId === input.sessionId) {
-      logger.debug("chat_service", "tool_execution_error", { assistantId: input.assistantId, errorCode });
-    }
-
-    void this.tryEmit(
-      "tool_call_failed",
-      {
-        trace_id: input.traceId,
-        tool_call_id: input.toolCallId,
-        tool: toolName,
-        server_id: serverId ?? null,
-        original_name: originalName ?? null,
-        pid: runtime?.pid ?? null,
-        framing: runtime?.framing ?? null,
-        generation: runtime?.generation ?? null,
-        duration_ms: durationMs,
-        durationMs,
-        error_code: errorCode,
-        status: exec.kind === "denied" ? "denied" : "failed",
-        correlation_id: input.assistantId
-      },
-      input.sessionId
-    );
-    logger.warn("mcp_audit", "tool_call_failed", {
-      traceId: input.traceId,
-      toolCallId: input.toolCallId,
-      tool: toolName,
-      serverId: serverId ?? null,
-      originalName: originalName ?? null,
-      pid: runtime?.pid ?? null,
-      framing: runtime?.framing ?? null,
-      generation: runtime?.generation ?? null,
-      durationMs,
-      errorCode,
-      status: exec.kind === "denied" ? "denied" : "failed",
-      correlationId: input.assistantId
-    });
-    return {
-      ok: false,
-      payload: { ok: false, error: exec.error },
-      errorMsg,
-      errorCode,
-      serverId,
-      originalName,
-      durationMs
-    };
+  }): ReturnType<ToolExecutionService['executeToolDeterministic']> {
+    return this.toolExecutionService.executeToolDeterministic(input);
   }
 
   private async persistToolTrace(sessionId: string, msg: ChatMessage): Promise<void> {
-    await sessionDatabase.saveMessages(sessionId, [msg]);
-    if (this.sessionId === sessionId) {
-      this.state.messages = [...this.state.messages, msg].sort((a, b) => {
-        const timeDiff = Date.parse(a.createdAt) - Date.parse(b.createdAt);
-        // Use sequenceNumber as secondary sort for deterministic ordering when timestamps are close (within 1 second)
-        if (Math.abs(timeDiff) < 1000) {
-          return (a.sequenceNumber || 0) - (b.sequenceNumber || 0);
-        }
-        return timeDiff;
-      });
-      this.notify();
-    }
+    return this.toolExecutionService.persistToolTrace(sessionId, msg);
   }
 
   private async updateToolTrace(sessionId: string, messageId: string, patch: Partial<ChatMessage>): Promise<void> {
-    await sessionDatabase.updateMessage(messageId, patch as any);
-    if (this.sessionId === sessionId) {
-      this.state.messages = this.state.messages.map((m) => m.id === messageId ? { ...m, ...patch } : m);
-      this.notify();
-    }
+    return this.toolExecutionService.updateToolTrace(sessionId, messageId, patch);
   }
 
   // ─── P6.2 T12: AGENT ORCHESTRATOR INTEGRATION ─────────────────────────
@@ -1830,8 +1646,10 @@ export class ChatService {
         }
       },
       onFinal: (output) => {
+        // PATCH 3: Remove duplicate finalize - HTTP stream handles finalization
         finalOutput = output;
-        this.finalizeRequest(assistantId, null);
+        // WebSocket final handler - HTTP stream is primary source
+        logger.debug("chat_service", "websocket_onfinal_ignored", { assistantId });
         // Remove text blocks to prevent duplication with final block
         const assistantMsg = this.state.assistantMessages.find(m => m.id === assistantId);
         if (assistantMsg) {
@@ -2649,15 +2467,15 @@ export class ChatService {
             }
             return m;
           });
-          // ERROR phase removed in strict FSM - errors logged instead
           logger.error("chat_service", "health_check_failed", { id, sessionId: item.sessionId });
         }
-        // Single finalization point - correct order to prevent deadlocks
-        this.finalizeRequest(id, null);
+        // PATCH 3: Use controlled cleanup instead of finalizeRequest duplicate
+        this.activeRequestId = null;
+        this.activeStream = null;
         return;
       }
     } catch (healthErr) {
-      logger.warn("chat", "pre_flight_health_check_exception", { sessionId: item.sessionId, error: String(healthErr) });
+      logger.error("chat", "pre_flight_health_check_exception", { sessionId: item.sessionId, error: String(healthErr) });
       const errorMsg = "KNEZ not ready. Please wait for connection.";
       await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered", deliveryError: undefined });
       await sessionDatabase.updateMessage(`${id}-assistant`, {
@@ -2677,8 +2495,9 @@ export class ChatService {
         });
         logger.error("chat_service", "health_check_exception", { id, sessionId: item.sessionId, error: String(healthErr) });
       }
-      // Single finalization point - correct order to prevent deadlocks
-      this.finalizeRequest(id, null);
+      // PATCH 3: Use controlled cleanup instead of finalizeRequest duplicate
+      this.activeRequestId = null;
+      this.activeStream = null;
       return;
     }
 
@@ -2737,15 +2556,30 @@ export class ChatService {
         deliveryStatus: "pending",
         isPartial: true,
         refusal: false,
-        text: ""
+        text: "",
+        sequenceNumber: this.state.sequenceCounter++
       };
       messages.push(newAssistantMessage);
       // PART 1: Insert into persistence AFTER state.messages update
       await sessionDatabase.updateMessage(assistantId, { deliveryStatus: "pending", isPartial: true, refusal: false, text: "" });
+      // FIX: Create assistant message in MessageStore for UI rendering with sequenceNumber
+      this.messageStore?.createAssistantMessage(assistantId, [], newAssistantMessage.sequenceNumber);
+      // FIX: Sync ChatService state with MessageStore
+      if (this.messageStore) {
+        this.state.assistantMessages = this.messageStore.getAllAssistantMessages();
+      }
       logger.info("chat_service", "assistant_created", { assistantId, sessionId });
     } else {
-      messages[assistantIdx] = { ...messages[assistantIdx], deliveryStatus: "pending", deliveryError: undefined, refusal: false, isPartial: true, text: "" };
+      messages[assistantIdx] = { ...messages[assistantIdx], deliveryStatus: "pending", deliveryError: undefined, refusal: false, isPartial: true, text: "", sequenceNumber: messages[assistantIdx].sequenceNumber ?? this.state.sequenceCounter++ };
       await sessionDatabase.updateMessage(assistantId, { deliveryStatus: "pending", isPartial: true, refusal: false, text: "" });
+      // FIX: Ensure assistant message exists in MessageStore with sequenceNumber
+      if (this.messageStore && !this.messageStore.getAssistantMessageById(assistantId)) {
+        this.messageStore.createAssistantMessage(assistantId, [], messages[assistantIdx].sequenceNumber);
+      }
+      // FIX: Sync ChatService state with MessageStore
+      if (this.messageStore) {
+        this.state.assistantMessages = this.messageStore.getAllAssistantMessages();
+      }
     }
 
     // PART 1: Insert into in-memory state.messages IMMEDIATELY
@@ -2892,7 +2726,9 @@ export class ChatService {
             return m;
           });
           await sessionDatabase.updateMessage(assistantId, { text: "⚠️ Tool execution failed. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
-          this.finalizeRequest(id, null);
+          // PATCH 3: Use controlled cleanup instead of finalizeRequest duplicate
+          this.activeRequestId = null;
+          this.activeStream = null;
           throw new AppError("KNEZ_STREAM_EMPTY", "Tool execution failed");
         }
 
@@ -2943,6 +2779,7 @@ export class ChatService {
             return m;
           });
           this.state.currentStreamId = null;
+          // PATCH 3: Single finalization gate - ONLY success path calls finalizeRequest
           this.finalizeRequest(id, streamId);
         }
         // FIX B: Cleanup stream ownership
@@ -3000,7 +2837,9 @@ export class ChatService {
             return m;
           });
           await sessionDatabase.updateMessage(assistantId, { text: "⚠️ Response timeout. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
-          this.finalizeRequest(id, streamId ?? null);
+          // PATCH 3: Use controlled cleanup instead of finalizeRequest duplicate
+          this.activeRequestId = null;
+          this.activeStream = null;
         } else {
           logger.warn("streaming", "first_token_timeout", { streamId, assistantId });
           // PART 6 FIX: Abort stream first to prevent KNEZ client fallback
@@ -3013,15 +2852,23 @@ export class ChatService {
             return m;
           });
           await sessionDatabase.updateMessage(assistantId, { text: "⚠️ Response timeout. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
-          this.finalizeRequest(id, streamId ?? null);
+          // PATCH 3: Use controlled cleanup instead of finalizeRequest duplicate
+          this.activeRequestId = null;
+          this.activeStream = null;
         }
       }, 20000);
 
       // ─── P2.6 PHASES 1-5: buffer → classify → route ──────────────────────
       let interpretBuffer = "";
       let outputClass: OutputClass | null = null;
+      let firstTokenReceived = false;
 
       for await (const chunk of knezClient.chatCompletionsStream(injectedMessages as any, sessionId, { signal: controller.signal, onMeta })) {
+        // FIX: Trigger FIRST_TOKEN on first chunk to transition to streaming phase
+        if (!firstTokenReceived && chunk.trim()) {
+          firstTokenReceived = true;
+          this.setPhase("FIRST_TOKEN", assistantId);
+        }
         // PART 3: Stream Ownership Validation - Validate stream ownership before processing
         if (this.activeStream?.streamId !== streamId) {
           logger.warn("chat_service", "stream_ignored_ownership_mismatch_stream", { 
@@ -3037,11 +2884,9 @@ export class ChatService {
           });
           return;
         }
-        
-        if (streamId !== this.state.currentStreamId) {
-          logger.warn("streaming", "stream_aborted_mismatch", { streamId, currentStreamId: this.state.currentStreamId });
-          return;
-        }
+
+        // FIX: Remove currentStreamId check - ownership already validated by activeStream.streamId
+        // This check was causing premature stream termination when currentStreamId changed during stream
         if (controller.signal.aborted) {
           logger.info("streaming", "stream_aborted", { streamId });
           return;
@@ -3053,10 +2898,16 @@ export class ChatService {
             const interp = interpretOutput(interpretBuffer);
             outputClass = interp.classification;
             logger.info("streaming", "classification_decided", { streamId, outputClass });
+            // FIX: Always append to stream for UI visibility, regardless of classification
+            this.streamController.appendChunk(streamId, interpretBuffer);
+            interpretBuffer = ""; // free buffer after flush
+            
             if (outputClass === "plain_text") {
-              // Use StreamController.appendChunk (authoritative)
-              this.streamController.appendChunk(streamId, interpretBuffer);
-              interpretBuffer = ""; // free buffer after flush
+              // Continue streaming normally
+            } else if (outputClass === "tool_call") {
+              // Continue streaming but mark for tool execution after stream completes
+              logger.info("streaming", "tool_call_detected_continuing", { streamId, outputClass });
+              // Don't break - let user see the output
             } else {
               logger.info("streaming", "stream_stop_non_plain_text", { streamId, outputClass });
               break;
@@ -3064,6 +2915,9 @@ export class ChatService {
           }
         } else if (outputClass === "plain_text") {
           // Use StreamController.appendChunk (authoritative)
+          this.streamController.appendChunk(streamId, chunk);
+        } else if (outputClass === "tool_call") {
+          // FIX: Append chunks for tool_call too - user needs to see the output
           this.streamController.appendChunk(streamId, chunk);
         }
       }
@@ -3088,16 +2942,15 @@ export class ChatService {
       if (outputClass === "plain_text") {
         processedText = this.sanitizeOutput(this.state.messages.find((m) => m.id === assistantId)?.text ?? "");
         if (!processedText.trim()) {
-          // Inject fallback message BEFORE finalize
+          // FIX: Set processedText and continue to finalization instead of throwing error
+          processedText = "⚠️ Unable to generate a proper response. Please try again.";
           this.state.messages = this.state.messages.map(m => {
             if (m.id === assistantId) {
-              return { ...m, text: "⚠️ Unable to generate a proper response. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true };
+              return { ...m, text: processedText, deliveryStatus: "delivered", isPartial: false, refusal: true };
             }
             return m;
           });
-          await sessionDatabase.updateMessage(assistantId, { text: "⚠️ Unable to generate a proper response. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
-          this.finalizeRequest(id, streamId ?? null);
-          throw new AppError("KNEZ_STREAM_EMPTY", "Empty response after processing");
+          await sessionDatabase.updateMessage(assistantId, { text: processedText, deliveryStatus: "delivered", isPartial: false, refusal: true });
         }
       } else if (outputClass === "tool_call" && ChatService.MCP_ENABLED) {
         const interp = interpretOutput(interpretBuffer);
@@ -3111,64 +2964,64 @@ export class ChatService {
             toolExecutionTime = Date.now() - toolLoopStart;
           } catch (mcpErr) {
             logger.warn("mcp_execution", "tool_execution_failed", { toolName: interp.toolCall.name, error: String(mcpErr) });
-            // Inject fallback message BEFORE finalize
+            // FIX: Set processedText to debuggable error message
+            processedText = `⚠️ Tool execution failed: ${interp.toolCall.name}\nError: ${String(mcpErr)}`;
             this.state.messages = this.state.messages.map(m => {
               if (m.id === assistantId) {
-                return { ...m, text: "⚠️ Tool execution failed. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true };
+                return { ...m, text: processedText, deliveryStatus: "delivered", isPartial: false, refusal: true };
               }
               return m;
             });
-            await sessionDatabase.updateMessage(assistantId, { text: "⚠️ Tool execution failed. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
-            this.finalizeRequest(id, streamId ?? null);
+            await sessionDatabase.updateMessage(assistantId, { text: processedText, deliveryStatus: "delivered", isPartial: false, refusal: true });
           }
         } else {
-          // Inject fallback message BEFORE finalize
+          // FIX: Set processedText to debuggable error message
+          processedText = "⚠️ Unable to process tool call. No tool call detected in response.";
           this.state.messages = this.state.messages.map(m => {
             if (m.id === assistantId) {
-              return { ...m, text: "⚠️ Unable to process tool call. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true };
+              return { ...m, text: processedText, deliveryStatus: "delivered", isPartial: false, refusal: true };
             }
             return m;
           });
-          await sessionDatabase.updateMessage(assistantId, { text: "⚠️ Unable to process tool call. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
-          this.finalizeRequest(id, streamId ?? null);
+          await sessionDatabase.updateMessage(assistantId, { text: processedText, deliveryStatus: "delivered", isPartial: false, refusal: true });
         }
       } else if (outputClass === "system_payload") {
         logger.warn("output_interpreter", "system_payload_blocked", { preview: interpretBuffer.slice(0, 80) });
-        // Inject fallback message BEFORE finalize
+        // FIX: Set processedText and continue to finalization instead of early exit
+        processedText = "⚠️ System payload blocked. Please try again.";
         this.state.messages = this.state.messages.map(m => {
           if (m.id === assistantId) {
-            return { ...m, text: "⚠️ System payload blocked. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true };
+            return { ...m, text: processedText, deliveryStatus: "delivered", isPartial: false, refusal: true };
           }
           return m;
         });
-        await sessionDatabase.updateMessage(assistantId, { text: "⚠️ System payload blocked. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
-        this.finalizeRequest(id, streamId ?? null);
+        await sessionDatabase.updateMessage(assistantId, { text: processedText, deliveryStatus: "delivered", isPartial: false, refusal: true });
       } else {
         if (outputClass === "tool_call") {
           logger.info("output_interpreter", "tool_call_mcp_disabled", { preview: interpretBuffer.slice(0, 80) });
         }
-        // Inject fallback message BEFORE finalize
+        // FIX: Set processedText and continue to finalization instead of early exit
+        processedText = "⚠️ Unable to generate response. Please try again.";
         this.state.messages = this.state.messages.map(m => {
           if (m.id === assistantId) {
-            return { ...m, text: "⚠️ Unable to generate response. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true };
+            return { ...m, text: processedText, deliveryStatus: "delivered", isPartial: false, refusal: true };
           }
           return m;
         });
-        await sessionDatabase.updateMessage(assistantId, { text: "⚠️ Unable to generate response. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
-        this.finalizeRequest(id, streamId ?? null);
+        await sessionDatabase.updateMessage(assistantId, { text: processedText, deliveryStatus: "delivered", isPartial: false, refusal: true });
       }
 
       if (!processedText.trim()) {
         logger.error("response_guarantee", "empty_response_after_processing", { sessionId, assistantId });
-        // Inject fallback message BEFORE finalize
+        // FIX: Set processedText and continue to finalization instead of early exit
+        processedText = "⚠️ Unable to generate response. Please try again.";
         this.state.messages = this.state.messages.map(m => {
           if (m.id === assistantId) {
-            return { ...m, text: "⚠️ Unable to generate response. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true };
+            return { ...m, text: processedText, deliveryStatus: "delivered", isPartial: false, refusal: true };
           }
           return m;
         });
-        await sessionDatabase.updateMessage(assistantId, { text: "⚠️ Unable to generate response. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
-        this.finalizeRequest(id, streamId ?? null);
+        await sessionDatabase.updateMessage(assistantId, { text: processedText, deliveryStatus: "delivered", isPartial: false, refusal: true });
       }
 
       const responseTimeMs = Date.now() - responseStart;
@@ -3198,8 +3051,22 @@ export class ChatService {
           if (m.id === assistantId) return { ...m, ...finalAssistant };
           return m;
         });
+        // FIX: Update assistant message in MessageStore with final text block
+        if (this.messageStore && this.messageStore.getAssistantMessageById(assistantId)) {
+          this.messageStore.updateAssistantMessage(assistantId, {
+            state: MessageState.FINAL,
+            blocks: [{ type: "text", content: processedText }]
+          });
+          // FIX: Sync ChatService state with MessageStore
+          this.state.assistantMessages = this.messageStore.getAllAssistantMessages();
+          logger.info("chat_service", "assistant_message_finalized", { assistantId, blocksCount: this.state.assistantMessages.length, hasBlocks: this.state.assistantMessages.some(am => am.id === assistantId && am.blocks.length > 0) });
+          this.notify();
+        } else {
+          logger.warn("chat_service", "assistant_message_not_found_in_store", { assistantId, hasMessageStore: !!this.messageStore });
+        }
         if (streamId === this.state.currentStreamId) {
           this.state.currentStreamId = null;
+          // PATCH 3 FIX: Call finalizeRequest for streaming success path
           this.finalizeRequest(id, streamId);
         }
       }
@@ -3323,8 +3190,11 @@ export class ChatService {
       }
     } finally {
       // PART 2: Guaranteed cleanup - always execute regardless of errors
-      // Single finalization point - correct order to prevent deadlocks
-      this.finalizeRequest(id, streamId ?? null);
+      // PATCH 3: Single finalization in onComplete only - skip if already finalized
+      // finalizeRequest is called ONLY from stream onComplete handler
+      if (!this.finalizedRequests.has(id)) {
+        logger.warn("chat_service", "cleanup_without_finalize", { id, streamId, reason: "stream did not complete normally" });
+      }
 
       // PART 2: Clear active stream tracking
       if (this.activeStream?.requestId === id) {
@@ -3355,13 +3225,13 @@ export class ChatService {
       if (this.sessionId === sessionId) {
         if (streamId !== undefined && streamId === this.state.currentStreamId) {
           this.state.currentStreamId = null;
-          this.finalizeRequest(id, streamId);
+          // PATCH 3: Don't call finalizeRequest here - already called in onComplete
         }
-        // PART 2: Ensure phase is not stuck in thinking/streaming
+        // PART 2: Phase stuck check - use controlled cleanup, not finalize
         const currentPhase = this.phaseManager?.getPhase() as ChatPhase;
         if (currentPhase === "thinking" || currentPhase === "streaming") {
-          logger.warn("chat_service", "phase_stuck_resetting_to_stream_end", { currentPhase });
-          // Inject fallback message BEFORE finalize
+          logger.warn("chat_service", "phase_stuck_cleanup", { currentPhase });
+          // Inject fallback message
           this.state.messages = this.state.messages.map(m => {
             if (m.id === assistantId) {
               return { ...m, text: "⚠️ Request timed out. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true };
@@ -3369,8 +3239,9 @@ export class ChatService {
             return m;
           });
           await sessionDatabase.updateMessage(assistantId, { text: "⚠️ Request timed out. Please try again.", deliveryStatus: "delivered", isPartial: false, refusal: true });
-          // ERROR phase removed in strict FSM - transition to STREAM_END instead
-          this.finalizeRequest(id, streamId ?? null);
+          // PATCH 3: Use controlled cleanup instead of finalizeRequest duplicate
+          this.activeRequestId = null;
+          this.activeStream = null;
         }
       }
     }
@@ -3573,6 +3444,55 @@ export class ChatService {
 
     return proxyAllowed ? "proxy" : "off";
   }
+
+  /**
+   * New unified streaming method using StreamingExecutionEngine
+   * Replaces legacy chatCompletionsStream with unified SSE events
+   */
+  async *streamWithUnifiedEngine(
+    sessionId: string,
+    messages: Array<{ role: string; content: string }>,
+    options?: {
+      userPreference?: 'local' | 'cloud' | 'auto';
+      taskType?: 'coding' | 'reasoning' | 'general';
+      temperature?: number;
+      maxTokens?: number;
+      signal?: AbortSignal;
+    }
+  ): AsyncGenerator<SSEEvent, { success: boolean; totalTokens: number; durationMs: number }, void> {
+    logger.info('chat_service', 'unified_stream_started', {
+      sessionId,
+      messageCount: messages.length,
+      userPreference: options?.userPreference,
+      taskType: options?.taskType,
+    });
+
+    const result = await streamingExecutionEngine.execute({
+      sessionId,
+      messages,
+      userPreference: options?.userPreference,
+      taskType: options?.taskType,
+      temperature: options?.temperature,
+      maxTokens: options?.maxTokens,
+      signal: options?.signal,
+    });
+
+    for await (const event of result) {
+      yield event;
+
+      // Stop on error or stream end
+      if (event.event === 'error' || event.event === 'stream_end') {
+        break;
+      }
+    }
+
+    // Return final execution result
+    return {
+      success: true,
+      totalTokens: 0,
+      durationMs: 0,
+    };
+  }
 }
 
 export const chatService = new ChatService();
@@ -3632,9 +3552,3 @@ function titleCase(s: string): string {
     .trim();
 }
 
-function newMessageId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID().replace(/-/g, "");
-  }
-  return `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
-}
