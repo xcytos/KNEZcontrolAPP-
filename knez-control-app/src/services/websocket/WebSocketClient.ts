@@ -308,20 +308,13 @@ export class WebSocketClient {
       return;
     }
 
-    // Calculate delay with exponential backoff
-    let delay = this.reconnectConfig.initialDelay * Math.pow(this.reconnectConfig.backoffMultiplier, this.reconnectAttempts);
-    
-    // Cap at max delay
-    delay = Math.min(delay, this.reconnectConfig.maxDelay);
-    
-    // Add jitter if enabled
-    if (this.reconnectConfig.jitter) {
-      delay = delay * (0.5 + Math.random() * 0.5);
-    }
+    // Calculate delay with exponential backoff and jitter
+    const delay = this.calculateBackoffDelay();
 
     logger.info('websocket', 'scheduling_reconnect', { 
       attempt: this.reconnectAttempts + 1, 
-      delay 
+      delay,
+      backoffType: 'exponential_jitter'
     });
 
     this.reconnectTimer = window.setTimeout(() => {
@@ -330,6 +323,24 @@ export class WebSocketClient {
         this.connect(this.sessionId);
       }
     }, delay);
+  }
+
+  private calculateBackoffDelay(): number {
+    // Exponential backoff: base * (multiplier ^ attempt)
+    const exponentialDelay = this.reconnectConfig.initialDelay * 
+      Math.pow(this.reconnectConfig.backoffMultiplier, this.reconnectAttempts);
+    
+    // Cap at max delay
+    const cappedDelay = Math.min(exponentialDelay, this.reconnectConfig.maxDelay);
+    
+    // Add jitter (±25% of delay) to prevent thundering herd
+    if (this.reconnectConfig.jitter) {
+      const jitterRange = cappedDelay * 0.25;
+      const jitter = (Math.random() - 0.5) * 2 * jitterRange;
+      return Math.max(1000, cappedDelay + jitter); // Minimum 1s delay
+    }
+    
+    return cappedDelay;
   }
 
   private saveConnectionState(): void {

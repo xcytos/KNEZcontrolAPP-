@@ -1,7 +1,40 @@
 {
   "version": "1.0",
-  "last_updated": "2026-04-26T00:00:00Z",
+  "last_updated": "2026-05-01T00:00:00Z",
   "memory_files": [
+    {
+      "id": "mem-029",
+      "path": ".taqwin/history/R026.md",
+      "domain": "system",
+      "type": "history",
+      "tags": ["history", "mcp", "testing", "tools"],
+      "size_bytes": null,
+      "created_at": "2026-05-01",
+      "last_modified": "2026-05-01",
+      "status": "active"
+    },
+    {
+      "id": "mem-030",
+      "path": ".taqwin/history/R027.md",
+      "domain": "system",
+      "type": "history",
+      "tags": ["history", "mcp", "session", "diagnosis", "sync"],
+      "size_bytes": null,
+      "created_at": "2026-05-01",
+      "last_modified": "2026-05-01",
+      "status": "active"
+    },
+    {
+      "id": "mem-031",
+      "path": ".taqwin/memory/chat/MCP_INTEGRATION_TEST_SESSION.md",
+      "domain": "chat",
+      "type": "session_record",
+      "tags": ["chat", "session", "mcp", "integration", "test", "sync"],
+      "size_bytes": null,
+      "created_at": "2026-05-01",
+      "last_modified": "2026-05-01",
+      "status": "active"
+    },
     {
       "id": "mem-001",
       "path": ".taqwin/memory/decisions.md",
@@ -319,7 +352,7 @@
     },
     "chat": {
       "description": "Chat session memory",
-      "file_count": 1,
+      "file_count": 2,
       "status": "active"
     },
     "controlapp": {
@@ -359,11 +392,11 @@
     }
   },
   "statistics": {
-    "total_files": 29,
+    "total_files": 32,
     "total_domains": 9,
     "legacy_files": 5,
-    "domain_files": 11,
-    "system_files": 12,
-    "last_index_update": "2026-04-26T00:00:00Z"
+    "domain_files": 12,
+    "system_files": 14,
+    "last_index_update": "2026-05-01T00:00:00Z"
   }
 }

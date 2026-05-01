@@ -501,12 +501,14 @@ export class ChatService {
   private notify() {
     // STEP 1: Use PhaseManager.getPhase() as single source of truth
     const currentPhase = this.phaseManager?.getPhase() as ChatPhase;
+    logger.debug("chat_service", "notify_called", { phase: currentPhase, listenersCount: this.listeners.length, messagesCount: this.state.messages.length });
     if (currentPhase === "streaming") {
       if (!this._pendingNotify) {
         this._pendingNotify = true;
         this._notifyTimer = window.setTimeout(() => {
           this._pendingNotify = false;
           this._notifyTimer = null;
+          logger.debug("chat_service", "notify_throttled_executed", { listenersCount: this.listeners.length });
           this.listeners.forEach(l => l(this.state));
         }, 33);
       }
@@ -516,6 +518,7 @@ export class ChatService {
         this._notifyTimer = null;
         this._pendingNotify = false;
       }
+      logger.debug("chat_service", "notify_immediate_executed", { listenersCount: this.listeners.length });
       this.listeners.forEach(l => l(this.state));
     }
   }
@@ -2084,6 +2087,12 @@ export class ChatService {
       const args = req.arguments ?? {};
       if (!allowedToolNames.has(toolName)) {
         logger.warn("mcp_loop", "non_canonical_tool_name", { assistantId, step, toolName });
+        conversation.push({
+          role: "system",
+          content: `ERROR: Tool "${toolName}" does not exist in the available tool catalog. Available tools: ${toolNames.slice(0, 10).join(", ")}. Please use only valid tool names.`
+        });
+        consecutiveFailures++;
+        continue;
       }
 
       // T3: Enforce snapshot-first execution for click tools
@@ -2861,6 +2870,7 @@ export class ChatService {
       // ─── P2.6 PHASES 1-5: buffer → classify → route ──────────────────────
       let interpretBuffer = "";
       let outputClass: OutputClass | null = null;
+      let toolCallBuffer = ""; // Preserve tool call JSON for finalization
       let firstTokenReceived = false;
 
       for await (const chunk of knezClient.chatCompletionsStream(injectedMessages as any, sessionId, { signal: controller.signal, onMeta })) {
@@ -2900,6 +2910,10 @@ export class ChatService {
             logger.info("streaming", "classification_decided", { streamId, outputClass });
             // FIX: Always append to stream for UI visibility, regardless of classification
             this.streamController.appendChunk(streamId, interpretBuffer);
+            // FIX: Preserve tool call buffer for finalization
+            if (outputClass === "tool_call") {
+              toolCallBuffer = interpretBuffer;
+            }
             interpretBuffer = ""; // free buffer after flush
             
             if (outputClass === "plain_text") {
@@ -2919,6 +2933,8 @@ export class ChatService {
         } else if (outputClass === "tool_call") {
           // FIX: Append chunks for tool_call too - user needs to see the output
           this.streamController.appendChunk(streamId, chunk);
+          // FIX: Also append to toolCallBuffer to preserve full JSON
+          toolCallBuffer += chunk;
         }
       }
 
@@ -2953,7 +2969,9 @@ export class ChatService {
           await sessionDatabase.updateMessage(assistantId, { text: processedText, deliveryStatus: "delivered", isPartial: false, refusal: true });
         }
       } else if (outputClass === "tool_call" && ChatService.MCP_ENABLED) {
-        const interp = interpretOutput(interpretBuffer);
+        logger.info("output_interpreter", "tool_call_interpret_buffer", { buffer: toolCallBuffer, length: toolCallBuffer.length });
+        const interp = interpretOutput(toolCallBuffer);
+        logger.info("output_interpreter", "tool_call_interpret_result", { classification: interp.classification, hasToolCall: !!interp.toolCall, toolCall: interp.toolCall });
         if (interp.toolCall) {
           // Auto-approve all tool calls - no manual approval required
           try {

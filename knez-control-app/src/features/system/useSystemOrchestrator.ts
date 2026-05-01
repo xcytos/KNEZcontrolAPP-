@@ -3,6 +3,9 @@ import { Command, Child } from "@tauri-apps/plugin-shell";
 import { knezClient } from '../../services/knez/KnezClient';
 import { isOverallHealthyStatus } from "../../utils/health";
 import { logger } from '../../services/utils/LogService';
+import { circuitBreakerRegistry } from '../../utils/CircuitBreaker';
+import { serviceDegradationManager } from '../../services/resilience/ServiceDegradation';
+import { serviceDiscovery } from '../../services/resilience/ServiceDiscovery';
 
 export type SystemStatus = "idle" | "starting" | "running" | "failed" | "degraded";
 
@@ -31,22 +34,76 @@ export function useSystemOrchestrator(onReady?: () => void) {
   const isLaunching = useRef(false);
   const startupTimeoutRef = useRef<number | null>(null);
 
+  // Initialize resilience components
+  useEffect(() => {
+    // Create circuit breakers for critical services
+    circuitBreakerRegistry.create('ollama', {
+      failureThreshold: 3,
+      recoveryTimeout: 30000,
+      monitoringPeriod: 60000,
+      halfOpenMaxCalls: 2
+    });
+
+    circuitBreakerRegistry.create('knez-backend', {
+      failureThreshold: 5,
+      recoveryTimeout: 60000,
+      monitoringPeriod: 120000,
+      halfOpenMaxCalls: 3
+    });
+
+    // Subscribe to degradation level changes
+    const unsubscribe = serviceDegradationManager.onDegradationLevelChange((level, _services) => {
+      console.info(`[SystemOrchestrator] Service level changed to: ${level}`);
+      
+      // Update UI status based on degradation level
+      switch (level) {
+        case 'full':
+          // Keep current status, don't downgrade if already running
+          break;
+        case 'degraded':
+          if (status === 'running') {
+            setStatus('degraded');
+            setOutput(prev => prev + "\n[Degradation] Some services unavailable, using fallbacks.");
+          }
+          break;
+        case 'minimal':
+          setStatus('degraded');
+          setOutput(prev => prev + "\n[Degradation] Minimal service level active.");
+          break;
+        case 'offline':
+          setStatus('failed');
+          setOutput(prev => prev + "\n[Degradation] All services unavailable.");
+          break;
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [status]);
+
   // System requirements check
   const checkSystemRequirements = useCallback(async () => {
     setOutput((prev) => prev + "[System Check] Verifying requirements...");
-    
-    // Check Python - try both 'python' and 'python3'
+
+    // Check Python - try both 'python' and 'python3' with improved detection
     let pythonInstalled = false;
     const pythonCommands = ["python", "python3"];
     for (const cmd of pythonCommands) {
       try {
         const pythonCheck = Command.create("cmd", ["/c", cmd, "--version"]);
-        pythonCheck.on("close", (data) => {
-          if (data.code === 0) pythonInstalled = true;
+        const closePromise = new Promise<boolean>((resolve) => {
+          pythonCheck.on("close", (data) => {
+            resolve(data.code === 0);
+          });
         });
         await pythonCheck.spawn();
-        await new Promise(r => setTimeout(r, 500));
-        if (pythonInstalled) {
+        const success = await Promise.race([
+          closePromise,
+          new Promise<boolean>(r => setTimeout(() => r(false), 2000))
+        ]);
+        if (success) {
+          pythonInstalled = true;
           setOutput((prev) => prev + `[System Check] ✓ Python is installed (${cmd}).`);
           break;
         }
@@ -55,37 +112,19 @@ export function useSystemOrchestrator(onReady?: () => void) {
       }
     }
     if (!pythonInstalled) {
-      setOutput((prev) => prev + "[System Check] ✗ Python is not installed or not in PATH.");
-      return false;
+      setOutput((prev) => prev + "[System Check] ⚠ Python not detected in PATH. Will attempt to use Python from KNEZ path.");
+      // Don't fail - KNEZ may have its own Python or use virtual environment
     }
 
-    // Check Ollama - check if it's already running or can be spawned
-    let ollamaAvailable = false;
+    // Check Ollama - make it optional since it can be started later
     try {
-      // First check if Ollama is already running via HTTP
       const ollamaPort = (import.meta.env.VITE_OLLAMA_PORT as string) || "11434";
       const ollamaHttpCheck = await fetch(`http://localhost:${ollamaPort}/api/tags`, { signal: AbortSignal.timeout(2000) });
       if (ollamaHttpCheck.ok) {
-        ollamaAvailable = true;
         setOutput((prev) => prev + "[System Check] ✓ Ollama is already running and reachable.");
       }
     } catch {
-      // Not running, check if it can be spawned (check if ollama.exe exists in common paths)
-      try {
-        const ollamaPathCheck = Command.create("cmd", ["/c", "where", "ollama"]);
-        ollamaPathCheck.on("close", (data) => {
-          if (data.code === 0) ollamaAvailable = true;
-        });
-        await ollamaPathCheck.spawn();
-        await new Promise(r => setTimeout(r, 500));
-        if (ollamaAvailable) {
-          setOutput((prev) => prev + "[System Check] ✓ Ollama is installed and can be spawned.");
-        } else {
-          setOutput((prev) => prev + "[System Check] ⚠ Ollama not found in PATH, but will attempt to start if available.");
-        }
-      } catch {
-        setOutput((prev) => prev + "[System Check] ⚠ Ollama check skipped (will attempt startup anyway).");
-      }
+      setOutput((prev) => prev + "[System Check] ⚠ Ollama not running (will attempt to start).");
     }
 
     // Check port availability
@@ -98,8 +137,8 @@ export function useSystemOrchestrator(onReady?: () => void) {
       setOutput((prev) => prev + "[System Check] ✓ Port 8000 appears available.");
     }
 
-    setOutput((prev) => prev + "[System Check] All requirements met.\n");
-    return true;
+    setOutput((prev) => prev + "[System Check] Requirements check complete.\n");
+    return true; // Always return true - we'll handle missing dependencies during startup
   }, []);
 
   const launchAndConnect = useCallback(async (force?: boolean) => {
@@ -144,29 +183,46 @@ export function useSystemOrchestrator(onReady?: () => void) {
       }
     }, 120000);
 
-    // CP5-9: Fast-path Verification
-    // Check if already running first
+    // CP5-9: Fast-path Verification with Service Discovery
+    // Check if already running first using smart discovery
     let knezAlreadyRunning = false;
     try {
-      const existingHealth = await knezClient.health({ timeoutMs: 4500 });
-      if (isOverallHealthyStatus(existingHealth.status)) {
-        // Check if Ollama is also reachable
-        const ollamaReachable = existingHealth.ollama?.reachable ?? false;
-        if (ollamaReachable) {
-          // Both KNEZ and Ollama are healthy - fast-path is valid
-          setOutput((prev) => prev + "\n[Fast-Path] KNEZ is already running. Connected.");
-          setStatus("running");
-          setHealthProbe({ active: false, attempts: 0, maxAttempts: 0, lastError: "", lastCheckedAt: Date.now() });
-          if (onReady) onReady();
-          return;
-        } else {
-          // KNEZ is healthy but Ollama is not - skip fast-path, start Ollama only
-          knezAlreadyRunning = true;
-          setOutput((prev) => prev + "\n[Fast-Path] KNEZ is running but Ollama not reachable. Starting Ollama...");
+      setOutput((prev) => prev + "\n[Discovery] Checking for existing services...");
+      
+      // Use circuit breaker for health checks
+      const knezBreaker = circuitBreakerRegistry.get('knez-backend');
+      if (knezBreaker) {
+        const existingHealth = await knezBreaker.execute(async () => {
+          return await knezClient.health({ timeoutMs: 4500 });
+        });
+        
+        if (isOverallHealthyStatus(existingHealth.status)) {
+          // Check if Ollama is also reachable using service discovery
+          const ollamaResult = await serviceDiscovery.discoverService('ollama');
+          const ollamaReachable = ollamaResult.endpoint !== null;
+          
+          if (ollamaReachable) {
+            // Both KNEZ and Ollama are healthy - fast-path is valid
+            setOutput((prev) => prev + "\n[Fast-Path] KNEZ is already running. Connected.");
+            setOutput((prev) => prev + `[Fast-Path] Ollama found at: ${ollamaResult.endpoint?.url}`);
+            setStatus("running");
+            setHealthProbe({ active: false, attempts: 0, maxAttempts: 0, lastError: "", lastCheckedAt: Date.now() });
+            
+            // Update service degradation manager
+            await serviceDegradationManager.checkAllServices();
+            
+            if (onReady) onReady();
+            return;
+          } else {
+            // KNEZ is healthy but Ollama is not - skip fast-path, start Ollama only
+            knezAlreadyRunning = true;
+            setOutput((prev) => prev + "\n[Fast-Path] KNEZ is running but Ollama not reachable. Starting Ollama...");
+          }
         }
       }
     } catch {
       // Not running, proceed to full launch
+      setOutput((prev) => prev + "\n[Discovery] No existing services found, proceeding with full startup...");
     }
 
     // Launch Logic
@@ -213,10 +269,9 @@ export function useSystemOrchestrator(onReady?: () => void) {
 
         setOutput((prev) => prev + "[Ollama] Spawning ollama serve via PowerShell script...");
 
-        // Use named PowerShell command from capabilities for proper scope
-        const ollamaCommand = Command.create("powershell", [
-          "-ExecutionPolicy", "Bypass",
-          "-File", "scripts/start_ollama.ps1"
+        // Use cmd.exe to run PowerShell script (avoids shell plugin requirement)
+        const ollamaCommand = Command.create("cmd", [
+          "/c", "powershell", "-ExecutionPolicy", "Bypass", "-File", "scripts/start_ollama.ps1"
         ]);
         ollamaCommand.on("error", (error) => {
           setOutput((prev) => prev + `\n[Ollama Error] ${error}`);
@@ -301,7 +356,10 @@ export function useSystemOrchestrator(onReady?: () => void) {
         // Path validation
         setOutput((prev) => prev + "[KNEZ] Validating path...");
         try {
-          const testPathCommand = Command.create("cmd", ["/c", "if", "exist", knezPath, "(echo PATH_VALID)", "else", "(echo PATH_INVALID)"]);
+          const testPathCommand = Command.create("powershell", [
+            "-Command",
+            `if (Test-Path '${knezPath}') { Write-Output 'PATH_VALID' } else { Write-Output 'PATH_INVALID' }`
+          ]);
           testPathCommand.on("close", (data) => {
             if (data.code === 0) {
               setOutput((prev) => prev + "[KNEZ] ✓ Path validation passed.\n");
