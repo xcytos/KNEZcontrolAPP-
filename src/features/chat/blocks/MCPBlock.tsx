@@ -18,6 +18,13 @@ export const MCPBlock: React.FC<MCPBlockProps> = ({ block }) => {
     }
   };
 
+  const getStatusAnimation = () => {
+    switch (block.status) {
+      case 'running': return 'animate-pulse';
+      default: return '';
+    }
+  };
+
   const getStatusIcon = () => {
     switch (block.status) {
       case 'pending': return '⏳';
@@ -35,7 +42,7 @@ export const MCPBlock: React.FC<MCPBlockProps> = ({ block }) => {
         className="flex items-center gap-2 px-3 py-2 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors"
         onClick={() => setIsExpanded(!isExpanded)}
       >
-        <span className={getStatusColor()}>{getStatusIcon()}</span>
+        <span className={`${getStatusColor()} ${getStatusAnimation()}`}>{getStatusIcon()}</span>
         <span className="font-medium text-sm text-gray-700">
           {block.tool}
         </span>

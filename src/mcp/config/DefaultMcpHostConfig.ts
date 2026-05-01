@@ -16,7 +16,8 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
         command: "npx",
         args: ["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics"],
         env: {},
-        enabled: false,
+        enabled: true,
+        start_on_boot: true,
         tags: ["chrome", "devtools", "mcp", "npx"]
       },
       github_remote: {
@@ -27,7 +28,8 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
           "X-MCP-Toolsets": "repos,issues,pull_requests",
           "X-MCP-Readonly": "true"
         },
-        enabled: false,
+        enabled: true,
+        start_on_boot: true,
         tags: ["github", "mcp", "remote"]
       },
       github_local: {
@@ -67,7 +69,8 @@ export function getDefaultMcpHostConfig(): { raw: string; config: McpHostConfig 
         args: (rawObj.mcpServers as any).chrome_devtools.args.slice(),
         cwd: undefined,
         env: {},
-        enabled: false,
+        enabled: true,
+        start_on_boot: true,
         tags: (rawObj.mcpServers as any).chrome_devtools.tags.slice()
       },
       github_remote: {

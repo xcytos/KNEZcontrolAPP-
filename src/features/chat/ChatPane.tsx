@@ -52,7 +52,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [searchProvider, setSearchProvider] = useState<"off" | "taqwin" | "proxy">("off");
   const [insertAboveIdx, setInsertAboveIdx] = useState<number | null>(null);
   const [insertValue, setInsertValue] = useState("");
-  const [isMounted, setIsMounted] = useState(true);
   // Manual approval removed - tools auto-approve
   // const [pendingToolApproval, setPendingToolApproval] = useState<ChatState["pendingToolApproval"]>(null);
   const [inputValue, setInputValue] = useState("");
@@ -113,13 +112,6 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   useEffect(() => {
     setVisibleCount(50);
   }, [sessionId]);
-
-  // Cleanup on unmount to prevent stale state updates
-  useEffect(() => {
-    return () => {
-      setIsMounted(false);
-    };
-  }, []);
 
   const hiddenCount = Math.max(0, messages.length - visibleCount);
   const visibleMessages = messages.slice(-visibleCount);
@@ -185,15 +177,15 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   // Sync with Service
   useEffect(() => {
     const unsub = chatService.subscribe((state) => {
-      if (isMounted) {
-        setMessages(state.messages);
-        setAssistantMessages(state.assistantMessages);
-        // Phase removed from state - read from PhaseManager via getPhase()
-        setActiveTools(state.activeTools);
-        setSearchProvider(state.searchProvider);
-        // Manual approval removed - tools auto-approve
-        // setPendingToolApproval(state.pendingToolApproval);
-      }
+      // FIX: Remove isMounted guard - was blocking state updates in Tauri mode
+      // React's cleanup will handle unmounting correctly
+      setMessages(state.messages);
+      setAssistantMessages(state.assistantMessages);
+      // Phase removed from state - read from PhaseManager via getPhase()
+      setActiveTools(state.activeTools);
+      setSearchProvider(state.searchProvider);
+      // Manual approval removed - tools auto-approve
+      // setPendingToolApproval(state.pendingToolApproval);
     });
     return unsub;
   }, []);
@@ -201,9 +193,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   // Sync phase from PhaseManager (single source of truth)
   useEffect(() => {
     const interval = setInterval(() => {
-      if (isMounted) {
-        setPhase(chatService.getPhase());
-      }
+      setPhase(chatService.getPhase());
     }, 100); // Poll every 100ms for phase changes
     return () => clearInterval(interval);
   }, [sessionId]);
@@ -212,12 +202,10 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   useEffect(() => {
     const connectionManager = getConnectionManager();
     const handleConnectionChange = (state: any) => {
-      if (isMounted) {
-        setActiveConnectionType(state.activeConnectionType);
-      }
+      setActiveConnectionType(state.activeConnectionType);
     };
     const handleConnectionSwitch = (data: any) => {
-      if (isMounted && data.from === 'sse' && data.to === 'websocket') {
+      if (data.from === 'sse' && data.to === 'websocket') {
         setShowRetryWebSocket(true);
       }
     };
@@ -231,7 +219,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
 
   useEffect(() => {
     const unsub = sessionController.subscribe(({ sessionId: newSessionId }) => {
-      if (isMounted && newSessionId !== sessionId) {
+      if (newSessionId !== sessionId) {
         // Session changed, ChatPane will receive new sessionId via props
         logger.info("chat_pane", "session_changed", { 
           oldSessionId: sessionId, 

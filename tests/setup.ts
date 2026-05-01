@@ -1,148 +1,155 @@
-// Vitest setup file to mock IndexedDB for Node.js environment
-import { vi } from 'vitest';
+/**
+ * Test Setup Configuration
+ * 
+ * Global test configuration for Vitest testing framework
+ */
 
-// In-memory storage for IndexedDB mock
-const indexedDBStorage = new Map<string, Map<string, any>>();
+import { beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 
-class MockRequest {
-  constructor(public result: any = null) {
-    this.onsuccess = null;
-    this.onerror = null;
-  }
-  onsuccess: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-}
-
-class MockObjectStore {
-  constructor(private storeName: string, private dbName: string) {
-    if (!indexedDBStorage.has(dbName)) {
-      indexedDBStorage.set(dbName, new Map());
-    }
-    if (!indexedDBStorage.get(dbName)!.has(storeName)) {
-      indexedDBStorage.get(dbName)!.set(storeName, new Map());
-    }
-  }
-
-  private getStore(): Map<string, any> {
-    return indexedDBStorage.get(this.dbName)!.get(this.storeName)!;
-  }
-
-  add(data: any, key?: string): MockRequest {
-    const request = new MockRequest();
-    const store = this.getStore();
-    const id = key || data.id || data.toolName || Math.random().toString(36);
-    store.set(id, data);
-    request.result = id;
-    request.onsuccess?.();
-    return request;
-  }
-
-  get(key: string): MockRequest {
-    const request = new MockRequest();
-    const store = this.getStore();
-    request.result = store.get(key) || null;
-    request.onsuccess?.();
-    return request;
-  }
-
-  put(data: any, key?: string): MockRequest {
-    const request = new MockRequest();
-    const store = this.getStore();
-    const id = key || data.id || data.toolName;
-    store.set(id, data);
-    request.result = id;
-    request.onsuccess?.();
-    return request;
-  }
-
-  delete(key: string): MockRequest {
-    const request = new MockRequest();
-    const store = this.getStore();
-    store.delete(key);
-    request.onsuccess?.();
-    return request;
-  }
-
-  clear(): MockRequest {
-    const request = new MockRequest();
-    const store = this.getStore();
-    store.clear();
-    request.onsuccess?.();
-    return request;
-  }
-
-  getAll(): MockRequest {
-    const request = new MockRequest();
-    const store = this.getStore();
-    request.result = Array.from(store.values());
-    request.onsuccess?.();
-    return request;
-  }
-}
-
-class MockTransaction {
-  constructor(private db: MockDB, private storeNames: string[]) {}
-  oncomplete: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-
-  objectStore(storeName: string): MockObjectStore {
-    return new MockObjectStore(storeName, this.db.name);
-  }
-}
-
-class MockDB {
-  constructor(public name: string, public version: number) {
-    this.objectStoreNames = {
-      contains: (storeName: string) => indexedDBStorage.has(this.name) && indexedDBStorage.get(this.name)!.has(storeName),
-    };
-  }
-  
-  objectStoreNames: { contains: (name: string) => boolean };
-  
-  createObjectStore(name: string): void {
-    if (!indexedDBStorage.has(this.name)) {
-      indexedDBStorage.set(this.name, new Map());
-    }
-    indexedDBStorage.get(this.name)!.set(name, new Map());
-  }
-
-  transaction(storeNames: string[], mode?: string): MockTransaction {
-    return new MockTransaction(this, storeNames);
-  }
-
-  close(): void {
-    // No-op for mock
-  }
-}
-
-const mockOpenDB = vi.fn((name: string, version: number) => {
-  const request = new MockRequest();
-  const db = new MockDB(name, version);
-  request.result = db;
-  request.onsuccess?.();
-  return request;
+// Mock Tauri API for testing
+beforeAll(() => {
+  // Setup global mocks
+  global.console = {
+    ...console,
+    // Suppress console.log in tests unless needed
+    log: process.env.NODE_ENV === 'test' ? () => {} : console.log,
+  };
 });
 
-globalThis.indexedDB = {
-  open: mockOpenDB,
-  deleteDatabase: vi.fn((name: string) => {
-    const request = new MockRequest();
-    indexedDBStorage.delete(name);
-    request.onsuccess?.();
-    return request;
+beforeEach(() => {
+  // Reset any global state before each test
+  vi.clearAllMocks();
+});
+
+afterEach(() => {
+  // Cleanup after each test
+});
+
+afterAll(() => {
+  // Final cleanup
+});
+
+// Mock Tauri APIs
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(),
+}));
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(),
+  emit: vi.fn(),
+}));
+
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: vi.fn(),
+}));
+
+vi.mock('@tauri-apps/api/dialog', () => ({
+  ask: vi.fn(),
+  confirm: vi.fn(),
+  message: vi.fn(),
+}));
+
+vi.mock('@tauri-apps/api/fs', () => ({
+  readTextFile: vi.fn(),
+  writeTextFile: vi.fn(),
+  exists: vi.fn(),
+}));
+
+vi.mock('@tauri-apps/api/path', () => ({
+  join: vi.fn(),
+  resolve: vi.fn(),
+}));
+
+// Mock WebSocket for testing
+global.WebSocket = vi.fn().mockImplementation(() => ({
+  addEventListener: vi.fn(),
+  removeEventListener: vi.fn(),
+  send: vi.fn(),
+  close: vi.fn(),
+  readyState: 1,
+  CONNECTING: 0,
+  OPEN: 1,
+  CLOSING: 2,
+  CLOSED: 3,
+}));
+
+// Mock IndexedDB for testing
+const indexedDB = {
+  open: vi.fn().mockReturnValue({
+    onsuccess: null,
+    onerror: null,
+    onupgradeneeded: null,
   }),
-} as any;
+};
 
-// Mock localStorage
-const localStorageMock = (() => {
-  let store: Record<string, string> = {};
-  return {
-    getItem: (key: string) => store[key] || null,
-    setItem: (key: string, value: string) => (store[key] = value.toString()),
-    removeItem: (key: string) => delete store[key],
-    clear: () => (store = {}),
-  };
-})();
+Object.defineProperty(window, 'indexedDB', {
+  value: indexedDB,
+  writable: true,
+});
 
-globalThis.localStorage = localStorageMock as any;
-globalThis.sessionStorage = localStorageMock as any;
+// Mock localStorage for testing
+const localStorageMock = {
+  getItem: vi.fn(),
+  setItem: vi.fn(),
+  removeItem: vi.fn(),
+  clear: vi.fn(),
+  length: 0,
+  key: vi.fn(),
+};
+
+Object.defineProperty(window, 'localStorage', {
+  value: localStorageMock,
+  writable: true,
+});
+
+// Mock sessionStorage for testing
+const sessionStorageMock = {
+  getItem: vi.fn(),
+  setItem: vi.fn(),
+  removeItem: vi.fn(),
+  clear: vi.fn(),
+  length: 0,
+  key: vi.fn(),
+};
+
+Object.defineProperty(window, 'sessionStorage', {
+  value: sessionStorageMock,
+  writable: true,
+});
+
+// Mock fetch API for testing
+global.fetch = vi.fn();
+
+// Mock performance API
+global.performance = {
+  ...performance,
+  now: vi.fn(() => Date.now()),
+};
+
+// Mock ResizeObserver
+global.ResizeObserver = vi.fn().mockImplementation(() => ({
+  observe: vi.fn(),
+  unobserve: vi.fn(),
+  disconnect: vi.fn(),
+}));
+
+// Mock IntersectionObserver
+global.IntersectionObserver = vi.fn().mockImplementation(() => ({
+  observe: vi.fn(),
+  unobserve: vi.fn(),
+  disconnect: vi.fn(),
+}));
+
+// Mock MutationObserver
+global.MutationObserver = vi.fn().mockImplementation(() => ({
+  observe: vi.fn(),
+  disconnect: vi.fn(),
+}));
+
+// Setup test environment variables
+process.env.NODE_ENV = 'test';
+
+// Global test utilities
+declare global {
+  const vi: typeof import('vitest').vi;
+}

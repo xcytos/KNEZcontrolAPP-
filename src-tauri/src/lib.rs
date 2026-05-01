@@ -185,7 +185,17 @@ async fn mcp_request(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_http::init());
+    
+    #[cfg(feature = "e2e-testing")]
+    {
+        builder = builder.plugin(tauri_plugin_playwright::init());
+    }
+    
+    builder
         .setup(|app| {
             let automation = std::env::var("TAURI_E2E")
                 .ok()

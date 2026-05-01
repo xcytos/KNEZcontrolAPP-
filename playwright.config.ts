@@ -1,7 +1,7 @@
-import { defineConfig } from "@playwright/test";
+import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
-  testDir: "./tests/tauri-playwright",
+  testDir: "./tests",
   timeout: 120000,
   expect: { timeout: 15000 },
   fullyParallel: false,
@@ -11,5 +11,10 @@ export default defineConfig({
   use: {
     actionTimeout: 30000,
     trace: "on-first-retry",
+  },
+  webServer: {
+    command: 'npm run dev',
+    port: 5173,
+    reuseExistingServer: !process.env.CI,
   },
 });
