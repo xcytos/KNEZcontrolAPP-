@@ -21,7 +21,7 @@ import { tabErrorStore } from '../../services/infrastructure/error/TabErrorStore
 import { features } from '../../config/features';
 import { Badge } from '../ui/core/Badge';
 
-export type View = 'chat' | 'memory' | 'timeline' | 'reflection' | 'infrastructure' | 'mcp' | 'governance' | 'agent' | 'logs' | 'replay' | 'updates' | 'extraction' | 'diagnostics' | 'skills' | 'playground';
+export type View = 'chat' | 'memory' | 'timeline' | 'reflection' | 'infrastructure' | 'mcp' | 'governance' | 'agent' | 'logs' | 'replay' | 'updates' | 'extraction' | 'diagnostics' | 'skills' | 'playground' | 'raw-pty';
 
 export type PlaygroundView = 'playground';
 
@@ -80,6 +80,7 @@ export const Sidebar: FC<SidebarProps> = ({ activeView, onViewChange, tabErrors 
         { id: 'skills', label: 'Skills', icon: Wrench },
         ...(features.mcpViews ? [{ id: 'mcp' as const, label: 'MCP Registry', icon: Puzzle }] : []),
         { id: 'diagnostics', label: 'Diagnostics', icon: Cpu },
+        { id: 'raw-pty', label: 'Raw PTY', icon: TerminalSquare },
       ]
     },
     {

@@ -37,6 +37,7 @@ export class SessionPersistence {
           lastSaved: new Date(parsed.lastSaved)
         };
       }
+      return this.data;
     } catch (error) {
       console.error('[SessionPersistence] Failed to load session data:', error);
       return this.data;

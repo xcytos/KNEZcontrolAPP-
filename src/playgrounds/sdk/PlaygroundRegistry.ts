@@ -2,7 +2,7 @@ import {
   PlaygroundManifest, 
   RuntimeConfig, 
   RuntimeType,
-  PlaygroundCapabilities,
+  // PlaygroundCapabilities,
   Platform,
   LaunchStrategy 
 } from './PlaygroundManifest';
@@ -41,7 +41,7 @@ export class PlaygroundRegistry {
   }
 
   // Runtime management
-  async createRuntime(runtimeId: string, config: RuntimeConfig): Promise<any> {
+  async createRuntime(runtimeId: string, _config: RuntimeConfig): Promise<any> {
     const manifest = this.manifests.get(runtimeId);
     if (!manifest) {
       throw new Error(`Runtime ${runtimeId} not found`);
@@ -207,7 +207,7 @@ export const BUILTIN_MANIFESTS: PlaygroundManifest[] = [
       requiredShell: ['bash', 'zsh', 'powershell'],
       supportedPlatforms: [Platform.WINDOWS, Platform.LINUX, Platform.MACOS]
     },
-    launchStrategy: 'ipc_bridge',
+    launchStrategy: LaunchStrategy.IPC_BRIDGE,
     healthCheck: async () => {
       // TODO: Implement MCP Studio health check
       return { status: 'healthy', lastCheck: new Date() };

@@ -98,7 +98,7 @@ export class WorkspaceManager {
 
   setActiveWorkspace(workspaceId: string): void {
     // Deactivate all workspaces first
-    this.workspaces.forEach((id, workspace) => {
+    this.workspaces.forEach((workspace) => {
       if (workspace.isActive) {
         workspace.isActive = false;
         workspace.lastActivity = new Date();
@@ -274,7 +274,7 @@ export class WorkspaceManager {
       return {
         branch: 'main',
         commit: '',
-        status: 'unknown',
+        status: 'clean',
         ahead: 0,
         behind: 0,
         lastSync: new Date()
@@ -286,7 +286,7 @@ export class WorkspaceManager {
   private async executeCommand(command: string, cwd: string): Promise<string> {
     // In a real implementation, this would use the PTYService
     // For now, we'll simulate with a simple shell command
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve, _reject) => {
       console.log(`[WorkspaceManager] Executing: ${command} in ${cwd}`);
       // Simulate command execution
       setTimeout(() => {

@@ -59,6 +59,7 @@ export class PTYLifecycleManager {
   createPTY(ptyId: string): void {
     this.setState(ptyId, PTYState.CREATED);
     this.emitEvent('state_change', {
+      type: 'state_change',
       ptyId,
       state: PTYState.CREATED,
       reason: 'PTY instance created',
@@ -173,9 +174,11 @@ export class PTYLifecycleManager {
 
     this.stateMachines.set(ptyId, newState);
     this.emitEvent('state_change', {
+      type: 'state_change',
       ptyId,
       state: newState,
-      data: transition
+      data: transition,
+      timestamp: new Date()
     });
 
     // Log state transition
@@ -319,13 +322,13 @@ export class PTYLifecycleManager {
     }
 
     // Check for old connections
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-    const oldPTYs = states.filter(state => 
-      state === PTYState.RUNNING || state === PTYState.DETACHING
-    ).filter(ptyId => {
-      // This would need timestamp tracking in real implementation
-      return false; // Placeholder
-    });
+    // const _fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    // const _oldPTYs = states.filter(state => 
+    //   state === PTYState.RUNNING || state === PTYState.DETACHING
+    // ).filter(_ => {
+    //   // This would need timestamp tracking in real implementation
+    //   return false; // Placeholder
+    // });
 
     return {
       healthy: issues.length === 0,

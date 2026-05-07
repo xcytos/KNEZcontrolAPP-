@@ -108,7 +108,7 @@ export class PTYBridge {
     return handle;
   }
 
-  destroyBridge(bridgeId: string): Promise<void> {
+  async destroyBridge(bridgeId: string): Promise<void> {
     const handle = this.bridges.get(bridgeId);
     if (!handle) {
       throw new Error(`Bridge ${bridgeId} not found`);

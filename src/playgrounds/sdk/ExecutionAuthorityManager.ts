@@ -1,10 +1,7 @@
 import { 
-  RuntimeManager,
-  RuntimeConfig, 
-  RuntimeSession, 
-  PTYHandle,
-  PTYEvent
+  RuntimeManager
 } from './RuntimeManager';
+import { PTYHandle } from '../runtime/PTYService';
 
 export interface ExecutionCommand {
   id: string;

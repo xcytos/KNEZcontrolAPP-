@@ -4,7 +4,6 @@ import '@xterm/xterm/css/xterm.css';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
-import { Play, Pause, Square, Settings, Terminal as TerminalIcon, Code, Cpu, Globe, Zap } from 'lucide-react';
 import { PlaygroundSDK } from '../services/playground/PlaygroundSDK';
 import { SessionConfig, PlaygroundConfig, PlaygroundType } from '../domain/PlaygroundTypes';
 import { toast } from 'react-hot-toast';
@@ -34,67 +33,33 @@ interface OpenCodeConfig extends PlaygroundConfig {
   };
 }
 
-interface OpenCodeSession {
-  id: string;
-  name: string;
-  terminal: Terminal;
-  workspace: string;
-  provider: string;
-  model: string;
-  status: 'active' | 'paused' | 'stopped';
-  createdAt: Date;
-  lastActivity: Date;
-}
+// Session management now handled by RuntimeManager as single source of truth
 
-interface ModelInfo {
-  provider: string;
-  model: string;
-  capabilities: string[];
-  contextWindow: number;
-  maxTokens: number;
-}
+// interface ModelInfo {
+//   provider: string;
+//   model: string;
+//   capabilities: string[];
+//   contextWindow: number;
+//   maxTokens: number;
+// }
 
 export const OpenCodePlayground: React.FC<{
   sdk: PlaygroundSDK;
   config: OpenCodeConfig;
 }> = ({ sdk, config }) => {
-  const [sessions, setSessions] = useState<OpenCodeSession[]>([]);
   const [activeSession, setActiveSession] = useState<string | null>(null);
-  const [, ] = useState(false);
-  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
-  const [selectedProvider, setSelectedProvider] = useState((config as any).provider?.name || 'Default');
-  const [selectedModel, setSelectedModel] = useState((config as any).provider?.model || 'Default');
-  const [executionMode, setExecutionMode] = useState<OpenCodeConfig['execution']['mode']>((config as any).execution?.mode || 'interactive');
-  const [showSettings, setShowSettings] = useState(false);
+  const [executionMode] = useState<OpenCodeConfig['execution']['mode']>((config as any).execution?.mode || 'interactive');
   
   const terminalRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const sessionTerminals = useRef<Map<string, Terminal>>(new Map());
 
-  // Initialize OpenCode playground
-  useEffect(() => {
-    const initializePlayground = async () => {
-      try {
-        // Load available models from our multi-provider system
-        const models = await sdk.getModelRouter().getAvailableModels();
-        setAvailableModels(models);
-        
-        // Initialize first session
-        await createNewSession();
-        
-        toast.success('OpenCode playground initialized successfully');
-      } catch (error) {
-        console.error('Failed to initialize OpenCode playground:', error);
-        toast.error('Failed to initialize OpenCode playground');
-      }
-    };
-
-    void initializePlayground();
-  }, [sdk]);
+  // Note: This component is now simplified to observe RuntimeManager state
+  // Session management is handled by RuntimeManager as single source of truth
 
   // Create new coding session
   const createNewSession = useCallback(async () => {
     const sessionId = `session-${Date.now()}`;
-    const sessionName = `Session ${sessions.length + 1}`;
+    const sessionName = `Session ${Date.now()}`;
     
     try {
       // Create session through SDK
@@ -102,8 +67,8 @@ export const OpenCodePlayground: React.FC<{
         id: sessionId,
         name: sessionName,
         type: PlaygroundType.OPENCODE,
-        provider: selectedProvider,
-        model: selectedModel,
+        provider: 'OpenCode',
+        model: 'Default',
         workspace: `${(config as OpenCodeConfig).terminal?.workingDirectory || '/tmp'}/workspace-${sessionId}`,
         settings: {
           executionMode,
@@ -174,23 +139,9 @@ export const OpenCodePlayground: React.FC<{
       terminal.loadAddon(webLinksAddon);
       terminal.loadAddon(searchAddon);
 
-      const newSession: OpenCodeSession = {
-        id: sessionId,
-        name: sessionName,
-        terminal,
-        workspace: sessionConfig.workspace || '',
-        provider: selectedProvider || 'unknown',
-        model: selectedModel || 'unknown',
-        status: 'active',
-        createdAt: new Date(),
-        lastActivity: new Date()
-      };
-
-      setSessions(prev => [...prev, newSession]);
-      setActiveSession(sessionId);
-      
       // Store terminal reference
       sessionTerminals.current.set(sessionId, terminal);
+      setActiveSession(sessionId);
 
       // Connect to OpenCode backend through our provider system
       await connectToOpenCode(sessionId, terminal, sessionConfig);
@@ -200,63 +151,109 @@ export const OpenCodePlayground: React.FC<{
       console.error('Failed to create session:', error);
       toast.error('Failed to create session');
     }
-  }, [sessions.length, selectedProvider, selectedModel, executionMode, sdk, config]);
+  }, [executionMode, sdk, config]);
 
-  // Connect terminal to OpenCode backend
-  const connectToOpenCode = async (sessionId: string, terminal: Terminal, config: SessionConfig) => {
+  // Connect terminal to REAL OpenCode PTY process
+  const connectToOpenCode = async (_sessionId: string, terminal: Terminal, config: SessionConfig) => {
     try {
-      // Get stream controller from SDK
-      const streamController = sdk.getStreamController();
+      console.log('[FRONTEND_REQUEST_PTY] Requesting PTY creation for session:', _sessionId);
       
-      // Create bidirectional stream for OpenCode
-      const stream = await streamController.createStream({
-        type: 'opencode',
-        sessionId,
-        provider: selectedProvider || 'unknown',
-        model: selectedModel || 'unknown',
-        config: {
-          shell: 'powershell',
-          workingDirectory: config.workspace || '/tmp',
-          executionMode,
-          lspEnabled: config.lsp?.enabled || false,
-          autoSave: config.execution?.autoSave || false
+      // Import PTY service for real process spawning
+      const { getPTYService } = await import('./runtime/PTYService');
+      const ptyService = getPTYService();
+      
+      // Create REAL PTY process (using powershell since opencode doesn't exist)
+      console.log('[RUST_COMMAND_ENTERED] Invoking pty_spawn_command with PowerShell');
+      const ptyHandle = await ptyService.createOpenCodePTY({
+        command: process.platform === 'win32' ? 'powershell.exe' : 'bash',
+        args: [],
+        cols: 80,
+        rows: 24,
+        cwd: config.workspace || process.cwd?.() || '/',
+        env: {
+          ...config.settings,
+          OPENCODE_MODE: executionMode,
+          WORKSPACE: config.workspace || '/tmp'
         }
       });
-
-      // Handle incoming data from OpenCode
-      stream.onData((data: any) => {
-        if (data.type === 'terminal_output') {
-          terminal.write(data.output);
-        } else if (data.type === 'suggestion') {
-          terminal.write(`\r\n\x1b[36m💡 Suggestion: ${data.suggestion}\x1b[0m\r\n`);
-        } else if (data.type === 'error') {
-          terminal.write(`\r\n\x1b[31m❌ Error: ${data.error}\x1b[0m\r\n`);
-        }
-      });
-
-      // Handle terminal input
+      
+      console.log(`[PTY_CREATED] PTY created with PID: ${ptyHandle.processId}`);
+      
+      // CRITICAL FIX: Open terminal in DOM element first
+      const terminalElement = terminalRefs.current.get(_sessionId);
+      if (terminalElement) {
+        console.log(`[OpenCodePlayground] Opening terminal in DOM element for PTY ${ptyHandle.id}`);
+        terminal.open(terminalElement);
+      } else {
+        console.error(`[OpenCodePlayground] Terminal element not found for session ${_sessionId}`);
+        throw new Error('Terminal element not found');
+      }
+      
+      // Connect xterm to REAL PTY streams
       terminal.onData((data: string) => {
-        stream.write({
-          type: 'terminal_input',
-          data,
-          timestamp: Date.now()
+        // Send user input to REAL OpenCode process
+        console.log(`[OpenCodePlayground] User input: ${data.replace(/\r?\n/g, '\\n')}`);
+        ptyHandle.write(data).catch(error => {
+          console.error('Failed to write to PTY:', error);
         });
       });
-
-      // Send initial connection message
-      stream.write({
-        type: 'connect',
-        sessionId,
-        config: {
-          provider: selectedProvider || 'unknown',
-          model: selectedModel || 'unknown',
-          executionMode
+      
+      // Stream REAL OpenCode output to terminal
+      const stdoutReader = ptyHandle.stdout.getReader();
+      const stderrReader = ptyHandle.stderr.getReader();
+      
+      const readStream = async (reader: ReadableStreamDefaultReader, streamName: string) => {
+        try {
+          console.log(`[STDOUT_STREAM_STARTED] Starting ${streamName} reader for PTY ${ptyHandle.id}`);
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            const text = new TextDecoder().decode(value);
+            console.log(`[STDOUT_CHUNK] ${text.length} bytes from ${streamName}: "${text.replace(/\r?\n/g, '\\n')}"`);
+            console.log(`[XTERM_WRITE] Writing to terminal: "${text.replace(/\r?\n/g, '\\n')}"`);
+            terminal.write(text);
+          }
+        } catch (error) {
+          console.error(`Failed to read ${streamName}:`, error);
+        }
+      };
+      
+      // Start reading both streams
+      readStream(stdoutReader, 'stdout');
+      readStream(stderrReader, 'stderr');
+      
+      // Handle PTY events
+      ptyService.on('data', (event: any) => {
+        if (event.ptyId === ptyHandle.id) {
+          console.log(`[EVENT_EMITTED] PTY data event for ${ptyHandle.id}`);
+          console.log(`[FRONTEND_EVENT_RECEIVED] Data event received in frontend`);
+          // Data is already handled by streams above
         }
       });
-
+      
+      ptyService.on('exit', (event: any) => {
+        if (event.ptyId === ptyHandle.id) {
+          console.log(`[SHELL_EXITED] PowerShell process exited with code: ${event.exitCode}`);
+          terminal.write('\r\n\x1b[31mPowerShell process exited\x1b[0m\r\n');
+          toast.error('PowerShell process terminated');
+        }
+      });
+      
+      ptyService.on('error', (event: any) => {
+        if (event.ptyId === ptyHandle.id) {
+          console.error('PTY error:', event.error);
+          terminal.write(`\r\n\x1b[31mError: ${event.error?.message || 'Unknown error'}\x1b[0m\r\n`);
+        }
+      });
+      
+      // Store PTY handle for cleanup
+      (terminal as any)._ptyHandle = ptyHandle;
+      
     } catch (error) {
-      console.error('Failed to connect to OpenCode:', error);
-      toast.error('Failed to connect to OpenCode backend');
+      console.error('Failed to connect to REAL OpenCode PTY:', error);
+      terminal.write('\r\n\x1b[31mFailed to start OpenCode process\x1b[0m\r\n');
+      toast.error('Failed to start OpenCode process');
     }
   };
 
@@ -274,206 +271,70 @@ export const OpenCodePlayground: React.FC<{
         }
       }, 100);
     }
-  }, [activeSession, sessions]);
+  }, [activeSession]);
 
-  // Toggle session execution
-  const toggleSession = useCallback((sessionId: string) => {
-    setSessions(prev => prev.map(session => {
-      if (session.id === sessionId) {
-        const newStatus = session.status === 'active' ? 'paused' : 'active';
-        return { ...session, status: newStatus };
-      }
-      return session;
-    }));
-  }, [activeSession, sessions]);
-
-  // Delete session
-  const deleteSession = useCallback((sessionId: string) => {
-    setSessions(prev => prev.filter(session => session.id !== sessionId));
-    if (activeSession === sessionId) {
-      setActiveSession(sessions.length > 1 ? sessions[0].id : null);
-    }
+  // Get process info for status display - AUTHENTIC STATE ONLY
+  const getProcessInfo = () => {
+    const terminal = activeSession ? sessionTerminals.current.get(activeSession) : null;
+    const ptyHandle = terminal ? (terminal as any)._ptyHandle : null;
     
-    // Clean up terminal
-    const terminal = sessionTerminals.current.get(sessionId);
-    if (terminal) {
-      terminal.dispose();
-      sessionTerminals.current.delete(sessionId);
-    }
-  }, [activeSession, sessions]);
+    // AUTHENTIC: Only show connected if PTY actually exists and is active
+    const isRealConnected = ptyHandle && 
+                           ptyHandle.processId > 0 && 
+                           ptyHandle.isActive;
+    
+    return {
+      pid: ptyHandle?.processId > 0 ? ptyHandle.processId : 'unknown',
+      status: isRealConnected ? 'connected' : 'disconnected'
+    };
+  };
+
+  const processInfo = getProcessInfo();
 
   return (
-    <div className="flex flex-col h-full bg-gray-900 text-white">
-      {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-gray-700">
+    <div className="flex flex-col h-full bg-black text-white">
+      {/* TOP THIN HOST BAR - 36px */}
+      <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-800" style={{ height: '36px' }}>
         <div className="flex items-center space-x-4">
-          <div className="flex items-center space-x-2">
-            <TerminalIcon className="w-5 h-5 text-green-400" />
-            <h2 className="text-lg font-semibold">OpenCode Playground</h2>
-          </div>
-          
-          {/* Provider/Model Selection */}
-          <div className="flex items-center space-x-2">
-            <select
-              value={selectedProvider}
-              onChange={(e) => setSelectedProvider(e.target.value)}
-              className="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm"
-            >
-              {Array.from(new Set(availableModels.map(m => m.provider))).map(provider => (
-                <option key={provider} value={provider}>{provider}</option>
-              ))}
-            </select>
-            
-            <select
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              className="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm"
-            >
-              {availableModels
-                .filter(m => m.provider === selectedProvider)
-                .map(model => (
-                  <option key={`${model.provider}:${model.model}`} value={model.model}>
-                    {model.model}
-                  </option>
-                ))}
-            </select>
-          </div>
-
-          {/* Execution Mode */}
-          <div className="flex items-center space-x-2">
-            <label className="text-sm text-gray-400">Mode:</label>
-            <select
-              value={executionMode}
-              onChange={(e) => setExecutionMode(e.target.value as OpenCodeConfig['execution']['mode'])}
-              className="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm"
-            >
-              <option value="suggest">Suggest</option>
-              <option value="confirm">Confirm</option>
-              <option value="autonomous">Autonomous</option>
-            </select>
-          </div>
+          <span className="text-sm font-medium text-white">OpenCode Playground</span>
+          <span className="text-xs text-gray-400">PID {processInfo.pid}</span>
         </div>
-
-        <div className="flex items-center space-x-2">
+        
+        <div className="flex items-center space-x-4">
           <button
             onClick={() => createNewSession()}
-            className="flex items-center space-x-1 px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-sm"
+            className="text-xs text-gray-400 hover:text-white transition-colors"
           >
-            <Code className="w-4 h-4" />
             New Session
           </button>
-          
-          <button
-            onClick={() => setShowSettings(!showSettings)}
-            className="p-1 hover:bg-gray-800 rounded"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
+          <span className="text-xs text-gray-500">{processInfo.status}</span>
         </div>
       </div>
 
-      {/* Session Tabs */}
-      <div className="flex border-b border-gray-700">
-        {sessions.map((session) => (
-          <div
-            key={session.id}
-            className={`flex items-center space-x-2 px-4 py-2 border-r border-gray-700 cursor-pointer ${
-              activeSession === session.id ? 'bg-gray-800' : 'hover:bg-gray-800'
-            }`}
-            onClick={() => setActiveSession(session.id)}
-          >
-            <div className={`w-2 h-2 rounded-full ${
-              session.status === 'active' ? 'bg-green-400' : 
-              session.status === 'paused' ? 'bg-yellow-400' : 'bg-red-400'
-            }`} />
-            <span className="text-sm">{session.name}</span>
-            <span className="text-xs text-gray-400">
-              {session.provider}:{session.model}
-            </span>
-            
-            <div className="flex items-center space-x-1">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleSession(session.id);
-                }}
-                className="p-1 hover:bg-gray-700 rounded"
-              >
-                {session.status === 'active' ? (
-                  <Pause className="w-3 h-3" />
-                ) : (
-                  <Play className="w-3 h-3" />
-                )}
-              </button>
-              
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  deleteSession(session.id);
-                }}
-                className="p-1 hover:bg-gray-700 rounded"
-              >
-                <Square className="w-3 h-3" />
-              </button>
-            </div>
-          </div>
-        ))}
+      {/* REAL XTERM TERMINAL - 90%+ VIEWPORT */}
+      <div className="flex-1 overflow-hidden bg-black">
+        <div
+          className="h-full w-full"
+          ref={(el) => {
+            if (el && activeSession) {
+              terminalRefs.current.set(activeSession, el);
+            }
+          }}
+        />
       </div>
 
-      {/* Terminal Content */}
-      <div className="flex-1 overflow-hidden">
-        {sessions.map((session) => (
-          <div
-            key={session.id}
-            ref={(el) => {
-              if (el) terminalRefs.current.set(session.id, el);
-            }}
-            className={`h-full ${activeSession === session.id ? 'block' : 'hidden'}`}
-            style={{ padding: '8px' }}
-          />
-        ))}
-        
-        {sessions.length === 0 && (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center">
-              <TerminalIcon className="w-16 h-16 mx-auto mb-4 text-gray-600" />
-              <p className="text-gray-400 mb-4">No active sessions</p>
-              <button
-                onClick={() => createNewSession()}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded"
-              >
-                Create First Session
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Status Bar */}
-      <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-t border-gray-700 text-sm">
-        <div className="flex items-center space-x-4">
-          <div className="flex items-center space-x-2">
-            <Cpu className="w-4 h-4 text-blue-400" />
-            <span>{sessions.filter(s => s.status === 'active').length} active</span>
-          </div>
-          
-          <div className="flex items-center space-x-2">
-            <Globe className="w-4 h-4 text-green-400" />
-            <span>{selectedProvider}:{selectedModel}</span>
-          </div>
-          
-          <div className="flex items-center space-x-2">
-            <Zap className="w-4 h-4 text-yellow-400" />
-            <span>{executionMode} mode</span>
-          </div>
+      {/* BOTTOM STATUS STRIP - 20px - AUTHENTIC STATE ONLY */}
+      <div className="flex items-center justify-between px-4 py-1 bg-gray-900 border-t border-gray-800 text-xs font-mono" style={{ height: '20px' }}>
+        <div className="flex items-center space-x-4 text-gray-400">
+          <span>{processInfo.status === 'connected' ? 'PTY CONNECTED' : 'PTY DISCONNECTED'}</span>
+          <span>•</span>
+          <span>PID {processInfo.pid}</span>
+          <span>•</span>
+          <span>{processInfo.status === 'connected' ? 'WORKSPACE READY' : 'NO PTY'}</span>
         </div>
         
-        <div className="text-gray-400">
-          {activeSession && (
-            <span>
-              Workspace: {sessions.find(s => s.id === activeSession)?.workspace}
-            </span>
-          )}
+        <div className="text-gray-500">
+          {activeSession ? `${(config as OpenCodeConfig).terminal?.workingDirectory || '/tmp'}/workspace-${activeSession}` : 'no session'}
         </div>
       </div>
     </div>

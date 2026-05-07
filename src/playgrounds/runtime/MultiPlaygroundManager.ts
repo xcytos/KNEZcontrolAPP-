@@ -110,7 +110,7 @@ export class MultiPlaygroundManager {
     }
   }
 
-  setActivePlayground(sessionId: string, playgroundId: string): void {
+  setActivePlayground(_sessionId: string, playgroundId: string): void {
     // Find session containing the playground
     const sessionEntry = Array.from(this.sessions.entries()).find(([_, session]) => 
       session.playgrounds.includes(playgroundId)

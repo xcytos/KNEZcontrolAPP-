@@ -8,6 +8,9 @@ export interface PTYProofConfig {
   rows: number;
   cwd?: string;
   env?: Record<string, string>;
+  command?: string;
+  args?: string[];
+  playgroundId?: string;
 }
 
 export interface PTYProofResult {
@@ -67,12 +70,13 @@ export class SinglePTYProof {
         processId: ptyHandle.id,
         ptyId: ptyHandle.id,
         runtimeId: config.runtimeType,
-        playgroundId: 'proof-playground',
+        playgroundId: config.playgroundId || '',
         ownerType: 'user',
-        command: this.getCommandForRuntime(config.runtimeType),
-        args: this.getArgsForRuntime(config.runtimeType),
-        cwd: config.cwd || process.cwd(),
-        env: config.env || {}
+        command: config.command || '',
+        args: config.args || [],
+        cwd: config.cwd || '',
+        env: config.env || {},
+        status: 'running'
       });
 
       result.processId = this.processRegistry.getProcess(processId)?.pid;
@@ -185,9 +189,9 @@ export class SinglePTYProof {
   }
 
   private async waitForOutput(ptyHandle: any, expectedText: string): Promise<string> {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve, _reject) => {
       const timeout = setTimeout(() => {
-        reject(new Error('Timeout waiting for output'));
+        _reject(new Error('Timeout waiting for output'));
       }, 5000);
 
       const outputBuffer: string[] = [];
@@ -243,37 +247,37 @@ export class SinglePTYProof {
     });
 
     this.ptyService.on('error', (event: any) => {
-      if (Event.ptyId === ptyId) {
+      if (event.type === 'error' && event.ptyId === ptyId) {
         console.error(`[SinglePTYProof] PTY error: ${event.error}`);
       }
     });
   }
 
-  private getCommandForRuntime(runtimeType: string): string {
-    switch (runtimeType) {
-      case 'opencode':
-        return 'opencode';
-      case 'claudecode':
-        return 'claude';
-      case 'shell':
-        return process.platform === 'win32' ? 'cmd.exe' : 'bash';
-      default:
-        return process.platform === 'win32' ? 'cmd.exe' : 'bash';
-    }
-  }
+  // private _getCommandForRuntime(runtimeType: string): string {
+  //   switch (runtimeType) {
+  //     case 'opencode':
+  //       return 'opencode';
+  //     case 'claudecode':
+  //       return 'claude';
+  //     case 'shell':
+  //       return process.platform === 'win32' ? 'cmd.exe' : 'bash';
+  //     default:
+  //       return process.platform === 'win32' ? 'cmd.exe' : 'bash';
+  //   }
+  // }
 
-  private getArgsForRuntime(runtimeType: string): string[] {
-    switch (runtimeType) {
-      case 'opencode':
-        return [];
-      case 'claudecode':
-        return [];
-      case 'shell':
-        return [];
-      default:
-        return [];
-    }
-  }
+  // private _getArgsForRuntime(runtimeType: string): string[] {
+  //   switch (runtimeType) {
+  //     case 'opencode':
+  //       return [];
+  //     case 'claudecode':
+  //       return [];
+  //     case 'shell':
+  //       return [];
+  //     default:
+  //       return [];
+  //   }
+  // }
 }
 
 export function createSinglePTYProof(): SinglePTYProof {

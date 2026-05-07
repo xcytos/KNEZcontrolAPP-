@@ -1,14 +1,10 @@
 import { 
-  PlaygroundRuntime, 
   RuntimeConfig, 
-  RuntimeSession, 
-  SessionConfig, 
-  RuntimeHealth, 
   RuntimeMetrics, 
   PTYHandle, 
-  PTYEvent,
   Platform 
-} from '../PlaygroundManifest';
+} from '../PlaygroundTypes';
+import { PlaygroundRuntime } from '../PlaygroundRuntime';
 
 export class OpenCodeRuntime extends PlaygroundRuntime {
   constructor() {

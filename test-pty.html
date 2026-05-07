@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PTY Test</title>
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            background: #000; 
+            color: #fff; 
+            font-family: monospace; 
+        }
+        #terminal { 
+            width: 100vw; 
+            height: 90vh; 
+            background: #000; 
+        }
+        #status {
+            padding: 10px;
+            background: #1a1a1a;
+            border-bottom: 1px solid #333;
+            font-size: 12px;
+        }
+        #logs {
+            height: 150px;
+            background: #1a1a1a;
+            color: #0f0;
+            font-family: monospace;
+            font-size: 10px;
+            padding: 10px;
+            overflow: auto;
+            border-top: 1px solid #333;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <div id="status">Status: Initializing...</div>
+    <div id="terminal"></div>
+    <div id="logs">LOGS:\n</div>
+
+    <script type="module">
+        // Simple test without Tauri - just to validate the UI works
+        const terminal = document.getElementById('terminal');
+        const status = document.getElementById('status');
+        const logs = document.getElementById('logs');
+        
+        function addLog(message) {
+            console.log(message);
+            logs.textContent += new Date().toISOString() + ': ' + message + '\n';
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        addLog('PTY PROOF START');
+        addLog('SIMULATION MODE - No Tauri integration');
+        
+        // Simulate terminal output
+        let line = '';
+        const prompt = 'PS C:\\Users\\test> ';
+        
+        terminal.textContent = prompt;
+        
+        // Simulate typing
+        setTimeout(() => {
+            addLog('SIMULATING: opencode command');
+            terminal.textContent = prompt + 'opencode\r\n';
+            
+            setTimeout(() => {
+                terminal.textContent += 'opencode: command not found\r\n';
+                terminal.textContent += prompt;
+                addLog('SIMULATION COMPLETE');
+                status.textContent = 'Status: Simulation Complete - Ready for Tauri integration';
+            }, 1000);
+        }, 1000);
+
+        // Handle keyboard input (simulation)
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                terminal.textContent += '\r\n' + prompt;
+                addLog('INPUT: Enter pressed');
+            } else if (e.key.length === 1) {
+                terminal.textContent += e.key;
+            }
+        });
+    </script>
+</body>
+</html>

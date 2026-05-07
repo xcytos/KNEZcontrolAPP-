@@ -14,34 +14,13 @@ export interface OpenCodeConfig {
   rows?: number;
 }
 
-export interface ProcessInfo {
-  processId: string;
-  pid?: number;
-  ptyId?: string;
-  runtimeId: string;
-  playgroundId: string;
-  workspaceId?: string;
-  providerId?: string;
-  ownerType: 'user' | 'system' | 'playground' | 'provider';
-  command: string;
-  args: string[];
-  cwd: string;
-  env: Record<string, string>;
-  status: 'spawning' | 'attaching' | 'running' | 'detaching' | 'exited' | 'error';
-  createdAt: Date;
-  lastActivity: Date;
-  exitCode?: number;
-  metadata?: Record<string, any>;
-  error?: Error;
-}
-
 export interface OpenCodeProcess {
   processId: string;
   ptyId: string;
   workspacePath: string;
   model: string;
   provider: string;
-  status: 'spawning' | 'attaching' | 'running' | 'detaching' | 'exited' | 'error';
+  status: 'spawning' | 'running' | 'exited' | 'error' | 'exiting' | 'orphaned';
   createdAt: Date;
   lastActivity: Date;
   exitCode?: number;
@@ -187,14 +166,14 @@ export class OpenCodeLauncher {
         throw new Error(`OpenCode process ${processId} not found`);
       }
 
-      this.lifecycleManager.detachPTY(process.ptyId);
+      this.lifecycleManager.detachPTY(process.ptyId!);
       this.processRegistry.exitProcess(processId);
 
       // Step 2: Terminate process tree
       await this.processRegistry.terminateProcess(processId, 15); // SIGTERM
 
       // Step 3: Mark as exited
-      this.lifecycleManager.exitPTY(process.ptyId, 15);
+      this.lifecycleManager.exitPTY(process.ptyId!, 15);
       this.processRegistry.exitProcess(processId);
       
       console.log(`[OpenCodeLauncher] OpenCode process terminated: ${processId}`);
@@ -221,7 +200,7 @@ export class OpenCodeLauncher {
       createdAt: process.createdAt,
       lastActivity: process.lastActivity,
       exitCode: process.exitCode,
-      error: process.error
+      error: (process as any).error
     };
   }
 
@@ -236,7 +215,7 @@ export class OpenCodeLauncher {
       createdAt: process.createdAt,
       lastActivity: process.lastActivity,
       exitCode: process.exitCode,
-      error: process.error
+      error: (process as any).error
     }));
   }
 

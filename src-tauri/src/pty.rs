@@ -1,13 +1,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::process::{Command, Stdio};
-use std::io::{self, Write, BufRead, BufReader};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::io::{self, Write};
+use std::time::Instant;
 use serde::{Deserialize, Serialize};
-use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
-use futures::{SinkExt, StreamExt};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +39,7 @@ pub struct PTYMessage {
     pub rows: Option<u16>,
 }
 
+#[derive(Debug)]
 pub struct PTYProcess {
     pub id: String,
     pub child: Option<std::process::Child>,
@@ -64,7 +61,6 @@ impl PTYProcess {
 
     #[cfg(target_os = "windows")]
     pub fn spawn(&mut self) -> io::Result<()> {
-        use std::os::windows::process::CommandExt;
         use windows_sys::Win32::System::Console::{
             CreatePseudoConsole, GetStdHandle, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE,
             CONSOLE_MODE, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
@@ -86,11 +82,17 @@ impl PTYProcess {
         }
 
         // Set up ConPTY for Windows
-        let mut hpc = std::ptr::null_mut();
-        let mut hr = unsafe { CreatePseudoConsole(
-            self.config.cols.into(),
-            self.config.rows.into(),
-            &mut hpc as *mut _,
+        let hpc = std::ptr::null_mut();
+        let coord = windows_sys::Win32::System::Console::COORD {
+            X: self.config.cols as i16,
+            Y: self.config.rows as i16,
+        };
+        let hr = unsafe { CreatePseudoConsole(
+            coord,
+            0,
+            0,
+            0,
+            hpc,
         ) };
 
         if hr != 0 {
@@ -102,7 +104,7 @@ impl PTYProcess {
 
         // Configure console for virtual terminal processing
         let h_stdout = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) };
-        let h_stderr = unsafe { GetStdHandle(STD_ERROR_HANDLE) };
+        let _h_stderr = unsafe { GetStdHandle(STD_ERROR_HANDLE) };
         
         let mut mode: CONSOLE_MODE = 0;
         unsafe {
@@ -121,10 +123,12 @@ impl PTYProcess {
             Ok(child) => {
                 self.child = Some(child);
                 self.is_active = true;
+                println!("[SHELL_SPAWNED] Process {} spawned at {:?}", self.id, std::time::Instant::now());
                 Ok(())
             }
             Err(e) => {
                 self.is_active = false;
+                println!("[SHELL_SPAWN_FAILED] Failed to spawn process {}: {:?}", self.id, e);
                 Err(e)
             }
         }
@@ -206,8 +210,7 @@ impl PTYProcess {
         if let Some(ref mut child) = self.child {
             #[cfg(target_os = "windows")]
             {
-                use std::os::windows::process::CommandExt;
-                if let Some(sig) = signal {
+                if let Some(_sig) = signal {
                     // Windows-specific signal handling
                     child.kill()?;
                 } else {
@@ -256,14 +259,12 @@ impl PTYProcess {
 
 pub struct PTYService {
     processes: Arc<Mutex<HashMap<String, PTYProcess>>>,
-    websocket_clients: Arc<Mutex<HashMap<String, WebSocketStream<TcpStream>>>>,
 }
 
 impl PTYService {
     pub fn new() -> Self {
         Self {
             processes: Arc::new(Mutex::new(HashMap::new())),
-            websocket_clients: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -275,10 +276,6 @@ impl PTYService {
             Ok(()) => {
                 let mut processes = self.processes.lock().unwrap();
                 processes.insert(pty_id.clone(), process);
-                
-                // Start monitoring this PTY
-                self.start_pty_monitoring(pty_id.clone()).await;
-                
                 Ok(pty_id)
             }
             Err(e) => Err(format!("Failed to spawn PTY: {}", e)),
@@ -298,16 +295,6 @@ impl PTYService {
         let mut processes = self.processes.lock().unwrap();
         if let Some(process) = processes.get_mut(pty_id) {
             process.resize(cols, rows).map_err(|e| format!("Resize failed: {}", e))?;
-            
-            // Send resize message to WebSocket client
-            self.broadcast_message(PTYMessage {
-                pty_id: pty_id.to_string(),
-                r#type: "resize".to_string(),
-                cols: Some(cols),
-                rows: Some(rows),
-                ..Default::default()
-            }).await;
-            
             Ok(())
         } else {
             Err(format!("PTY {} not found", pty_id))
@@ -318,124 +305,10 @@ impl PTYService {
         let mut processes = self.processes.lock().unwrap();
         if let Some(mut process) = processes.remove(pty_id) {
             process.kill(signal).map_err(|e| format!("Kill failed: {}", e))?;
-            
-            // Send exit message to WebSocket client
-            self.broadcast_message(PTYMessage {
-                pty_id: pty_id.to_string(),
-                r#type: "exit".to_string(),
-                exit_code: Some(0),
-                ..Default::default()
-            }).await;
-            
             Ok(())
         } else {
             Err(format!("PTY {} not found", pty_id))
         }
-    }
-
-    async fn start_pty_monitoring(&self, pty_id: String) {
-        let processes = Arc::clone(&self.processes);
-        let websocket_clients = Arc::clone(&self.websocket_clients);
-        
-        tokio::spawn(async move {
-            let mut output_data = String::new();
-            
-            loop {
-                let process_clone = {
-                    let processes = processes.lock().unwrap();
-                    processes.get(&pty_id).cloned()
-                };
-                
-                if let Some(process) = process_clone {
-                    if !process.is_active {
-                        break;
-                    }
-                    
-                    // Read from stdout and stderr
-                    if let Some(ref child) = process.child {
-                        if let Some(ref mut stdout) = child.stdout {
-                            let mut reader = BufReader::new(stdout);
-                            let mut buffer = String::new();
-                            
-                            match reader.read_line(&mut buffer) {
-                                Ok(0) => break, // EOF
-                                Ok(_) => {
-                                    let message = PTYMessage {
-                                        pty_id: pty_id.clone(),
-                                        r#type: "data".to_string(),
-                                        data: Some(buffer.clone()),
-                                        stream: Some("stdout".to_string()),
-                                        ..Default::default()
-                                    };
-                                    
-                                    // Broadcast to WebSocket clients
-                                    let clients = websocket_clients.lock().unwrap();
-                                    for (_, ws_stream) in clients.iter() {
-                                        let mut ws = ws_stream.clone();
-                                        if let Ok(msg) = serde_json::to_string(&message) {
-                                            let _ = ws.send(Message::Text(msg)).await;
-                                        }
-                                    }
-                                    
-                                    buffer.clear();
-                                }
-                                Err(e) => {
-                                    eprintln!("Error reading PTY output: {}", e);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                } else {
-                    break;
-                }
-            }
-        });
-    }
-
-    async fn broadcast_message(&self, message: PTYMessage) {
-        let clients = self.websocket_clients.lock().unwrap();
-        for (_, ws_stream) in clients.iter() {
-            let mut ws = ws_stream.clone();
-            if let Ok(msg) = serde_json::to_string(&message) {
-                let _ = ws.send(Message::Text(msg)).await;
-            }
-        }
-    }
-
-    pub async fn start_websocket_server(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let listener = TcpListener::bind("127.0.0.1:8080").await?;
-        println!("PTY WebSocket server listening on ws://127.0.0.1:8080");
-        
-        let websocket_clients = Arc::clone(&self.websocket_clients);
-        
-        while let Ok((stream, addr)) = listener.accept().await {
-            println!("New WebSocket connection from: {}", addr);
-            
-            let ws_stream = tokio_tungstenite::accept_async(stream)
-                .await
-                .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
-            
-            let pty_id = Uuid::new_v4().to_string();
-            let mut clients = websocket_clients.lock().unwrap();
-            clients.insert(pty_id.clone(), ws_stream);
-            
-            // Handle this WebSocket connection
-            self.handle_websocket_connection(pty_id, websocket_clients.clone()).await;
-        }
-        
-        Ok(())
-    }
-
-    async fn handle_websocket_connection(
-        &self,
-        pty_id: String,
-        websocket_clients: Arc<Mutex<HashMap<String, WebSocketStream<TcpStream>>>>,
-    ) {
-        // Handle WebSocket messages for this connection
-        // This would process resize, write, kill commands from frontend
     }
 }
 
@@ -455,31 +328,83 @@ impl Default for PTYMessage {
 
 // Tauri commands
 #[tauri::command]
-async fn pty_create(config: PTYConfig) -> Result<String, String> {
+pub async fn pty_spawn_command(
+    pty_id: String,
+    command: String,
+    _args: Vec<String>,
+    cols: u16,
+    rows: u16,
+    cwd: Option<String>,
+    env: Option<std::collections::HashMap<String, String>>
+) -> Result<serde_json::Value, String> {
+    println!("[RUST_COMMAND_ENTERED] pty_spawn_command: {} with command: {}", pty_id, command);
+    
+    let config = PTYConfig {
+        cols,
+        rows,
+        cwd,
+        env,
+        shell: Some(command),
+    };
+    
+    let service = PTYService::new();
+    match service.create_pty(config).await {
+        Ok(created_pty_id) => {
+            println!("[PTY_CREATED] PTY created with ID: {}", created_pty_id);
+            
+            // Get process ID from the spawned process
+            let processes = service.processes.lock().unwrap();
+            if let Some(process) = processes.get(&created_pty_id) {
+                if let Some(ref child) = process.child {
+                    let pid = child.id();
+                    println!("[SHELL_SPAWNED] Process spawned with PID: {:?}", pid);
+                    println!("[PID_ASSIGNED] PID: {}", pid);
+                    
+                    return Ok(serde_json::json!({
+                        "processId": pid,
+                        "ptyId": created_pty_id
+                    }));
+                }
+            }
+            
+            Ok(serde_json::json!({
+                "processId": 0,
+                "ptyId": created_pty_id
+            }))
+        }
+        Err(e) => {
+            println!("[PTY_ERROR] Failed to create PTY: {}", e);
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn pty_create(config: PTYConfig) -> Result<String, String> {
     let service = PTYService::new();
     service.create_pty(config).await
 }
 
 #[tauri::command]
-async fn pty_write(pty_id: String, data: String) -> Result<(), String> {
+pub async fn pty_write(pty_id: String, data: String) -> Result<(), String> {
     let service = PTYService::new();
     service.write_to_pty(&pty_id, &data).await
 }
 
 #[tauri::command]
-async fn pty_resize(pty_id: String, cols: u16, rows: u16) -> Result<(), String> {
+pub async fn pty_resize(pty_id: String, cols: u16, rows: u16) -> Result<(), String> {
     let service = PTYService::new();
     service.resize_pty(&pty_id, cols, rows).await
 }
 
 #[tauri::command]
-async fn pty_kill(pty_id: String, signal: Option<i32>) -> Result<(), String> {
+pub async fn pty_kill(pty_id: String, signal: Option<i32>) -> Result<(), String> {
     let service = PTYService::new();
     service.kill_pty(&pty_id, signal).await
 }
 
 #[tauri::command]
-async fn pty_destroy(pty_id: String) -> Result<(), String> {
+pub async fn pty_destroy(pty_id: String) -> Result<(), String> {
     let service = PTYService::new();
     service.kill_pty(&pty_id, Some(9)).await // SIGKILL
 }

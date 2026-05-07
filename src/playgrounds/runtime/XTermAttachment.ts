@@ -2,7 +2,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
-import { PTYHandle, PTYEvent, PTYConfig } from './PTYService';
+import { PTYHandle } from './PTYService';
 
 export interface XTermConfig {
   theme?: 'dark' | 'light' | 'auto';
@@ -54,7 +54,7 @@ export class XTermAttachment {
       fontFamily: finalConfig.fontFamily,
       scrollback: finalConfig.scrollback,
       allowTransparency: finalConfig.allowTransparency,
-      theme: this.getTheme(finalConfig.theme),
+      theme: this.getTheme(finalConfig.theme || 'auto'),
       cols: 80,
       rows: 24
     });
@@ -152,7 +152,7 @@ export class XTermAttachment {
 
     if (attachment.ptyHandle) {
       // Clean up PTY streams
-      this.cleanupPTYStreams(attachmentId, attachment);
+      this.cleanupPTYStreams(attachmentId);
       attachment.ptyHandle = undefined;
     }
 
@@ -226,11 +226,11 @@ export class XTermAttachment {
     });
 
     // Handle terminal focus/blur
-    terminal.onFocus(() => {
+    terminal.textarea?.addEventListener('focus', () => {
       console.log(`Terminal ${attachmentId} focused`);
     });
 
-    terminal.onBlur(() => {
+    terminal.textarea?.addEventListener('blur', () => {
       console.log(`Terminal ${attachmentId} blurred`);
     });
 
@@ -291,7 +291,7 @@ export class XTermAttachment {
     readStderr();
   }
 
-  private cleanupPTYStreams(attachmentId: string, attachment: TerminalAttachment): void {
+  private cleanupPTYStreams(attachmentId: string): void {
     // Clean up stream readers
     // Note: Web Streams API doesn't have explicit close methods for readers
     // The streams will be closed when the PTY is destroyed

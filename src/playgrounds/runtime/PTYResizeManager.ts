@@ -19,7 +19,7 @@ export interface PTYResizeConfig {
 }
 
 export class PTYResizeManager {
-  private resizeObservers: Map<string, ResizeObserver> = new Map();
+  private resizeObservers: Map<string, { observer: ResizeObserver; element: HTMLElement }> = new Map();
   private resizeHistory: Map<string, PTYResizeEvent[]> = new Map();
   private config: PTYResizeConfig;
   private resizeTimers: Map<string, NodeJS.Timeout> = new Map();
@@ -49,13 +49,13 @@ export class PTYResizeManager {
     });
 
     resizeObserver.observe(element);
-    this.resizeObservers.set(ptyId, resizeObserver);
+    this.resizeObservers.set(ptyId, { observer: resizeObserver, element });
   }
 
   unobservePTY(ptyId: string): void {
-    const observer = this.resizeObservers.get(ptyId);
-    if (observer) {
-      observer.disconnect();
+    const observerData = this.resizeObservers.get(ptyId);
+    if (observerData) {
+      observerData.observer.disconnect();
       this.resizeObservers.delete(ptyId);
     }
   }
@@ -83,11 +83,9 @@ export class PTYResizeManager {
       return;
     }
 
-    // Get the observed element
-    const elements = Array.from(observer.target.values()) as HTMLElement[];
-    if (elements.length === 0) return;
-
-    const element = elements[0];
+    // Get observed element
+    const element = observer.element;
+    if (!element) return;
     
     // Calculate optimal size
     const rect = element.getBoundingClientRect();
@@ -161,7 +159,7 @@ export class PTYResizeManager {
   private getCharacterWidth(computedStyle: CSSStyleDeclaration): number {
     // Try to get character width from font metrics
     const fontSize = parseFloat(computedStyle.fontSize);
-    const fontFamily = computedStyle.fontFamily;
+    // const _fontFamily = computedStyle.fontFamily; // Unused
     
     // Default character width approximation (can be improved with actual font metrics)
     const charWidth = fontSize * 0.6; // Approximate monospace character width
@@ -227,8 +225,8 @@ export class PTYResizeManager {
   // Cleanup
   destroy(): void {
     // Clear all observers
-    this.resizeObservers.forEach(observer => {
-      observer.disconnect();
+    this.resizeObservers.forEach(observerData => {
+      observerData.observer.disconnect();
     });
     this.resizeObservers.clear();
 

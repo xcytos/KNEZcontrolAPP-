@@ -1,21 +1,17 @@
 import { 
-  PlaygroundManifest, 
   RuntimeConfig, 
   RuntimeStatus, 
   SessionConfig, 
   RuntimeSession, 
-  SessionStatus,
+  SessionStatus, 
   StreamConfig, 
   RuntimeStream, 
-  StreamType, 
-  StreamStatus,
+  StreamStatus, 
   RuntimeHealth,
   RuntimeMetrics,
   PTYHandle,
-  PTYEvent,
-  PTYEventHandler,
-  TerminalSize
-} from './PlaygroundManifest';
+  PlaygroundManifest
+} from './PlaygroundTypes';
 
 export abstract class PlaygroundRuntime {
   protected manifest: PlaygroundManifest;
@@ -101,7 +97,7 @@ export abstract class PlaygroundRuntime {
       session.status = SessionStatus.TERMINATING;
       
       // Clean up streams
-      for (const [streamId, stream] of session.streams) {
+      for (const [streamId, _stream] of session.streams) {
         await this.destroyStream(streamId);
       }
       
@@ -293,7 +289,7 @@ export abstract class PlaygroundRuntime {
       this.setStatus(RuntimeStatus.TERMINATING);
       
       // Stop all sessions
-      for (const [sessionId, session] of this.sessions) {
+      for (const [sessionId, _session] of this.sessions) {
         await this.destroySession(sessionId);
       }
       
