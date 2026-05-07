@@ -551,7 +551,7 @@ export class MonitoringBridge {
     return usage;
   }
 
-  private _getPeakTrafficTime(traffic: TrafficLog[]): string {
+  private _getPeakTrafficTime(_traffic: TrafficLog[]): string {
     // Simplified peak time calculation
     return '14:00'; // 2 PM
   }
@@ -566,7 +566,7 @@ export class MonitoringBridge {
     return usage;
   }
 
-  private _calculateTrends(metrics: MCPMetrics[]): any {
+  private _calculateTrends(_metrics: MCPMetrics[]): any {
     // Simplified trend calculation
     return {
       response_time_trend: 'stable',
@@ -584,7 +584,7 @@ export class MonitoringBridge {
     };
   }
 
-  private _generateRecommendations(summary: any, metrics: MCPMetrics[], traffic: TrafficLog[]): string[] {
+  private _generateRecommendations(summary: any, _metrics: MCPMetrics[], _traffic: TrafficLog[]): string[] {
     const recommendations: string[] = [];
 
     if (summary.error_rate > 0.05) {

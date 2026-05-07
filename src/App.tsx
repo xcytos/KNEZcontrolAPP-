@@ -16,11 +16,12 @@ import { AgentPane } from './features/agent/AgentPane';
 import { CognitivePanel } from './features/cognitive/CognitivePanel';
 import { GovernancePanel } from './features/governance/GovernancePanel';
 import { LogsPanel } from './features/logs/LogsPanel';
-import { ReplayPane } from './features/replay/ReplayPane';
 import { UpdatesPanel } from './features/updates/UpdatesPanel';
-import { ExtractionPanel } from './features/extraction/ExtractionPanel';
+import { ExtractionDashboard } from './features/extraction/ExtractionDashboard';
 import { TestPanel } from './features/diagnostics/TestPanel';
 import { SkillsView } from './features/skills/SkillsView';
+import { PlaygroundContainer } from './playgrounds/PlaygroundContainer';
+import { playgroundSDK } from './services/playground/PlaygroundSDK';
 import { PresenceState, McpRegistrySnapshot } from './domain/DataContracts';
 import { knezClient } from './services/knez/KnezClient';
 import { chatService } from './services/ChatService';
@@ -258,12 +259,12 @@ function AppContent() {
         );
       case 'logs':
         return <LogsPanel />;
-      case 'replay':
-        return <ReplayPane sessionId={sessionId} />;
+      case 'playground':
+        return <PlaygroundContainer sdk={playgroundSDK} />;
       case 'updates':
         return <UpdatesPanel />;
       case 'extraction':
-        return <ExtractionPanel />;
+        return <ExtractionDashboard />;
       case 'diagnostics':
         return <TestPanel />;
       case 'skills':

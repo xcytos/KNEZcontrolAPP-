@@ -340,7 +340,7 @@ export class TaqwinKnezIntegration {
   private initializeToolRegistry(): void {
     try {
       // Test tool registry functionality
-      const tools = this.toolBridge.getRegisteredTools();
+      this.toolBridge.getRegisteredTools();
       this.status.tool_registry_active = true;
     } catch (error) {
       console.error('Failed to initialize tool registry:', error);
@@ -351,7 +351,7 @@ export class TaqwinKnezIntegration {
   private initializeMonitoring(): void {
     try {
       // Test monitoring functionality
-      const health = this.monitoringBridge.getSystemHealth();
+      this.monitoringBridge.getSystemHealth();
       this.status.monitoring_active = true;
     } catch (error) {
       console.error('Failed to initialize monitoring:', error);
@@ -362,7 +362,7 @@ export class TaqwinKnezIntegration {
   private initializeSynchronization(): void {
     try {
       // Test synchronization functionality
-      const syncStatus = this.syncService.getSyncStatus();
+      this.syncService.getSyncStatus();
       this.status.sync_active = true;
     } catch (error) {
       console.error('Failed to initialize synchronization:', error);

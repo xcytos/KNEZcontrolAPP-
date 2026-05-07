@@ -62,11 +62,8 @@ export interface TaqwinLogEntry {
 
 export class MemoryLoaderBridge {
   private api = getUnifiedMemoryAPI();
-  private taqwinPath: string;
 
-  constructor(taqwinPath: string = '.taqwin') {
-    this.taqwinPath = taqwinPath;
-  }
+  constructor() {}
 
   /**
    * Load TAQWIN memory data from file system
@@ -376,17 +373,17 @@ export class MemoryLoaderBridge {
     return await this.api.createMemory(request);
   }
 
-  private async _updateMemoryFromMistake(mistake: TaqwinMistake): Promise<void> {
+  private async _updateMemoryFromMistake(_mistake: TaqwinMistake): Promise<void> {
     // Implementation would find existing memory by taqwin_id and update it
     // For now, this is a placeholder
   }
 
-  private async _updateMemoryFromTicket(ticket: TaqwinTicket): Promise<void> {
+  private async _updateMemoryFromTicket(_ticket: TaqwinTicket): Promise<void> {
     // Implementation would find existing memory by taqwin_id and update it
     // For now, this is a placeholder
   }
 
-  private async _createMemoryRelations(memoryIds: string[], memoryData: TaqwinMemoryData): Promise<void> {
+  private async _createMemoryRelations(_memoryIds: string[], _memoryData: TaqwinMemoryData): Promise<void> {
     // Implementation would create relations between related memories
     // For now, this is a placeholder
   }

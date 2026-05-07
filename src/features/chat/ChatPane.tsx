@@ -350,6 +350,26 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     }
   }, [phase]);
 
+  // Auto-trigger memory analysis after chat completion
+  useEffect(() => {
+    if (phase === "done" && sessionId && messages.length > 0) {
+      // Wait a moment then suggest memory sync
+      const timer = setTimeout(() => {
+        const lastAssistantMessage = [...messages].reverse().find(m => m.from === "assistant" || m.from === "knez");
+        if (lastAssistantMessage && !chatMemorySyncOpen) {
+          // Check if this conversation might contain learnings
+          const hasLearningIndicators = lastAssistantMessage.text.match(
+            /(learned|discovered|found|realized|important|key|insight|lesson|takeaway)/i
+          );
+          if (hasLearningIndicators) {
+            showToast("💡 This conversation may contain learnings. Check Menu → Sync Chat to Memory", "info");
+          }
+        }
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [phase, sessionId, messages.length, chatMemorySyncOpen]);
+
   // Track last failed assistant message ID for retry
   useEffect(() => {
     if (phase === "failed" && assistantMessages.length > 0) {

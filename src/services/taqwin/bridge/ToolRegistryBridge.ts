@@ -4,7 +4,6 @@
  */
 
 import { getUnifiedMemoryAPI } from '../../memory/shared/UnifiedMemoryAPI';
-import { UnifiedMemory } from '../../memory/shared/UnifiedMemoryDatabase';
 
 export interface TaqwinTool {
   name: string;
@@ -405,7 +404,7 @@ export class ToolRegistryBridge {
    */
   exportRegistry(): {
     tools: TaqwinTool[];
-    statistics: ReturnType<typeof this.getUsageStatistics>;
+    statistics: { total_executions: number; success_rate: number; average_execution_time: number; tool_usage: Record<string, number>; category_usage: Record<string, number> };
     exported_at: string;
   } {
     return {

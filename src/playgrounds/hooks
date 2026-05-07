@@ -1,0 +1,198 @@
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { 
+  ExecutionAuthorityService, 
+  getExecutionAuthority, 
+  ExecutionEvent, 
+  ExecutionCommand, 
+  ExecutionResult, 
+  ProcessConfig, 
+  IsolatedProcess 
+} from '../sdk/ExecutionAuthorityService';
+
+export interface UseExecutionAuthorityReturn {
+  // Execution methods
+  executeCommand: (command: ExecutionCommand) => Promise<ExecutionResult>;
+  createIsolatedProcess: (config: ProcessConfig) => Promise<IsolatedProcess>;
+  terminateProcess: (processId: string) => Promise<void>;
+  
+  // State
+  activeExecutions: ExecutionCommand[];
+  isolatedProcesses: IsolatedProcess[];
+  isExecuting: boolean;
+  
+  // Event handling
+  onExecutionEvent: (event: ExecutionEvent) => void;
+  
+  // Cleanup
+  shutdown: () => Promise<void>;
+}
+
+export function useExecutionAuthority(): UseExecutionAuthorityReturn {
+  const [activeExecutions, setActiveExecutions] = useState<ExecutionCommand[]>([]);
+  const [isolatedProcesses, setIsolatedProcesses] = useState<IsolatedProcess[]>([]);
+  const [isExecuting, setIsExecuting] = useState(false);
+  
+  const serviceRef = useRef<ExecutionAuthorityService | null>(null);
+  const eventListenersRef = useRef<Map<string, Function>>(new Map());
+
+  // Initialize service
+  useEffect(() => {
+    if (!serviceRef.current) {
+      serviceRef.current = getExecutionAuthority();
+      
+      // Set up event listeners
+      const service = serviceRef.current;
+      
+      const updateActiveExecutions = () => {
+        setActiveExecutions(service.getActiveExecutions());
+        setIsExecuting(service.getActiveExecutions().length > 0);
+      };
+
+      const updateIsolatedProcesses = () => {
+        setIsolatedProcesses(service.getIsolatedProcesses());
+      };
+
+      service.on('execution_started', updateActiveExecutions);
+      service.on('execution_completed', updateActiveExecutions);
+      service.on('execution_error', updateActiveExecutions);
+      service.on('process_created', updateIsolatedProcesses);
+      service.on('process_terminated', updateIsolatedProcesses);
+
+      // Initial state
+      updateActiveExecutions();
+      updateIsolatedProcesses();
+
+      // Store cleanup function
+      return () => {
+        service.off('execution_started', updateActiveExecutions);
+        service.off('execution_completed', updateActiveExecutions);
+        service.off('execution_error', updateActiveExecutions);
+        service.off('process_created', updateIsolatedProcesses);
+        service.off('process_terminated', updateIsolatedProcesses);
+      };
+    }
+  }, []);
+
+  // Execute command
+  const executeCommand = useCallback(async (command: ExecutionCommand): Promise<ExecutionResult> => {
+    const service = serviceRef.current;
+    if (!service) {
+      throw new Error('Execution authority service not initialized');
+    }
+
+    return await service.executeCommand(command);
+  }, []);
+
+  // Create isolated process
+  const createIsolatedProcess = useCallback(async (config: ProcessConfig): Promise<IsolatedProcess> => {
+    const service = serviceRef.current;
+    if (!service) {
+      throw new Error('Execution authority service not initialized');
+    }
+
+    return await service.createIsolatedProcess(config);
+  }, []);
+
+  // Terminate process
+  const terminateProcess = useCallback(async (processId: string): Promise<void> => {
+    const service = serviceRef.current;
+    if (!service) {
+      throw new Error('Execution authority service not initialized');
+    }
+
+    return await service.terminateProcess(processId);
+  }, []);
+
+  // Event handling
+  const onExecutionEvent = useCallback((event: ExecutionEvent) => {
+    const service = serviceRef.current;
+    if (!service) return;
+
+    // Emit the event through the service
+    const listenerId = `listener-${Date.now()}`;
+    
+    if (!eventListenersRef.current.has(event.type)) {
+      service.on(event.type, (e: ExecutionEvent) => {
+        const listeners = eventListenersRef.current.get(event.type);
+        if (listeners) {
+          listeners(e);
+        }
+      });
+    }
+  }, []);
+
+  // Shutdown
+  const shutdown = useCallback(async (): Promise<void> => {
+    const service = serviceRef.current;
+    if (service) {
+      await service.shutdown();
+      serviceRef.current = null;
+    }
+  }, []);
+
+  return {
+    executeCommand,
+    createIsolatedProcess,
+    terminateProcess,
+    activeExecutions,
+    isolatedProcesses,
+    isExecuting,
+    onExecutionEvent,
+    shutdown
+  };
+}
+
+// Hook for specific runtime execution
+export function useRuntimeExecution(runtimeId: string) {
+  const { executeCommand, ...rest } = useExecutionAuthority();
+
+  const executeInRuntime = useCallback(async (command: string, args?: string[], env?: Record<string, string>, cwd?: string): Promise<ExecutionResult> => {
+    const executionCommand: ExecutionCommand = {
+      id: `exec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      runtimeId,
+      command,
+      args,
+      env,
+      cwd
+    };
+
+    return await executeCommand(executionCommand);
+  }, [executeCommand, runtimeId]);
+
+  return {
+    ...rest,
+    executeInRuntime
+  };
+}
+
+// Hook for process management
+export function useProcessManagement() {
+  const { createIsolatedProcess, terminateProcess, isolatedProcesses, ...rest } = useExecutionAuthority();
+
+  const createProcess = useCallback(async (command: string, args?: string[], options?: Partial<ProcessConfig>): Promise<IsolatedProcess> => {
+    const config: ProcessConfig = {
+      command,
+      args,
+      ...options
+    };
+
+    return await createIsolatedProcess(config);
+  }, [createIsolatedProcess]);
+
+  const findProcess = useCallback((processId: string): IsolatedProcess | undefined => {
+    return isolatedProcesses.find(p => p.id === processId);
+  }, [isolatedProcesses]);
+
+  const getProcessesByStatus = useCallback((status: IsolatedProcess['status']): IsolatedProcess[] => {
+    return isolatedProcesses.filter(p => p.status === status);
+  }, [isolatedProcesses]);
+
+  return {
+    ...rest,
+    createProcess,
+    terminateProcess,
+    isolatedProcesses,
+    findProcess,
+    getProcessesByStatus
+  };
+}

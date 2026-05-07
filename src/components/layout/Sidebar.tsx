@@ -21,7 +21,9 @@ import { tabErrorStore } from '../../services/infrastructure/error/TabErrorStore
 import { features } from '../../config/features';
 import { Badge } from '../ui/core/Badge';
 
-export type View = 'chat' | 'memory' | 'timeline' | 'reflection' | 'infrastructure' | 'mcp' | 'governance' | 'agent' | 'logs' | 'replay' | 'updates' | 'extraction' | 'diagnostics' | 'skills';
+export type View = 'chat' | 'memory' | 'timeline' | 'reflection' | 'infrastructure' | 'mcp' | 'governance' | 'agent' | 'logs' | 'replay' | 'updates' | 'extraction' | 'diagnostics' | 'skills' | 'playground';
+
+export type PlaygroundView = 'playground';
 
 interface SidebarProps {
   activeView: View;
@@ -67,6 +69,7 @@ export const Sidebar: FC<SidebarProps> = ({ activeView, onViewChange, tabErrors 
         { id: 'chat', label: 'Chat', icon: MessageSquare },
         { id: 'agent', label: 'Agent Loop', icon: Activity },
         { id: 'memory', label: 'Memory', icon: Brain },
+        { id: 'playground', label: 'Playground', icon: TerminalSquare },
       ]
     },
     {

@@ -1461,6 +1461,9 @@ export class ChatService {
       this.streamController.reset();
     }
     
+    // CRITICAL: Reset phase to idle to clear UI state
+    this.resetToIdle();
+    
     logger.info("chat_service", "force_stop_fsm_bypass_complete", { sessionId });
   }
 

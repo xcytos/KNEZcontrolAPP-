@@ -65,6 +65,9 @@ export interface MemoryCreatedEventData extends MemoryEventData {
   domain: string;
   tags: string[];
   metadata?: Record<string, unknown>;
+  sessionId?: string;
+  sessionName?: string;
+  sourceMessageIds?: string[];
 }
 
 export interface MemoryUpdatedEventData extends MemoryEventData {
@@ -79,9 +82,25 @@ export class MemoryEventSourcingService {
   private db: any;
 
   constructor(dbPath: string = '.taqwin/memory/events.db') {
-    this.db = new Database(dbPath);
-    this.initializeDatabase();
-    this.configurePerformance();
+    // Ensure absolute path for proper database creation
+    const absolutePath = dbPath.startsWith('/') ? dbPath : 
+      dbPath.startsWith('.') ? dbPath : `./${dbPath}`;
+    
+    console.log('MemoryEventSourcingService: Initializing database at:', absolutePath);
+    
+    try {
+      this.db = new Database(absolutePath);
+      this.initializeDatabase();
+      this.configurePerformance();
+      console.log('MemoryEventSourcingService: Database initialized successfully');
+    } catch (error) {
+      console.error('MemoryEventSourcingService: Failed to initialize database:', error);
+      // Fallback to in-memory database
+      this.db = new Database(':memory:');
+      this.initializeDatabase();
+      this.configurePerformance();
+      console.warn('MemoryEventSourcingService: Using in-memory database as fallback');
+    }
   }
 
   private initializeDatabase(): void {
@@ -159,7 +178,10 @@ export class MemoryEventSourcingService {
     content: string,
     domain: string,
     tags: string[] = [],
-    metadata: Record<string, unknown> = {}
+    metadata: Record<string, unknown> = {},
+    sessionId?: string,
+    sessionName?: string,
+    sourceMessageIds?: string[]
   ): Promise<string> {
     const memoryId = uuidv4();
     const timestamp = new Date().toISOString();
@@ -174,7 +196,10 @@ export class MemoryEventSourcingService {
         content,
         domain,
         tags,
-        metadata
+        metadata,
+        sessionId,
+        sessionName,
+        sourceMessageIds
       } as MemoryCreatedEventData,
       timestamp,
       sequence: 1
@@ -278,13 +303,6 @@ export class MemoryEventSourcingService {
    * Append a new event to the event store
    */
   async appendEvent(event: MemoryEvent): Promise<void> {
-    const stmt = this.db.prepare(`
-      INSERT INTO events (
-        event_id, event_type, aggregate_id, event_data, 
-        timestamp, sequence, causation_id, correlation_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
     try {
       this.db.exec('BEGIN TRANSACTION');
 
@@ -295,11 +313,21 @@ export class MemoryEventSourcingService {
         throw new Error(`Sequence mismatch for aggregate ${event.aggregateId}. Expected ${nextSequence}, got ${event.sequence}`);
       }
 
+      const stmt = this.db.prepare(`
+        INSERT INTO events (
+          event_id, event_type, aggregate_id, event_data, 
+          timestamp, sequence, causation_id, correlation_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      const eventDataJson = JSON.stringify(event.eventData);
+      console.log('Appending event with data length:', eventDataJson.length);
+      
       stmt.run(
         event.eventId,
         event.eventType,
         event.aggregateId,
-        JSON.stringify(event.eventData),
+        eventDataJson,
         event.timestamp,
         event.sequence,
         event.causationId || null,

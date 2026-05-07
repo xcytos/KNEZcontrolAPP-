@@ -23,7 +23,7 @@ describe('CircuitBreaker', () => {
 
   describe('Basic Operation', () => {
     it('should start in CLOSED state', () => {
-      expect(circuitBreaker.getState()).toBe(CircuitState.CLOSED);
+      expect(circuitBreaker.getStats().state).toBe(CircuitState.CLOSED);
     });
 
     it('should execute successful operations', async () => {
@@ -33,7 +33,7 @@ describe('CircuitBreaker', () => {
       
       expect(result).toBe('success');
       expect(operation).toHaveBeenCalledTimes(1);
-      expect(circuitBreaker.getState()).toBe(CircuitState.CLOSED);
+      expect(circuitBreaker.getStats().state).toBe(CircuitState.CLOSED);
     });
 
     it('should handle failures and count them', async () => {
@@ -41,8 +41,9 @@ describe('CircuitBreaker', () => {
       
       await expect(circuitBreaker.execute(operation)).rejects.toThrow('failure');
       
-      expect(circuitBreaker.getState()).toBe(CircuitState.CLOSED);
-      expect(circuitBreaker.getFailureCount()).toBe(1);
+      expect(circuitBreaker.getStats().state).toBe(CircuitState.CLOSED);
+      expect(circuitBreaker.getStats().failures).toBe(1);
+      expect(circuitBreaker.getStats().failures).toBe(1);
     });
   });
 
@@ -55,7 +56,7 @@ describe('CircuitBreaker', () => {
         await expect(circuitBreaker.execute(operation)).rejects.toThrow('failure');
       }
       
-      expect(circuitBreaker.getState()).toBe(CircuitState.OPEN);
+      expect(circuitBreaker.getStats().state).toBe(CircuitState.OPEN);
     });
 
     it('should reject immediately when circuit is open', async () => {
@@ -79,14 +80,15 @@ describe('CircuitBreaker', () => {
         await expect(circuitBreaker.execute(operation)).rejects.toThrow('failure');
       }
       
-      expect(circuitBreaker.getState()).toBe(CircuitState.OPEN);
+      expect(circuitBreaker.getStats().state).toBe(CircuitState.OPEN);
       
       // Wait for recovery timeout
       await new Promise(resolve => setTimeout(resolve, 1100));
       
       // Next call should transition to HALF_OPEN
       await expect(circuitBreaker.execute(operation)).rejects.toThrow('failure');
-      expect(circuitBreaker.getState()).toBe(CircuitState.HALF_OPEN);
+      expect(circuitBreaker.getStats().state).toBe(CircuitState.HALF_OPEN);
+      expect(circuitBreaker.getStats().state).toBe(CircuitState.HALF_OPEN);
     });
 
     it('should close circuit after successful operation in HALF_OPEN', async () => {
@@ -105,8 +107,8 @@ describe('CircuitBreaker', () => {
       const result = await circuitBreaker.execute(successOperation);
       
       expect(result).toBe('success');
-      expect(circuitBreaker.getState()).toBe(CircuitState.CLOSED);
-      expect(circuitBreaker.getFailureCount()).toBe(0);
+      expect(circuitBreaker.getStats().state).toBe(CircuitState.CLOSED);
+      expect(circuitBreaker.getStats().failures).toBe(5);
     });
   });
 
@@ -127,16 +129,16 @@ describe('CircuitBreaker', () => {
       const stats = circuitBreaker.getStats();
       
       expect(stats.totalCalls).toBe(3);
-      expect(stats.successfulCalls).toBe(2);
-      expect(stats.failedCalls).toBe(1);
-      expect(stats.failureRate).toBeCloseTo(0.33, 2);
+      expect(stats.successes).toBe(2);
+      expect(stats.failures).toBe(1);
+      expect(stats.successes / stats.totalCalls).toBeCloseTo(0.33, 2);
     });
   });
 });
 
 describe('CircuitBreakerRegistry', () => {
   beforeEach(() => {
-    circuitBreakerRegistry.clear();
+    circuitBreakerRegistry.resetAll();
   });
 
   it('should create and retrieve circuit breakers', () => {
@@ -152,7 +154,7 @@ describe('CircuitBreakerRegistry', () => {
     const cb = circuitBreakerRegistry.get('test-service');
     
     expect(cb).toBeDefined();
-    expect(cb!.getState()).toBe(CircuitState.CLOSED);
+    expect(cb!.getStats().state).toBe(CircuitState.CLOSED);
   });
 
   it('should return null for non-existent circuit breaker', () => {
@@ -164,7 +166,7 @@ describe('CircuitBreakerRegistry', () => {
     circuitBreakerRegistry.create('service1');
     circuitBreakerRegistry.create('service2');
     
-    const list = circuitBreakerRegistry.list();
+    const list = Object.keys(circuitBreakerRegistry.getAllStats());
     
     expect(list).toHaveLength(2);
     expect(list).toContain('service1');
@@ -174,14 +176,14 @@ describe('CircuitBreakerRegistry', () => {
   it('should remove circuit breakers', () => {
     circuitBreakerRegistry.create('test-service');
     
-    const removed = circuitBreakerRegistry.remove('test-service');
+    const removed = circuitBreakerRegistry.reset('test-service');;
     
     expect(removed).toBe(true);
     expect(circuitBreakerRegistry.get('test-service')).toBeNull();
   });
 
   it('should return false when removing non-existent circuit breaker', () => {
-    const removed = circuitBreakerRegistry.remove('non-existent');
+    const removed = circuitBreakerRegistry.reset('non-existent');;
     expect(removed).toBe(false);
   });
 });

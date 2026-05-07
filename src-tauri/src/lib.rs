@@ -183,6 +183,251 @@ async fn mcp_request(
         .map_err(|e| e.to_string())?
 }
 
+// Extraction Pipeline Integration Commands
+#[derive(Debug, Serialize, Deserialize)]
+struct ExtractionSession {
+    session_id: String,
+    name: String,
+    status: String,
+    created_at: String,
+    event_count: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PipelineStatus {
+    extractor_running: bool,
+    mcp_server_running: bool,
+    api_server_port: u16,
+    last_pipeline_run: Option<String>,
+    total_sessions: u32,
+}
+
+#[tauri::command]
+async fn extractor_get_sessions() -> Result<Vec<ExtractionSession>, String> {
+    let client = reqwest::Client::new();
+    let response = client
+        .get("http://127.0.0.1:8000/sessions")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to connect to extractor API: {}", e))?;
+    
+    let data: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    
+    let sessions = data["sessions"]
+        .as_array()
+        .ok_or("Invalid sessions format")?
+        .iter()
+        .map(|s| ExtractionSession {
+            session_id: s["session_id"].as_str().unwrap_or("unknown").to_string(),
+            name: s["summary"].as_str().unwrap_or("No summary").to_string(),
+            status: "completed".to_string(),
+            created_at: s["start_time"].as_str().unwrap_or("").to_string(),
+            event_count: s["event_count"].as_u64().unwrap_or(0) as u32,
+        })
+        .collect();
+    
+    Ok(sessions)
+}
+
+#[tauri::command]
+async fn extractor_get_session_details(session_id: String) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&format!("http://127.0.0.1:8000/sessions/{}", session_id))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to get session details: {}", e))?;
+    
+    let data: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse session details: {}", e))?;
+    
+    Ok(data)
+}
+
+#[tauri::command]
+async fn extractor_search_vector(query: String, top_k: Option<u32>) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::new();
+    let response = client
+        .post("http://127.0.0.1:8000/search/vector")
+        .json(&serde_json::json!({
+            "query": query,
+            "top_k": top_k.unwrap_or(5)
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to search vectors: {}", e))?;
+    
+    let data: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse search results: {}", e))?;
+    
+    Ok(data)
+}
+
+#[tauri::command]
+async fn extractor_get_graph(session_id: String) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&format!("http://127.0.0.1:8000/graph/{}", session_id))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to get graph data: {}", e))?;
+    
+    let data: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse graph data: {}", e))?;
+    
+    Ok(data)
+}
+
+#[tauri::command]
+async fn extractor_hybrid_query(query: String) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::new();
+    let response = client
+        .post("http://127.0.0.1:8000/query")
+        .json(&serde_json::json!({
+            "query": query
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to execute hybrid query: {}", e))?;
+    
+    let data: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse hybrid query results: {}", e))?;
+    
+    Ok(data)
+}
+
+#[tauri::command]
+async fn extractor_scan_projects() -> Result<Vec<TaqwinProject>, String> {
+    let mut projects = Vec::new();
+    
+    // Check specific known .taqwin directories
+    let known_projects = vec![
+        ("C:\\Users\\syedm\\Downloads\\ASSETS\\controlAPP\\knez-control-app", "knez-control-app"),
+        ("C:\\Users\\syedm\\Downloads\\ASSETS\\ENFLENZ", "ENFLENZ"),
+    ];
+    
+    for (project_path, project_name) in known_projects {
+        let taqwin_path = format!("{}\\.taqwin", project_path);
+        
+        if std::path::Path::new(&taqwin_path).exists() {
+            // Count sessions in this .taqwin directory
+            let taqwin_path_obj = std::path::Path::new(&taqwin_path);
+            let session_count = count_sessions_in_taqwin(&taqwin_path_obj).unwrap_or(0);
+            
+            // Get last modified time
+            let last_modified = std::fs::metadata(&taqwin_path)
+                .and_then(|m| m.modified())
+                .map(|t| format!("{:?}", t))
+                .unwrap_or_else(|_| "Unknown".to_string());
+            
+            projects.push(TaqwinProject {
+                path: project_path.to_string(),
+                name: project_name.to_string(),
+                session_count,
+                last_modified,
+            });
+        }
+    }
+    
+    Ok(projects)
+}
+fn count_sessions_in_taqwin(taqwin_path: &std::path::Path) -> Result<u32, std::io::Error> {
+    let mut session_count = 0u32;
+    
+    // Check logs directory
+    let logs_path = taqwin_path.join("logs");
+    if logs_path.exists() {
+        if let Ok(entries) = std::fs::read_dir(&logs_path) {
+            for entry in entries.flatten() {
+                let file_name = entry.file_name();
+                let file_name_str = file_name.to_string_lossy();
+                if file_name_str.ends_with(".log") {
+                    session_count += 1;
+                }
+            }
+        }
+    }   // Check memory/sessions directory
+    let memory_sessions_path = taqwin_path.join("memory").join("sessions");
+    if memory_sessions_path.exists() {
+        if let Ok(entries) = std::fs::read_dir(&memory_sessions_path) {
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_dir() {
+                        session_count += 1;
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(session_count)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct TaqwinProject {
+    path: String,
+    name: String,
+    session_count: u32,
+    last_modified: String,
+}
+
+#[tauri::command]
+async fn extractor_set_taqwin_path(path: String) -> Result<bool, String> {
+    let client = reqwest::Client::new();
+    let response = client
+        .post("http://127.0.0.1:8000/set_taqwin_path")
+        .json(&serde_json::json!({
+            "path": path
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to set TAQWIN path: {}", e))?;
+    
+    if response.status().is_success() {
+        Ok(true)
+    } else {
+        Err(format!("Failed to set TAQWIN path: {}", response.status()))
+    }
+}
+
+#[tauri::command]
+async fn extractor_pipeline_status() -> Result<PipelineStatus, String> {
+    // Check extractor API
+    let extractor_running = match reqwest::get("http://127.0.0.1:8000/sessions").await {
+        Ok(_) => true,
+        Err(_) => false,
+    };
+    
+    // Check MCP server
+    let mcp_server_running = match std::path::Path::new("../../../TAQWIN_V1/TAQWIN-MCP-SERVER/src/server.py").exists() {
+        true => true,
+        false => false,
+    };
+    
+    Ok(PipelineStatus {
+        extractor_running,
+        mcp_server_running,
+        api_server_port: 8000,
+        last_pipeline_run: None,
+        total_sessions: if extractor_running { 
+            extractor_get_sessions().await.ok().map(|s| s.len() as u32).unwrap_or(0)
+        } else { 
+            0 
+        },
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -241,7 +486,15 @@ pub fn run() {
             mcp_stop,
             mcp_list_tools,
             mcp_get_traffic,
-            mcp_request
+            mcp_request,
+            extractor_scan_projects,
+            extractor_set_taqwin_path,
+            extractor_get_sessions,
+            extractor_get_session_details,
+            extractor_search_vector,
+            extractor_get_graph,
+            extractor_hybrid_query,
+            extractor_pipeline_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

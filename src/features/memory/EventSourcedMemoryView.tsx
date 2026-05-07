@@ -178,13 +178,13 @@ export const EventSourcedMemoryView: React.FC = () => {
       {/* Memory List or Graph View */}
       {view === 'list' ? (
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          {(searchQuery ? searchResults : filteredMemories).map(memory => (
+          {(searchQuery ? searchResults : filteredMemories).map((memory, index) => (
             <MemoryCard
-              key={memory.id}
+              key={memory.id || `memory-${index}`}
               memory={memory}
               onSelect={() => setSelectedMemory(memory)}
-              onAddTag={(tag) => handleAddTag(memory.id, tag)}
-              onAddRelation={(relatedId, rel) => handleAddRelation(memory.id, relatedId, rel)}
+              onAddTag={(tag) => handleAddTag(memory.id || `memory-${index}`, tag)}
+              onAddRelation={(relatedId, rel) => handleAddRelation(memory.id || `memory-${index}`, relatedId, rel)}
             />
           ))}
           {(searchQuery ? searchResults : filteredMemories).length === 0 && (

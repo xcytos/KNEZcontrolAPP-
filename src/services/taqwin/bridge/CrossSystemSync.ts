@@ -255,7 +255,7 @@ export class CrossSystemSync {
   private async resolveConflicts(conflicts: SyncConflict[]): Promise<void> {
     for (const conflict of conflicts) {
       try {
-        let resolution: 'taqwin_wins' | 'knez_wins' | 'merged';
+        let resolution: 'taqwin_wins' | 'knez_wins' | 'merged' | 'manual';
 
         switch (this.config.conflict_resolution) {
           case 'taqwin_wins':
@@ -327,7 +327,7 @@ export class CrossSystemSync {
   async getSyncHistory(limit: number = 50): Promise<any[]> {
     try {
       const memories = await this.api.getMemories({
-        domain: 'sync',
+        domain: ['sync'],
         limit
       });
       
@@ -380,13 +380,13 @@ export class CrossSystemSync {
            memory.metadata?.sync_enabled !== false;
   }
 
-  private async findTaqwinMemory(memoryId: string): Promise<any> {
+  private async findTaqwinMemory(_memoryId: string): Promise<any> {
     // This would search TAQWIN memory system
     // For now, return null (no conflict)
     return null;
   }
 
-  private async syncMemoryToTaqwin(memory: any): Promise<void> {
+  private async syncMemoryToTaqwin(_memory: any): Promise<void> {
     // This would convert and sync memory to TAQWIN format
     // Implementation depends on TAQWIN memory API
   }
