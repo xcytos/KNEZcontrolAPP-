@@ -10,7 +10,7 @@ interface PlaygroundInstance {
   id: string;
   type: PlaygroundType;
   name: string;
-  component: React.ComponentType<{ sdk: PlaygroundSDK; config: any }>;
+  component: React.ComponentType<{ sdk: PlaygroundSDK; config: any; isActive?: boolean }>;
   config: PlaygroundConfig;
   status: 'loading' | 'active' | 'inactive' | 'error';
   lastActivity: Date;
@@ -392,7 +392,11 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
                   zIndex: activePlayground === playground.id ? 10 : 0
                 }}
               >
-                <Component sdk={sdk} config={playground.config} />
+                <Component 
+                  sdk={sdk} 
+                  config={playground.config} 
+                  isActive={activePlayground === playground.id}
+                />
               </div>
             );
           })

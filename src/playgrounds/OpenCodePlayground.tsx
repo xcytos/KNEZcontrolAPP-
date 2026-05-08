@@ -11,11 +11,13 @@ import { PlaygroundConfig } from '../domain/PlaygroundTypes';
 interface OpenCodePlaygroundProps {
   sdk: PlaygroundSDK;
   config: PlaygroundConfig;
+  isActive?: boolean;
 }
 
 export const OpenCodePlayground: React.FC<OpenCodePlaygroundProps> = ({ 
   sdk: _sdk, 
-  config: _config 
+  config: _config,
+  isActive
 }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstanceRef = useRef<Terminal | null>(null);
@@ -25,6 +27,16 @@ export const OpenCodePlayground: React.FC<OpenCodePlaygroundProps> = ({
   const [pid, setPid] = useState<number | null>(null);
   const [status, setStatus] = useState<'connecting' | 'connected' | 'error' | 'disconnected' | 'spawning'>('connecting');
   const [sessionId, setSessionId] = useState<string>('');
+  const handleResizeRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    if (isActive && handleResizeRef.current) {
+      // Small delay to ensure the DOM has finished its layout transition
+      setTimeout(() => {
+        handleResizeRef.current?.();
+      }, 50);
+    }
+  }, [isActive]);
 
   useEffect(() => {
     let terminal: Terminal | null = null;
@@ -97,7 +109,7 @@ export const OpenCodePlayground: React.FC<OpenCodePlaygroundProps> = ({
 
       // Handle terminal resize
       const handleResize = () => {
-        if (fitAddon && terminal) {
+        if (fitAddon && terminal && terminalRef.current && terminalRef.current.offsetHeight > 0) {
           try {
             fitAddon.fit();
             
@@ -107,12 +119,15 @@ export const OpenCodePlayground: React.FC<OpenCodePlaygroundProps> = ({
                 console.warn('Failed to resize OpenCode PTY:', error);
               });
             }
+            // Force a refresh of the terminal renderer
+            terminal.refresh(0, terminal.rows - 1);
           } catch (error) {
             console.error('Failed to handle terminal resize:', error);
           }
         }
       };
 
+      handleResizeRef.current = handleResize;
       window.addEventListener('resize', handleResize);
       
       const resizeObserver = new ResizeObserver(() => {

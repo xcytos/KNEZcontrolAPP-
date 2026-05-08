@@ -11,11 +11,13 @@ import { PlaygroundConfig } from '../domain/PlaygroundTypes';
 interface TerminalPlaygroundProps {
   sdk: PlaygroundSDK;
   config: PlaygroundConfig;
+  isActive?: boolean;
 }
 
 export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({ 
   sdk: _sdk, 
-  config: _config 
+  config: _config,
+  isActive
 }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstanceRef = useRef<Terminal | null>(null);
@@ -25,6 +27,15 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
   const [pid, setPid] = useState<number | null>(null);
   const [status, setStatus] = useState<'idle' | 'spawning' | 'connected' | 'error'>('idle');
   const [sessionId, setSessionId] = useState<string>('');
+  const handleResizeRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    if (isActive && handleResizeRef.current) {
+      setTimeout(() => {
+        handleResizeRef.current?.();
+      }, 50);
+    }
+  }, [isActive]);
 
   useEffect(() => {
     let terminal: Terminal | null = null;
@@ -98,7 +109,7 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
 
       // Handle terminal resize
       const handleResize = () => {
-        if (fitAddon && terminal) {
+        if (fitAddon && terminal && terminalRef.current && terminalRef.current.offsetHeight > 0) {
           try {
             fitAddon.fit();
             
@@ -108,12 +119,14 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
                 console.warn('Failed to resize PTY:', error);
               });
             }
+            terminal.refresh(0, terminal.rows - 1);
           } catch (error) {
             console.error('Failed to handle terminal resize:', error);
           }
         }
       };
 
+      handleResizeRef.current = handleResize;
       window.addEventListener('resize', handleResize);
       
       const resizeObserver = new ResizeObserver(() => {

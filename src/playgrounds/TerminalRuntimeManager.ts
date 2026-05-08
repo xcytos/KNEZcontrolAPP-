@@ -35,8 +35,16 @@ export class TerminalRuntimeManager {
     for (const shell of shells) {
       try {
         console.log(`[TerminalRuntimeManager] Attempting to spawn shell: ${shell}`);
+        // Ensure we have a default TERM variable for TUI support
+        const env = {
+          TERM: 'xterm-256color',
+          COLORTERM: 'truecolor',
+          ...(config.env || {})
+        };
+
         pty = await ptyService.createPTY({
           ...config,
+          env,
           shell
         });
         selectedShell = shell;
@@ -86,8 +94,16 @@ export class TerminalRuntimeManager {
 
     try {
       console.log(`[TerminalRuntimeManager] Attempting to spawn OpenCode: ${shell}`);
+      // Ensure we have a default TERM variable for TUI support
+      const env = {
+        TERM: 'xterm-256color',
+        COLORTERM: 'truecolor',
+        ...(config.env || {})
+      };
+
       pty = await ptyService.createPTY({
         ...config,
+        env,
         shell
       });
       console.log(`[TerminalRuntimeManager] Successfully spawned OpenCode with PID: ${pty.processId}`);
