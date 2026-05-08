@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::process::{Command, Stdio};
 use std::io::{self, Write, BufReader, BufRead};
-use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use tauri::{AppHandle, Emitter};
@@ -289,20 +288,6 @@ impl PTYService {
             Ok(())
         } else {
             Err(format!("PTY {} not found", pty_id))
-        }
-    }
-}
-
-impl Default for PTYMessage {
-    fn default() -> Self {
-        Self {
-            pty_id: String::new(),
-            r#type: String::new(),
-            data: None,
-            stream: None,
-            exit_code: None,
-            cols: None,
-            rows: None,
         }
     }
 }
