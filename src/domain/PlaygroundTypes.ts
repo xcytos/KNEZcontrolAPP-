@@ -1,10 +1,6 @@
 export enum PlaygroundType {
-  CHAT = 'chat',
-  OPENCODE = 'opencode',
-  CLAUDECODE = 'claudecode',
-  HERMES = 'hermes',
-  MCP = 'mcp',
-  AGENT_LAB = 'agent_lab'
+  TERMINAL = 'terminal',
+  OPENCODE = 'opencode'
 }
 
 export interface PlaygroundConfig {

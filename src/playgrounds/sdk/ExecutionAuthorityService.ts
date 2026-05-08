@@ -2,7 +2,7 @@ import { RuntimeManager } from './RuntimeManager';
 import { ExecutionCommand, ExecutionResult, ProcessConfig, IsolatedProcess } from './ExecutionAuthorityManager';
 
 // Re-export types for use by other modules
-export { ExecutionCommand, ExecutionResult, ProcessConfig, IsolatedProcess };
+export type { ExecutionCommand, ExecutionResult, ProcessConfig, IsolatedProcess };
 
 export interface ExecutionAuthorityConfig {
   enableProcessIsolation: boolean;

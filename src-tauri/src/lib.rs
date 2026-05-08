@@ -4,6 +4,12 @@ use std::path::PathBuf;
 use tauri::Manager;
 
 mod mcp_host;
+mod pty;
+
+#[tauri::command]
+fn test_tauri_connection() -> String {
+    "TAURI_OK".to_string()
+}
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct UiPreferences {
@@ -494,7 +500,13 @@ pub fn run() {
             extractor_search_vector,
             extractor_get_graph,
             extractor_hybrid_query,
-            extractor_pipeline_status
+            extractor_pipeline_status,
+            test_tauri_connection,
+            pty::pty_create,
+            pty::pty_write,
+            pty::pty_resize,
+            pty::pty_kill,
+            pty::pty_destroy
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

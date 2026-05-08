@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Monitor, Code, Brain, Cpu, Zap, Globe, Settings, Plus, X } from 'lucide-react';
+import { Monitor, Code, Settings, Plus, X } from 'lucide-react';
 import { PlaygroundSDK } from '../services/playground/PlaygroundSDK';
 import { PlaygroundType, PlaygroundConfig } from '../domain/PlaygroundTypes';
 import OpenCodePlayground from './OpenCodePlayground';
+import { TerminalPlayground } from './TerminalPlayground';
 // Using native notifications for now - can be replaced with toast library later
 
 interface PlaygroundInstance {
@@ -20,52 +21,52 @@ interface PlaygroundContainerProps {
 }
 
 const PLAYGROUND_CONFIGS: Record<PlaygroundType, PlaygroundConfig> = {
-  [PlaygroundType.CHAT]: {
-    name: 'Chat Playground',
-    description: 'Standard conversational AI interface',
+  [PlaygroundType.TERMINAL]: {
+    name: 'Terminal Playground',
+    description: 'Real PTY terminal with shell integration',
     version: '1.0.0',
     author: 'KNEZ Team',
     capabilities: {
-      supportsMultiSession: false,
+      supportsMultiSession: true,
       supportsBackgroundAgents: false,
       supportsFileAccess: true,
-      supportsTerminalAccess: false,
-      supportsNetworkAccess: true,
-      supportsMCPTools: true
+      supportsTerminalAccess: true,
+      supportsNetworkAccess: false,
+      supportsMCPTools: false
     },
     resourceRequirements: {
       minMemory: 256,
       maxMemory: 512,
       minCpuCores: 1,
-      requiredPermissions: ['network', 'filesystem'],
-      optionalPermissions: ['camera', 'microphone']
+      requiredPermissions: ['terminal', 'filesystem'],
+      optionalPermissions: ['network']
     },
     ui: {
-      theme: 'auto',
-      layout: 'default',
+      theme: 'dark',
+      layout: 'terminal-focused',
       compactMode: false,
       advancedMode: false
     },
     session: {
-      type: PlaygroundType.CHAT,
-      autoSave: true,
-      persistence: true,
+      type: PlaygroundType.TERMINAL,
+      autoSave: false,
+      persistence: false,
       sharing: false,
       isolation: 'session'
     },
     features: {
-      multiSession: false,
+      multiSession: true,
       backgroundAgents: false,
       sessionSharing: false,
       darkMode: true,
       compactMode: false,
       advancedMode: false,
-      debugMode: false,
+      debugMode: true,
       experimentalFeatures: false,
       betaFeatures: false,
-      hardwareAcceleration: true,
+      hardwareAcceleration: false,
       virtualization: false,
-      caching: true
+      caching: false
     }
   },
   [PlaygroundType.OPENCODE]: {
@@ -115,217 +116,17 @@ const PLAYGROUND_CONFIGS: Record<PlaygroundType, PlaygroundConfig> = {
       virtualization: true,
       caching: true
     }
-  },
-  [PlaygroundType.CLAUDECODE]: {
-    name: 'ClaudeCode Playground',
-    description: 'Autonomous repository execution',
-    version: '1.0.0',
-    author: 'KNEZ Team',
-    capabilities: {
-      supportsMultiSession: false,
-      supportsBackgroundAgents: true,
-      supportsFileAccess: true,
-      supportsTerminalAccess: true,
-      supportsNetworkAccess: true,
-      supportsMCPTools: true
-    },
-    resourceRequirements: {
-      minMemory: 1024,
-      maxMemory: 4096,
-      minCpuCores: 4,
-      requiredPermissions: ['network', 'filesystem', 'terminal', 'system'],
-      optionalPermissions: []
-    },
-    ui: {
-      theme: 'dark',
-      layout: 'automation-focused',
-      compactMode: false,
-      advancedMode: true
-    },
-    session: {
-      type: PlaygroundType.CLAUDECODE,
-      autoSave: true,
-      persistence: true,
-      sharing: false,
-      isolation: 'full'
-    },
-    features: {
-      multiSession: false,
-      backgroundAgents: true,
-      sessionSharing: false,
-      darkMode: true,
-      compactMode: false,
-      advancedMode: true,
-      debugMode: true,
-      experimentalFeatures: false,
-      betaFeatures: false,
-      hardwareAcceleration: true,
-      virtualization: true,
-      caching: true
-    }
-  },
-  [PlaygroundType.HERMES]: {
-    name: 'Hermes Playground',
-    description: 'Research and agent orchestration',
-    version: '1.0.0',
-    author: 'KNEZ Team',
-    capabilities: {
-      supportsMultiSession: true,
-      supportsBackgroundAgents: true,
-      supportsFileAccess: true,
-      supportsTerminalAccess: false,
-      supportsNetworkAccess: true,
-      supportsMCPTools: true
-    },
-    resourceRequirements: {
-      minMemory: 768,
-      maxMemory: 2048,
-      minCpuCores: 2,
-      requiredPermissions: ['network', 'filesystem'],
-      optionalPermissions: ['camera', 'microphone']
-    },
-    ui: {
-      theme: 'auto',
-      layout: 'orchestration',
-      compactMode: false,
-      advancedMode: true
-    },
-    session: {
-      type: PlaygroundType.HERMES,
-      autoSave: true,
-      persistence: true,
-      sharing: true,
-      isolation: 'shared_context'
-    },
-    features: {
-      multiSession: true,
-      backgroundAgents: true,
-      sessionSharing: true,
-      darkMode: true,
-      compactMode: false,
-      advancedMode: true,
-      debugMode: true,
-      experimentalFeatures: true,
-      betaFeatures: true,
-      hardwareAcceleration: false,
-      virtualization: false,
-      caching: true
-    }
-  },
-  [PlaygroundType.MCP]: {
-    name: 'MCP Playground',
-    description: 'Tool ecosystem and debugging',
-    version: '1.0.0',
-    author: 'KNEZ Team',
-    capabilities: {
-      supportsMultiSession: false,
-      supportsBackgroundAgents: false,
-      supportsFileAccess: false,
-      supportsTerminalAccess: false,
-      supportsNetworkAccess: true,
-      supportsMCPTools: true
-    },
-    resourceRequirements: {
-      minMemory: 256,
-      maxMemory: 512,
-      minCpuCores: 1,
-      requiredPermissions: ['network'],
-      optionalPermissions: ['filesystem', 'terminal']
-    },
-    ui: {
-      theme: 'auto',
-      layout: 'tool-focused',
-      compactMode: true,
-      advancedMode: true
-    },
-    session: {
-      type: PlaygroundType.MCP,
-      autoSave: false,
-      persistence: true,
-      sharing: false,
-      isolation: 'session'
-    },
-    features: {
-      multiSession: false,
-      backgroundAgents: false,
-      sessionSharing: false,
-      darkMode: true,
-      compactMode: true,
-      advancedMode: true,
-      debugMode: true,
-      experimentalFeatures: true,
-      betaFeatures: true,
-      hardwareAcceleration: false,
-      virtualization: false,
-      caching: false
-    }
-  },
-  [PlaygroundType.AGENT_LAB]: {
-    name: 'Agent Lab',
-    description: 'Multi-agent experimentation',
-    version: '1.0.0',
-    author: 'KNEZ Team',
-    capabilities: {
-      supportsMultiSession: true,
-      supportsBackgroundAgents: true,
-      supportsFileAccess: true,
-      supportsTerminalAccess: false,
-      supportsNetworkAccess: true,
-      supportsMCPTools: true
-    },
-    resourceRequirements: {
-      minMemory: 1024,
-      maxMemory: 4096,
-      minCpuCores: 4,
-      requiredPermissions: ['network', 'filesystem'],
-      optionalPermissions: ['terminal', 'camera', 'microphone']
-    },
-    ui: {
-      theme: 'dark',
-      layout: 'experimentation',
-      compactMode: false,
-      advancedMode: true
-    },
-    session: {
-      type: PlaygroundType.AGENT_LAB,
-      autoSave: true,
-      persistence: true,
-      sharing: true,
-      isolation: 'shared_workspace'
-    },
-    features: {
-      multiSession: true,
-      backgroundAgents: true,
-      sessionSharing: true,
-      darkMode: true,
-      compactMode: false,
-      advancedMode: true,
-      debugMode: true,
-      experimentalFeatures: true,
-      betaFeatures: true,
-      hardwareAcceleration: true,
-      virtualization: true,
-      caching: true
-    }
   }
 };
 
 const PLAYGROUND_COMPONENTS: any = {
-  [PlaygroundType.CHAT]: () => <div className="flex items-center justify-center h-full text-gray-400">Chat Playground - Coming Soon</div>,
+  [PlaygroundType.TERMINAL]: TerminalPlayground,
   [PlaygroundType.OPENCODE]: OpenCodePlayground,
-  [PlaygroundType.CLAUDECODE]: () => <div className="flex items-center justify-center h-full text-gray-400">ClaudeCode Playground - Coming Soon</div>,
-  [PlaygroundType.HERMES]: () => <div className="flex items-center justify-center h-full text-gray-400">Hermes Playground - Coming Soon</div>,
-  [PlaygroundType.MCP]: () => <div className="flex items-center justify-center h-full text-gray-400">MCP Playground - Coming Soon</div>,
-  [PlaygroundType.AGENT_LAB]: () => <div className="flex items-center justify-center h-full text-gray-400">Agent Lab - Coming Soon</div>
 };
 
 const PLAYGROUND_ICONS: any = {
-  [PlaygroundType.CHAT]: Monitor,
+  [PlaygroundType.TERMINAL]: Monitor,
   [PlaygroundType.OPENCODE]: Code,
-  [PlaygroundType.CLAUDECODE]: Brain,
-  [PlaygroundType.HERMES]: Zap,
-  [PlaygroundType.MCP]: Globe,
-  [PlaygroundType.AGENT_LAB]: Cpu,
 };
 
 export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk }) => {
@@ -333,12 +134,12 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
   const [activePlayground, setActivePlayground] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 
-  // Initialize with OpenCode playground
+  // Initialize with Terminal playground
   useEffect(() => {
     const initializePlaygrounds = async () => {
       try {
-        // Start with OpenCode playground as default
-        await loadPlayground(PlaygroundType.OPENCODE);
+        // Start with Terminal playground as default
+        await loadPlayground(PlaygroundType.TERMINAL);
         console.log('Playground container initialized');
       } catch (error) {
         console.error('Failed to initialize playground container:', error);
@@ -548,10 +349,10 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
               <p className="text-gray-500 mb-6">Select a playground to get started</p>
               
               <button
-                onClick={() => loadPlayground(PlaygroundType.OPENCODE)}
+                onClick={() => loadPlayground(PlaygroundType.TERMINAL)}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg"
               >
-                Load OpenCode Playground
+                Load Terminal Playground
               </button>
             </div>
             

@@ -1,3 +1,6 @@
+// Import Tauri API directly
+import { invoke } from '@tauri-apps/api/core';
+
 // Tauri type declarations
 declare global {
   interface Window {
@@ -13,6 +16,8 @@ export interface PTYConfig {
   cwd?: string;
   env?: Record<string, string>;
   shell?: string;
+  command?: string;
+  args?: string[];
 }
 
 import { getProcessRegistry } from './ProcessRegistry';
@@ -276,205 +281,121 @@ export class PTYService {
   }
 
   private async createConPTYProcess(ptyId: string, config: PTYConfig): Promise<PTYHandle> {
-    if (typeof window !== 'undefined') {
+    // Only allow Tauri WebView environment - no browser fallback
+    console.log(`[PTY DEBUG] typeof window: ${typeof window}`);
+    console.log(`[PTY DEBUG] window exists: ${typeof window !== 'undefined'}`);
+    console.log(`[PTY DEBUG] window.__TAURI__:`, window.__TAURI__);
+    console.log(`[PTY DEBUG] __TAURI__ in window:`, '__TAURI__' in window);
+    
+    // Check for Tauri context AND invoke method
+    const hasTauriContext = typeof window !== 'undefined' && window.__TAURI__;
+    const hasInvokeMethod = hasTauriContext && (window.__TAURI__?.invoke !== undefined);
+    
+    console.log(`[PTY DEBUG] hasTauriContext: ${hasTauriContext}`);
+    console.log(`[PTY DEBUG] hasInvokeMethod: ${hasInvokeMethod}`);
+    
+    if (hasTauriContext && hasInvokeMethod) {
+      // Tauri environment with proper API - use real PTY backend
+      console.log('PTY Service: Tauri environment with invoke method detected, using real PTY backend');
       return this.createWebPTY(ptyId, config);
+    } else if (hasTauriContext && !hasInvokeMethod) {
+      // Tauri context exists but API not ready - wait and retry
+      console.log('PTY Service: Tauri context detected but invoke method not ready, waiting...');
+      
+      // Wait for Tauri API to be ready
+      return new Promise((resolve, reject) => {
+        const checkInterval = setInterval(() => {
+          if (window.__TAURI__?.invoke) {
+            clearInterval(checkInterval);
+            console.log('PTY Service: Tauri invoke method now available');
+            this.createWebPTY(ptyId, config).then(resolve).catch(reject);
+          }
+        }, 100);
+        
+        // Timeout after 5 seconds
+        setTimeout(() => {
+          clearInterval(checkInterval);
+          reject(new Error('Tauri API not ready within timeout - Terminal Playground requires Tauri environment'));
+        }, 5000);
+      });
     } else {
-      return this.createNativePTY(ptyId, config);
+      // No fallback - throw error if not in Tauri environment
+      console.log('[PTY DEBUG] Tauri backend not available - throwing error');
+      throw new Error('Tauri backend not available - Terminal Playground requires Tauri environment');
     }
   }
-
-  private async createWebPTY(ptyId: string, config: PTYConfig): Promise<PTYHandle> {
-    // REAL PTY creation using Tauri backend - no more WebSocket simulation
-    const stdinController = new TransformStream();
-    const stdoutController = new TransformStream();
-    const stderrController = new TransformStream();
-
-    let realProcessId = -1;
-    let isActive = true;
-
-    // Create REAL PTY process through Tauri
-    if (window.__TAURI__?.invoke) {
+  private async createWebPTY(_ptyId: string, config: PTYConfig): Promise<PTYHandle> {
+    return new Promise(async (resolve, reject) => {
       try {
-        // Spawn actual PTY process with real shell
-        const result = await window.__TAURI__.invoke('pty_spawn', {
-          ptyId,
+        console.log('[PTY DEBUG] Using direct invoke function');
+        
+        // Spawn actual PTY process with real shell using direct invoke
+        const result = await invoke('pty_create', {
           cols: config.cols,
           rows: config.rows,
-          cwd: config.cwd || process.cwd?.() || '/',
+          cwd: config.cwd || 'C:\\Users\\',
           env: config.env || {},
-          shell: config.shell || (process.platform === 'win32' ? 'powershell.exe' : 'bash')
-        });
+          shell: config.shell || 'powershell.exe'
+        }) as string;
         
-        realProcessId = result.processId;
-        console.log(`[PTYService] REAL PTY created with PID: ${realProcessId}`);
+        console.log('[PTY DEBUG] PTY created successfully:', result);
         
+        const handle: PTYHandle = {
+          id: result, // PTY ID returned from pty_create
+          processId: 0, // Will be set when process spawns
+          cols: config.cols,
+          rows: config.rows,
+          cwd: config.cwd || 'C:\\Users\\',
+          isActive: true,
+          
+          stdin: new TransformStream().writable,
+          stdout: new TransformStream().readable,
+          stderr: new TransformStream().readable,
+          
+          resize: async (cols: number, rows: number) => {
+            try {
+              await invoke('pty_resize', { pty_id: result, cols, rows });
+            } catch (error) {
+              console.error('Resize error:', error);
+            }
+          },
+          
+          write: async (data: string) => {
+            try {
+              await invoke('pty_write', { pty_id: result, data });
+            } catch (error) {
+              console.error('Write error:', error);
+            }
+          },
+          
+          kill: async (signal?: number) => {
+            try {
+              await invoke('pty_kill', { pty_id: result, signal });
+            } catch (error) {
+              console.error('Kill error:', error);
+            }
+          },
+          
+          destroy: async () => {
+            handle.isActive = false;
+            try {
+              await invoke('pty_destroy', { pty_id: result });
+            } catch (error) {
+              console.error('Destroy error:', error);
+            }
+          }
+        };
+        
+        resolve(handle);
       } catch (error) {
-        console.error('[PTYService] Failed to create real PTY:', error);
-        this.emitEvent('error', { ptyId, error: error as Error });
-        throw error;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error('[PTY DEBUG] Failed to create PTY:', errorMessage);
+        reject(new Error(`Failed to create PTY: ${errorMessage}`));
       }
-    } else {
-      throw new Error('Tauri backend not available - cannot create real PTY');
-    }
-
-    const handle: PTYHandle = {
-      id: ptyId,
-      processId: realProcessId, // REAL process ID from actual PTY
-      cols: config.cols,
-      rows: config.rows,
-      cwd: config.cwd || '/',
-      isActive,
-      
-      stdin: stdinController.writable,
-      stdout: stdoutController.readable,
-      stderr: stderrController.readable,
-      
-      resize: async (cols: number, rows: number) => {
-        handle.cols = cols;
-        handle.rows = rows;
-        
-        // Send REAL resize to Tauri PTY
-        if (window.__TAURI__?.invoke) {
-          try {
-            await window.__TAURI__.invoke('pty_resize', { ptyId, cols, rows });
-            this.emitEvent('resize', { ptyId, cols, rows });
-          } catch (error) {
-            this.emitEvent('error', { ptyId, error: error as Error });
-          }
-        }
-      },
-      
-      write: async (data: string) => {
-        // Write to REAL PTY stdin
-        if (window.__TAURI__?.invoke) {
-          try {
-            await window.__TAURI__.invoke('pty_write', { ptyId, data });
-          } catch (error) {
-            this.emitEvent('error', { ptyId, error: error as Error });
-          }
-        }
-      },
-      
-      kill: async (signal?: number) => {
-        // Kill REAL process
-        if (window.__TAURI__?.invoke) {
-          try {
-            await window.__TAURI__.invoke('pty_kill', { ptyId, signal });
-          } catch (error) {
-            this.emitEvent('error', { ptyId, error: error as Error });
-          }
-        }
-      },
-      
-      destroy: async () => {
-        handle.isActive = false;
-        // Destroy REAL PTY process
-        if (window.__TAURI__?.invoke) {
-          try {
-            await window.__TAURI__.invoke('pty_destroy', { ptyId });
-          } catch (error) {
-            this.emitEvent('error', { ptyId, error: error as Error });
-          }
-        }
-      }
-    };
-
-    // Set up REAL PTY data streaming (not WebSocket simulation)
-    this.setupRealPTYStreaming(ptyId, handle, stdoutController, stderrController);
-    
-    return handle;
+    });
   }
 
-  private async createNativePTY(ptyId: string, config: PTYConfig): Promise<PTYHandle> {
-    // Native Node.js PTY implementation (for Tauri backend)
-    const { spawn } = require('child_process');
-    // const { EventEmitter } = require('events');
-    
-    const stdinController = new TransformStream();
-    const stdoutController = new TransformStream();
-    const stderrController = new TransformStream();
-    
-    // Launch process with ConPTY (Windows) or pty.py (Unix)
-    const shell = config.shell || process.platform === 'win32' ? 'cmd.exe' : 'bash';
-    const args = config.shell ? [] : [];
-    
-    const childProcess = spawn(shell, args, {
-      cwd: config.cwd,
-      env: { ...process.env, ...config.env },
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true
-    });
-
-    const handle: PTYHandle = {
-      id: ptyId,
-      processId: childProcess.pid || -1,
-      cols: config.cols,
-      rows: config.rows,
-      cwd: config.cwd || process.cwd(),
-      isActive: true,
-      
-      stdin: stdinController.writable,
-      stdout: stdoutController.readable,
-      stderr: stderrController.readable,
-      
-      resize: async (cols: number, rows: number) => {
-        handle.cols = cols;
-        handle.rows = rows;
-        // Native resize would use ConPTY APIs
-        this.emitEvent('resize', { ptyId, cols, rows });
-      },
-      
-      write: async (data: string) => {
-        if (childProcess.stdin) {
-          childProcess.stdin.write(data);
-        }
-      },
-      
-      kill: async (signal?: number) => {
-        if (childProcess.pid) {
-          process.kill(childProcess.pid, signal || 'SIGTERM');
-        }
-      },
-      
-      destroy: async () => {
-        handle.isActive = false;
-        if (childProcess.pid) {
-          process.kill(childProcess.pid, 'SIGTERM');
-        }
-      }
-    };
-
-    // Set up process event handlers
-    childProcess.stdout?.on('data', (data: Buffer) => {
-      const text = data.toString();
-      this.emitEvent('data', { ptyId, data: text });
-      
-      // Push to stdout stream
-      const writer = stdoutController.writable.getWriter();
-      writer.write(text).finally(() => writer.releaseLock());
-    });
-
-    childProcess.stderr?.on('data', (data: Buffer) => {
-      const text = data.toString();
-      this.emitEvent('data', { ptyId, data: text });
-      
-      // Push to stderr stream
-      const writer = stderrController.writable.getWriter();
-      writer.write(text).finally(() => writer.releaseLock());
-    });
-
-    childProcess.on('exit', (code: number | null) => {
-      handle.isActive = false;
-      this.emitEvent('exit', { ptyId, exitCode: code || 0 });
-    });
-
-    childProcess.on('error', (error: Error) => {
-      this.emitEvent('error', { ptyId, error });
-    });
-
-    return handle;
-  }
-
+  
   private setupRealPTYStreaming(
     ptyId: string, 
     handle: PTYHandle,

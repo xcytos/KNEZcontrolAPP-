@@ -1,16 +1,17 @@
 import { 
   PlaygroundManifest, 
-  RuntimeConfig, 
-  RuntimeSession, 
+  RuntimeConfig,
+  RuntimeSession,
+  Platform,
+  SessionConfig,
   RuntimeHealth,
-  RuntimeMetrics,
-  PTYEvent,
-  PTYEventHandler
-} from './PlaygroundManifest';
-import { PTYHandle, PTYConfig } from '../runtime/PTYService';
+  RuntimeMetrics
+} from './PlaygroundTypes';
+import type { PTYHandle } from '../runtime/PTYService';
 
 // Re-export types that are used by other modules
-export { RuntimeConfig, RuntimeSession, PTYEvent, PTYHandle };
+export type { RuntimeConfig, RuntimeSession };
+export type { PTYHandle };
 
 export class RuntimeManager {
   private runtimes: Map<string, any>; // Will be typed as PlaygroundRuntime when imported
@@ -73,7 +74,14 @@ export class RuntimeManager {
   async restartRuntime(runtimeId: string): Promise<any> {
     await this.stopRuntime(runtimeId);
     const manifest = this.getManifest(runtimeId);
-    return this.launchRuntime(runtimeId, manifest.defaultConfig || {});
+    if (!manifest) {
+      throw new Error(`Runtime ${runtimeId} not found`);
+    }
+    const config: RuntimeConfig = {
+      id: runtimeId,
+      runtimeType: manifest.runtimeType
+    };
+    return this.launchRuntime(runtimeId, config);
   }
 
   // Session management
@@ -129,42 +137,18 @@ export class RuntimeManager {
 
   // PTY management
   async createPTY(config: { shell?: string; cwd?: string; env?: Record<string, string> }): Promise<PTYHandle> {
-    // TODO: Implement native PTY creation
-    // This will be implemented in Tauri PTY service
-    const pty: PTYHandle = {
-      id: `pty-${Date.now()}`,
-      pid: 0,
-      shell: config.shell || 'bash',
-      cwd: config.cwd || process.cwd?.() || '/',
-      env: config.env || {},
-      size: { cols: 80, rows: 24 },
-      
-      // Stream management
-      stdin: new WritableStream(),
-      stdout: new ReadableStream(),
-      stderr: new ReadableStream(),
-      
-      // Process control
-      resize: async (size: TerminalSize) => {
-        console.log('PTY resize:', size);
-      },
-      kill: async (signal?: number) => {
-        console.log('PTY kill:', signal);
-      },
-      wait: async () => {
-        console.log('PTY wait');
-        return 0;
-      },
-      
-      // Event handling
-      on: (event: PTYEvent, handler: PTYEventHandler) => {
-        console.log('PTY event:', event);
-      },
-      off: (event: PTYEvent, handler: PTYEventHandler) => {
-        console.log('PTY off:', event);
-      }
+    const { getPTYService } = await import('../runtime/PTYService');
+    const ptyService = getPTYService();
+    
+    const ptyConfig = {
+      cols: 80,
+      rows: 24,
+      cwd: config.cwd,
+      env: config.env,
+      shell: config.shell
     };
-
+    
+    const pty = await ptyService.createPTY(ptyConfig);
     this.ptyHandles.set(pty.id, pty);
     this.emit('ptyCreated', pty);
     return pty;
@@ -238,7 +222,7 @@ export class RuntimeManager {
         supportsProviderInjection: true,
         supportsWorkspace: true,
         requiredShell: ['bash', 'zsh', 'powershell', 'cmd'],
-        supportedPlatforms: ['windows', 'linux', 'macos']
+        supportedPlatforms: [Platform.WINDOWS, Platform.LINUX, Platform.MACOS]
       },
       launchStrategy: 'pty_spawn' as any,
       healthCheck: async () => {
@@ -261,47 +245,38 @@ export class RuntimeManager {
     return manifest.capabilities.supportedPlatforms.includes(currentPlatform);
   }
 
-  private detectPlatform(): string {
+  private detectPlatform(): Platform {
     if (typeof window !== 'undefined') {
       // Browser environment
-      return 'windows'; // Default assumption
+      return Platform.WINDOWS; // Default assumption
     }
     
     if (typeof process !== 'undefined') {
       const platform = process.platform;
       switch (platform) {
         case 'win32':
-          return 'windows';
+          return Platform.WINDOWS;
         case 'linux':
-          return 'linux';
+          return Platform.LINUX;
         case 'darwin':
-          return 'macos';
+          return Platform.MACOS;
         default:
-          return 'windows'; // Default
+          return Platform.WINDOWS; // Default
       }
     }
     
-    return 'windows'; // Default
+    return Platform.WINDOWS; // Default
   }
 
   // Dynamic runtime loading
   private async loadRuntimeClass(runtimeId: string): Promise<any> {
     switch (runtimeId) {
+      case 'terminal':
+        // Terminal runtime will be created directly
+        return null;
       case 'opencode':
-        const { OpenCodeRuntime } = await import('./runtimes/OpenCodeRuntime');
+        const { OpenCodeRuntime } = await import('./OpenCodeRuntime');
         return OpenCodeRuntime;
-      case 'claudecode':
-        const { ClaudeCodeRuntime } = await import('./runtimes/ClaudeCodeRuntime');
-        return ClaudeCodeRuntime;
-      case 'aider':
-        const { AiderRuntime } = await import('./runtimes/AiderRuntime');
-        return AiderRuntime;
-      case 'gemini-cli':
-        const { GeminiCliRuntime } = await import('./runtimes/GeminiCliRuntime');
-        return GeminiCliRuntime;
-      case 'mcp-studio':
-        const { McpStudioRuntime } = await import('./runtimes/McpStudioRuntime');
-        return McpStudioRuntime;
       default:
         throw new Error(`Unknown runtime type: ${runtimeId}`);
     }

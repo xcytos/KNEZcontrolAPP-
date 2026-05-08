@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::process::{Command, Stdio};
-use std::io::{self, Write, BufReader, BufRead};
+use std::io::{self, Write};
 use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use tauri::{AppHandle, Emitter};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PTYConfig {
@@ -16,18 +15,37 @@ pub struct PTYConfig {
     pub shell: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PTYResize {
+    pub cols: u16,
+    pub rows: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PTYCommand {
+    pub pty_id: String,
+    pub command: String,
+    pub data: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PTYMessage {
+    pub pty_id: String,
+    pub r#type: String,
+    pub data: Option<String>,
+    pub stream: Option<String>,
+    pub exit_code: Option<i32>,
+    pub cols: Option<u16>,
+    pub rows: Option<u16>,
+}
+
 #[derive(Debug)]
 pub struct PTYProcess {
     pub id: String,
     pub child: Option<std::process::Child>,
     pub config: PTYConfig,
+    pub created_at: Instant,
     pub is_active: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PtyOutputEvent {
-    pub ptyId: String,
-    pub data: String,
 }
 
 impl PTYProcess {
@@ -36,14 +54,20 @@ impl PTYProcess {
             id,
             child: None,
             config,
+            created_at: Instant::now(),
             is_active: false,
         }
     }
 
     #[cfg(target_os = "windows")]
     pub fn spawn(&mut self) -> io::Result<()> {
+        use windows_sys::Win32::System::Console::{
+            CreatePseudoConsole, GetStdHandle, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE,
+            CONSOLE_MODE, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+        };
+
         let shell = self.config.shell.clone()
-            .unwrap_or_else(|| "powershell.exe".to_string());
+            .unwrap_or_else(|| "cmd.exe".to_string());
 
         let mut cmd = Command::new(&shell);
         
@@ -57,7 +81,41 @@ impl PTYProcess {
             }
         }
 
-        // Configure for terminal I/O
+        // Set up ConPTY for Windows
+        let coord = windows_sys::Win32::System::Console::COORD {
+            X: self.config.cols as i16,
+            Y: self.config.rows as i16,
+        };
+        let mut phPC: isize = 0;
+        let hr = unsafe { CreatePseudoConsole(
+            coord,            // COORD - console size
+            0,               // hInput - input handle for ConPTY
+            0,               // hOutput - output handle for ConPTY  
+            0,               // dwFlags - creation flags
+            std::ptr::null_mut(), // lpReserved - reserved pointer
+            &mut phPC,            // phPC - receives the pseudo-console handle
+        ) };
+
+        if hr != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Failed to create ConPTY: HRESULT 0x{:08X}", hr),
+            ));
+        }
+
+        // Configure console for virtual terminal processing
+        let h_stdout = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) };
+        let _h_stderr = unsafe { GetStdHandle(STD_ERROR_HANDLE) };
+        
+        let mut mode: CONSOLE_MODE = 0;
+        unsafe {
+            windows_sys::Win32::System::Console::GetConsoleMode(h_stdout, &mut mode);
+            windows_sys::Win32::System::Console::SetConsoleMode(
+                h_stdout,
+                mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+            );
+        }
+
         cmd.stdin(Stdio::piped())
            .stdout(Stdio::piped())
            .stderr(Stdio::piped());
@@ -188,42 +246,14 @@ impl PTYProcess {
         Ok(())
     }
 
-    pub fn start_stdout_reader(&mut self, app_handle: AppHandle) {
+    pub fn wait(&mut self) -> io::Result<std::process::ExitStatus> {
         if let Some(ref mut child) = self.child {
-            if let Some(stdout) = child.stdout.take() {
-                let pty_id = self.id.clone();
-                let app_handle = app_handle.clone();
-                
-                tokio::spawn(async move {
-                    let mut reader = BufReader::new(stdout);
-                    let mut buffer = String::new();
-                    
-                    loop {
-                        match reader.read_line(&mut buffer) {
-                            Ok(0) => break, // EOF
-                            Ok(_) => {
-                                let data = buffer.clone();
-                                buffer.clear();
-                                
-                                // Emit PTY output event
-                                let event = PtyOutputEvent {
-                                    ptyId: pty_id.clone(),
-                                    data,
-                                };
-                                
-                                if let Err(e) = app_handle.emit("pty-output", &event) {
-                                    eprintln!("[PTY_ERROR] Failed to emit output event: {}", e);
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("[PTY_ERROR] Failed to read stdout: {}", e);
-                                break;
-                            }
-                        }
-                    }
-                });
-            }
+            child.wait()
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                "No child process to wait for",
+            ))
         }
     }
 }
@@ -239,22 +269,12 @@ impl PTYService {
         }
     }
 
-    // Get or create the global PTYService instance
-    pub fn global() -> &'static Self {
-        use std::sync::OnceLock;
-        static INSTANCE: OnceLock<PTYService> = OnceLock::new();
-        INSTANCE.get_or_init(|| PTYService::new())
-    }
-
-    pub async fn create_pty(&self, config: PTYConfig, app_handle: AppHandle) -> Result<String, String> {
+    pub async fn create_pty(&self, config: PTYConfig) -> Result<String, String> {
         let pty_id = Uuid::new_v4().to_string();
         let mut process = PTYProcess::new(pty_id.clone(), config);
 
         match process.spawn() {
             Ok(()) => {
-                // Start stdout reader task
-                process.start_stdout_reader(app_handle);
-                
                 let mut processes = self.processes.lock().unwrap();
                 processes.insert(pty_id.clone(), process);
                 Ok(pty_id)
@@ -309,32 +329,83 @@ impl Default for PTYMessage {
 
 // Tauri commands
 #[tauri::command]
-pub async fn pty_create(config: PTYConfig, app_handle: AppHandle) -> Result<String, String> {
-    let service = PTYService::global();
-    service.create_pty(config, app_handle).await
+pub async fn pty_spawn_command(
+    pty_id: String,
+    command: String,
+    _args: Vec<String>,
+    cols: u16,
+    rows: u16,
+    cwd: Option<String>,
+    env: Option<std::collections::HashMap<String, String>>
+) -> Result<serde_json::Value, String> {
+    println!("[RUST_COMMAND_ENTERED] pty_spawn_command: {} with command: {}", pty_id, command);
+    
+    let config = PTYConfig {
+        cols,
+        rows,
+        cwd,
+        env,
+        shell: Some(command),
+    };
+    
+    let service = PTYService::new();
+    match service.create_pty(config).await {
+        Ok(created_pty_id) => {
+            println!("[PTY_CREATED] PTY created with ID: {}", created_pty_id);
+            
+            // Get process ID from the spawned process
+            let processes = service.processes.lock().unwrap();
+            if let Some(process) = processes.get(&created_pty_id) {
+                if let Some(ref child) = process.child {
+                    let pid = child.id();
+                    println!("[SHELL_SPAWNED] Process spawned with PID: {:?}", pid);
+                    println!("[PID_ASSIGNED] PID: {}", pid);
+                    
+                    return Ok(serde_json::json!({
+                        "processId": pid,
+                        "ptyId": created_pty_id
+                    }));
+                }
+            }
+            
+            Ok(serde_json::json!({
+                "processId": 0,
+                "ptyId": created_pty_id
+            }))
+        }
+        Err(e) => {
+            println!("[PTY_ERROR] Failed to create PTY: {}", e);
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn pty_create(config: PTYConfig) -> Result<String, String> {
+    let service = PTYService::new();
+    service.create_pty(config).await
 }
 
 #[tauri::command]
 pub async fn pty_write(pty_id: String, data: String) -> Result<(), String> {
-    let service = PTYService::global();
+    let service = PTYService::new();
     service.write_to_pty(&pty_id, &data).await
 }
 
 #[tauri::command]
 pub async fn pty_resize(pty_id: String, cols: u16, rows: u16) -> Result<(), String> {
-    let service = PTYService::global();
+    let service = PTYService::new();
     service.resize_pty(&pty_id, cols, rows).await
 }
 
 #[tauri::command]
 pub async fn pty_kill(pty_id: String, signal: Option<i32>) -> Result<(), String> {
-    let service = PTYService::global();
+    let service = PTYService::new();
     service.kill_pty(&pty_id, signal).await
 }
 
 #[tauri::command]
 pub async fn pty_destroy(pty_id: String) -> Result<(), String> {
-    let service = PTYService::global();
+    let service = PTYService::new();
     service.kill_pty(&pty_id, Some(9)).await // SIGKILL
 }
-

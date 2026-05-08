@@ -96,20 +96,11 @@ export class PlaygroundRegistry {
   private async loadRuntimeClass(runtimeId: string): Promise<any> {
     switch (runtimeId) {
       case RuntimeType.OPENCODE:
-        const { OpenCodeRuntime } = await import('./runtimes/OpenCodeRuntime');
+        const { OpenCodeRuntime } = await import('./OpenCodeRuntime');
         return OpenCodeRuntime;
-      case RuntimeType.CLAUDECODE:
-        const { ClaudeCodeRuntime } = await import('./runtimes/ClaudeCodeRuntime');
-        return ClaudeCodeRuntime;
-      case RuntimeType.AIDER:
-        const { AiderRuntime } = await import('./runtimes/AiderRuntime');
-        return AiderRuntime;
-      case RuntimeType.GEMINI_CLI:
-        const { GeminiCliRuntime } = await import('./runtimes/GeminiCliRuntime');
-        return GeminiCliRuntime;
-      case RuntimeType.MCP_STUDIO:
-        const { McpStudioRuntime } = await import('./runtimes/McpStudioRuntime');
-        return McpStudioRuntime;
+      case RuntimeType.TERMINAL:
+        const { TerminalRuntime } = await import('./TerminalRuntime');
+        return TerminalRuntime;
       default:
         throw new Error(`Unknown runtime type: ${runtimeId}`);
     }
@@ -118,6 +109,24 @@ export class PlaygroundRegistry {
 
 // Built-in runtime manifests
 export const BUILTIN_MANIFESTS: PlaygroundManifest[] = [
+  {
+    id: RuntimeType.TERMINAL,
+    name: 'Terminal Playground',
+    runtimeType: RuntimeType.TERMINAL,
+    icon: 'terminal',
+    capabilities: {
+      supportsMultiSession: true,
+      supportsBackground: true,
+      supportsProviderInjection: false,
+      supportsWorkspace: false,
+      requiredShell: ['pwsh.exe', 'powershell.exe', 'cmd.exe'],
+      supportedPlatforms: [Platform.WINDOWS, Platform.LINUX, Platform.MACOS]
+    },
+    launchStrategy: LaunchStrategy.PTY_SPAWN,
+    healthCheck: async () => {
+      return { status: 'healthy', lastCheck: new Date() };
+    }
+  },
   {
     id: RuntimeType.OPENCODE,
     name: 'OpenCode',
@@ -134,82 +143,6 @@ export const BUILTIN_MANIFESTS: PlaygroundManifest[] = [
     launchStrategy: LaunchStrategy.PTY_SPAWN,
     healthCheck: async () => {
       // TODO: Implement OpenCode health check
-      return { status: 'healthy', lastCheck: new Date() };
-    }
-  },
-  {
-    id: RuntimeType.CLAUDECODE,
-    name: 'ClaudeCode',
-    runtimeType: RuntimeType.CLAUDECODE,
-    icon: 'brain',
-    capabilities: {
-      supportsMultiSession: false,
-      supportsBackground: true,
-      supportsProviderInjection: true,
-      supportsWorkspace: true,
-      requiredShell: ['bash', 'zsh'],
-      supportedPlatforms: [Platform.WINDOWS, Platform.LINUX, Platform.MACOS]
-    },
-    launchStrategy: LaunchStrategy.PTY_SPAWN,
-    healthCheck: async () => {
-      // TODO: Implement ClaudeCode health check
-      return { status: 'healthy', lastCheck: new Date() };
-    }
-  },
-  {
-    id: RuntimeType.AIDER,
-    name: 'Aider',
-    runtimeType: RuntimeType.AIDER,
-    icon: 'wrench',
-    capabilities: {
-      supportsMultiSession: false,
-      supportsBackground: false,
-      supportsProviderInjection: true,
-      supportsWorkspace: true,
-      requiredShell: ['bash', 'zsh'],
-      supportedPlatforms: [Platform.WINDOWS, Platform.LINUX, Platform.MACOS]
-    },
-    launchStrategy: LaunchStrategy.PTY_SPAWN,
-    healthCheck: async () => {
-      // TODO: Implement Aider health check
-      return { status: 'healthy', lastCheck: new Date() };
-    }
-  },
-  {
-    id: RuntimeType.GEMINI_CLI,
-    name: 'Gemini CLI',
-    runtimeType: RuntimeType.GEMINI_CLI,
-    icon: 'sparkles',
-    capabilities: {
-      supportsMultiSession: false,
-      supportsBackground: true,
-      supportsProviderInjection: true,
-      supportsWorkspace: true,
-      requiredShell: ['bash', 'zsh'],
-      supportedPlatforms: [Platform.WINDOWS, Platform.LINUX, Platform.MACOS]
-    },
-    launchStrategy: LaunchStrategy.PTY_SPAWN,
-    healthCheck: async () => {
-      // TODO: Implement Gemini CLI health check
-      return { status: 'healthy', lastCheck: new Date() };
-    }
-  },
-  {
-    id: RuntimeType.MCP_STUDIO,
-    name: 'MCP Studio',
-    runtimeType: RuntimeType.MCP_STUDIO,
-    icon: 'layers',
-    capabilities: {
-      supportsMultiSession: true,
-      supportsBackground: true,
-      supportsProviderInjection: true,
-      supportsWorkspace: true,
-      requiredShell: ['bash', 'zsh', 'powershell'],
-      supportedPlatforms: [Platform.WINDOWS, Platform.LINUX, Platform.MACOS]
-    },
-    launchStrategy: LaunchStrategy.IPC_BRIDGE,
-    healthCheck: async () => {
-      // TODO: Implement MCP Studio health check
       return { status: 'healthy', lastCheck: new Date() };
     }
   }

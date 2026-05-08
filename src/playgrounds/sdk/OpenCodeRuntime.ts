@@ -1,17 +1,18 @@
 import { 
-  RuntimeConfig, 
-  RuntimeMetrics, 
-  PTYHandle, 
-  Platform 
-} from '../PlaygroundTypes';
-import { PlaygroundRuntime } from '../PlaygroundRuntime';
+  RuntimeConfig,
+  RuntimeType,
+  Platform,
+  PTYHandle,
+  RuntimeMetrics
+} from './PlaygroundTypes';
+import { PlaygroundRuntime } from './PlaygroundRuntime';
 
 export class OpenCodeRuntime extends PlaygroundRuntime {
   constructor() {
     super({
       id: 'opencode',
       name: 'OpenCode',
-      runtimeType: 'opencode' as any,
+      runtimeType: 'opencode' as RuntimeType,
       icon: 'code',
       capabilities: {
         supportsMultiSession: true,

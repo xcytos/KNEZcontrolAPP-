@@ -1,11 +1,8 @@
 // Playground Runtime Types and Interfaces
 
 export enum RuntimeType {
-  OPENCODE = 'opencode',
-  CLAUDECODE = 'claudecode',
-  AIDER = 'aider',
-  GEMINI_CLI = 'gemini-cli',
-  MCP_STUDIO = 'mcp-studio'
+  TERMINAL = 'terminal',
+  OPENCODE = 'opencode'
 }
 
 export enum LaunchStrategy {

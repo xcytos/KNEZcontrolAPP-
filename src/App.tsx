@@ -21,7 +21,7 @@ import { ExtractionDashboard } from './features/extraction/ExtractionDashboard';
 import { TestPanel } from './features/diagnostics/TestPanel';
 import { SkillsView } from './features/skills/SkillsView';
 import { PlaygroundContainer } from './playgrounds/PlaygroundContainer';
-import { RawPTYProof } from './playgrounds/debug/RawPTYProof';
+import TerminalSandbox from './playgrounds/TerminalSandbox';
 import { playgroundSDK } from './services/playground/PlaygroundSDK';
 import { PresenceState, McpRegistrySnapshot } from './domain/DataContracts';
 import { knezClient } from './services/knez/KnezClient';
@@ -270,8 +270,8 @@ function AppContent() {
         return <TestPanel />;
       case 'skills':
         return <SkillsView />;
-      case 'raw-pty':
-        return <RawPTYProof />;
+      case 'terminal-sandbox':
+        return <TerminalSandbox />;
         
       default:
         return <ChatPane sessionId={sessionId} readOnly={readOnly} systemStatus={systemStatus} />;

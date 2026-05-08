@@ -7,6 +7,8 @@ import "./utils/observer"; // Initialize observer
 import "./mcp/rustEventBridge";
 import { governanceService } from "./services/governance/GovernanceService";
 
+// Tauri API is available globally via window.__TAURI__
+
 // Initialize governance service
 void governanceService.getSnapshot().catch(() => null);
 
