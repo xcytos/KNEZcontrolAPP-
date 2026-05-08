@@ -1,98 +1,64 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
-import '@xterm/xterm/css/xterm.css';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { SearchAddon } from '@xterm/addon-search';
+import { listen } from '@tauri-apps/api/event';
+import '@xterm/xterm/css/xterm.css';
+import { getTerminalManager } from './TerminalRuntimeManager';
 import { PlaygroundSDK } from '../services/playground/PlaygroundSDK';
-import { SessionConfig, PlaygroundConfig, PlaygroundType } from '../domain/PlaygroundTypes';
-import { toast } from 'react-hot-toast';
+import { PlaygroundConfig } from '../domain/PlaygroundTypes';
 
-interface OpenCodeConfig extends PlaygroundConfig {
-  terminal: {
-    shell: string;
-    workingDirectory: string;
-    environment: Record<string, string>;
-    theme: 'dark' | 'light';
-  };
-  lsp: {
-    enabled: boolean;
-    languages: string[];
-    workspace: string;
-  };
-  execution: {
-    mode: 'suggest' | 'confirm' | 'autonomous';
-    autoSave: boolean;
-    maxConcurrentSessions: number;
-  };
-  provider: {
-    name: string;
-    model: string;
-    endpoint?: string;
-    apiKey?: string;
-  };
+interface OpenCodePlaygroundProps {
+  sdk: PlaygroundSDK;
+  config: PlaygroundConfig;
 }
 
-// Session management now handled by RuntimeManager as single source of truth
+export const OpenCodePlayground: React.FC<OpenCodePlaygroundProps> = ({ 
+  sdk: _sdk, 
+  config: _config 
+}) => {
+  const terminalRef = useRef<HTMLDivElement>(null);
+  const terminalInstanceRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const [ptyHandle, setPtyHandle] = useState<any>(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [pid, setPid] = useState<number | null>(null);
+  const [status, setStatus] = useState<'connecting' | 'connected' | 'error' | 'disconnected' | 'spawning'>('connecting');
+  const [sessionId, setSessionId] = useState<string>('');
 
-// interface ModelInfo {
-//   provider: string;
-//   model: string;
-//   capabilities: string[];
-//   contextWindow: number;
-//   maxTokens: number;
-// }
+  useEffect(() => {
+    let terminal: Terminal | null = null;
+    let fitAddon: FitAddon | null = null;
+    let cleanup: (() => void) | null = null;
+    let unlistenPtyOutput: (() => void) | null = null;
+    let localPty: any = null;
+    let localIsConnected = false;
+    let isUnmounted = false;
+    let currentSessionId = '';
 
-export const OpenCodePlayground: React.FC<{
-  sdk: PlaygroundSDK;
-  config: OpenCodeConfig;
-}> = ({ sdk, config }) => {
-  const [activeSession, setActiveSession] = useState<string | null>(null);
-  const [executionMode] = useState<OpenCodeConfig['execution']['mode']>((config as any).execution?.mode || 'interactive');
-  
-  const terminalRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-  const sessionTerminals = useRef<Map<string, Terminal>>(new Map());
+    const initializeTerminal = async () => {
+      if (!terminalRef.current) return;
 
-  // Note: This component is now simplified to observe RuntimeManager state
-  // Session management is handled by RuntimeManager as single source of truth
+      setStatus('spawning');
 
-  // Create new coding session
-  const createNewSession = useCallback(async () => {
-    const sessionId = `session-${Date.now()}`;
-    const sessionName = `Session ${Date.now()}`;
-    
-    try {
-      // Create session through SDK
-      const sessionConfig: SessionConfig = {
-        id: sessionId,
-        name: sessionName,
-        type: PlaygroundType.OPENCODE,
-        provider: 'OpenCode',
-        model: 'Default',
-        workspace: `${(config as OpenCodeConfig).terminal?.workingDirectory || '/tmp'}/workspace-${sessionId}`,
-        settings: {
-          executionMode,
-          autoSave: (config as OpenCodeConfig).execution?.autoSave || false,
-          lspEnabled: (config as OpenCodeConfig).lsp?.enabled || false,
-          theme: (config as OpenCodeConfig).terminal?.theme || 'dark'
-        }
-      };
-
-      await sdk.createSession(sessionConfig);
-
-      // Initialize terminal
-      const terminal = new Terminal({
-        theme: (config as OpenCodeConfig).terminal?.theme === 'dark' ? {
-          background: '#1e1e1e',
+      // Create xterm.js instance
+      terminal = new Terminal({
+        cursorBlink: true,
+        cursorStyle: 'block',
+        fontSize: 14,
+        fontFamily: 'Cascadia Code, Consolas, "Courier New", monospace',
+        theme: {
+          background: '#000000',
           foreground: '#ffffff',
           cursor: '#ffffff',
+          selectionBackground: '#444444',
+          black: '#000000',
           red: '#ff5555',
           green: '#50fa7b',
           yellow: '#f1fa8c',
           blue: '#79d8ff',
           magenta: '#bd93f9',
           cyan: '#8be9fd',
-          black: '#000000',
           white: '#bfbfbf',
           brightBlack: '#4d4d4d',
           brightRed: '#ff6e6e',
@@ -102,239 +68,258 @@ export const OpenCodePlayground: React.FC<{
           brightMagenta: '#d6acff',
           brightCyan: '#69ffff',
           brightWhite: '#ffffff'
-        } : {
-          background: '#ffffff',
-          foreground: '#000000',
-          cursor: '#000000',
-          red: '#cc5555',
-          green: '#55cc55',
-          yellow: '#cccc55',
-          blue: '#5555cc',
-          magenta: '#cc55cc',
-          cyan: '#55cccc',
-          white: '#cccccc',
-          brightBlack: '#555555',
-          brightRed: '#ff5555',
-          brightGreen: '#55ff55',
-          brightYellow: '#ffffa5',
-          brightBlue: '#5555ff',
-          brightMagenta: '#ff55ff',
-          brightCyan: '#55ffff',
-          brightWhite: '#ffffff'
         },
-        fontSize: 14,
-        fontFamily: 'Consolas, "Courier New", monospace',
-        cursorBlink: true,
-        cursorStyle: 'block',
-        scrollback: 1000,
-        tabStopWidth: 4
+        cols: 80,
+        rows: 24,
+        scrollback: 10000,
+        tabStopWidth: 4,
       });
 
-      // Load terminal addons
-      const fitAddon = new FitAddon();
+      // Add addons
+      fitAddon = new FitAddon();
       const webLinksAddon = new WebLinksAddon();
-      const searchAddon = new SearchAddon();
       
       terminal.loadAddon(fitAddon);
       terminal.loadAddon(webLinksAddon);
-      terminal.loadAddon(searchAddon);
 
-      // Store terminal reference
-      sessionTerminals.current.set(sessionId, terminal);
-      setActiveSession(sessionId);
+      // Mount terminal
+      terminal.open(terminalRef.current);
 
-      // Connect to OpenCode backend through our provider system
-      await connectToOpenCode(sessionId, terminal, sessionConfig);
+      // Store references
+      terminalInstanceRef.current = terminal;
+      fitAddonRef.current = fitAddon;
 
-      toast.success(`Created ${sessionName}`);
-    } catch (error) {
-      console.error('Failed to create session:', error);
-      toast.error('Failed to create session');
-    }
-  }, [executionMode, sdk, config]);
+      // Defer first fit until the container has committed layout
+      await new Promise<void>(resolve => requestAnimationFrame(() =>
+        requestAnimationFrame(() => resolve())
+      ));
+      try { fitAddon.fit(); } catch { /* ignore pre-layout errors */ }
 
-  // Connect terminal to REAL OpenCode PTY process
-  const connectToOpenCode = async (_sessionId: string, terminal: Terminal, config: SessionConfig) => {
-    try {
-      console.log('[FRONTEND_REQUEST_PTY] Requesting PTY creation for session:', _sessionId);
-      
-      // Import PTY service for real process spawning
-      const { getPTYService } = await import('./runtime/PTYService');
-      const ptyService = getPTYService();
-      
-      // Create REAL PTY process (using powershell since opencode doesn't exist)
-      console.log('[RUST_COMMAND_ENTERED] Invoking pty_spawn_command with PowerShell');
-      const ptyHandle = await ptyService.createOpenCodePTY({
-        command: process.platform === 'win32' ? 'powershell.exe' : 'bash',
-        args: [],
-        cols: 80,
-        rows: 24,
-        cwd: config.workspace || process.cwd?.() || '/',
-        env: {
-          ...config.settings,
-          OPENCODE_MODE: executionMode,
-          WORKSPACE: config.workspace || '/tmp'
-        }
-      });
-      
-      console.log(`[PTY_CREATED] PTY created with PID: ${ptyHandle.processId}`);
-      
-      // CRITICAL FIX: Open terminal in DOM element first
-      const terminalElement = terminalRefs.current.get(_sessionId);
-      if (terminalElement) {
-        console.log(`[OpenCodePlayground] Opening terminal in DOM element for PTY ${ptyHandle.id}`);
-        terminal.open(terminalElement);
-      } else {
-        console.error(`[OpenCodePlayground] Terminal element not found for session ${_sessionId}`);
-        throw new Error('Terminal element not found');
-      }
-      
-      // Connect xterm to REAL PTY streams
-      terminal.onData((data: string) => {
-        // Send user input to REAL OpenCode process
-        console.log(`[OpenCodePlayground] User input: ${data.replace(/\r?\n/g, '\\n')}`);
-        ptyHandle.write(data).catch(error => {
-          console.error('Failed to write to PTY:', error);
-        });
-      });
-      
-      // Stream REAL OpenCode output to terminal
-      const stdoutReader = ptyHandle.stdout.getReader();
-      const stderrReader = ptyHandle.stderr.getReader();
-      
-      const readStream = async (reader: ReadableStreamDefaultReader, streamName: string) => {
-        try {
-          console.log(`[STDOUT_STREAM_STARTED] Starting ${streamName} reader for PTY ${ptyHandle.id}`);
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
+      // Handle terminal resize
+      const handleResize = () => {
+        if (fitAddon && terminal) {
+          try {
+            fitAddon.fit();
             
-            const text = new TextDecoder().decode(value);
-            console.log(`[STDOUT_CHUNK] ${text.length} bytes from ${streamName}: "${text.replace(/\r?\n/g, '\\n')}"`);
-            console.log(`[XTERM_WRITE] Writing to terminal: "${text.replace(/\r?\n/g, '\\n')}"`);
-            terminal.write(text);
+            // Resize PTY if connected
+            if (ptyHandle && isConnected) {
+              ptyHandle.resize(terminal.cols, terminal.rows).catch((error: any) => {
+                console.warn('Failed to resize OpenCode PTY:', error);
+              });
+            }
+          } catch (error) {
+            console.error('Failed to handle terminal resize:', error);
           }
-        } catch (error) {
-          console.error(`Failed to read ${streamName}:`, error);
         }
       };
-      
-      // Start reading both streams
-      readStream(stdoutReader, 'stdout');
-      readStream(stderrReader, 'stderr');
-      
-      // Handle PTY events
-      ptyService.on('data', (event: any) => {
-        if (event.ptyId === ptyHandle.id) {
-          console.log(`[EVENT_EMITTED] PTY data event for ${ptyHandle.id}`);
-          console.log(`[FRONTEND_EVENT_RECEIVED] Data event received in frontend`);
-          // Data is already handled by streams above
-        }
-      });
-      
-      ptyService.on('exit', (event: any) => {
-        if (event.ptyId === ptyHandle.id) {
-          console.log(`[SHELL_EXITED] PowerShell process exited with code: ${event.exitCode}`);
-          terminal.write('\r\n\x1b[31mPowerShell process exited\x1b[0m\r\n');
-          toast.error('PowerShell process terminated');
-        }
-      });
-      
-      ptyService.on('error', (event: any) => {
-        if (event.ptyId === ptyHandle.id) {
-          console.error('PTY error:', event.error);
-          terminal.write(`\r\n\x1b[31mError: ${event.error?.message || 'Unknown error'}\x1b[0m\r\n`);
-        }
-      });
-      
-      // Store PTY handle for cleanup
-      (terminal as any)._ptyHandle = ptyHandle;
-      
-    } catch (error) {
-      console.error('Failed to connect to REAL OpenCode PTY:', error);
-      terminal.write('\r\n\x1b[31mFailed to start OpenCode process\x1b[0m\r\n');
-      toast.error('Failed to start OpenCode process');
-    }
-  };
 
-  // Fit terminal to container
-  useEffect(() => {
-    if (activeSession && terminalRefs.current.has(activeSession)) {
-      const terminal = sessionTerminals.current.get(activeSession);
+      window.addEventListener('resize', handleResize);
       
-      // Fit terminal to container
-      setTimeout(() => {
+      const resizeObserver = new ResizeObserver(() => {
+        handleResize();
+      });
+      if (terminalRef.current) {
+        resizeObserver.observe(terminalRef.current);
+      }
+
+      // Handle terminal input
+      terminal.onData((data) => {
+        if (localPty && localIsConnected) {
+          try {
+            localPty.write(data);
+          } catch (error) {
+            console.error('Failed to write to OpenCode PTY:', error);
+          }
+        }
+      });
+
+      // Spawn terminal and connect
+      try {
+        const terminalManager = getTerminalManager();
+        
+        currentSessionId = `opencode-${Date.now()}`;
+        setSessionId(currentSessionId);
+        
+        const session = await terminalManager.createOpenCodeTerminal(currentSessionId, {
+          cols: terminal.cols,
+          rows: terminal.rows,
+          cwd: 'C:\\Users\\' // Windows-compatible default directory
+        });
+
+        const pty = terminalManager.getPTY(session.ptyId);
+        if (!pty) {
+          throw new Error('PTY not found after session creation');
+        }
+
+        localPty = pty;
+        localIsConnected = true;
+
+        setPtyHandle(pty);
+        setPid(session.pid);
+        setIsConnected(true);
+        setStatus('connected');
+
+        if (isUnmounted) {
+          await terminalManager.destroyTerminal(currentSessionId);
+          terminal.dispose();
+          return;
+        }
+
+        // Listen for output
+        listen<{ pty_id: string; data: string }>('pty-output', (event) => {
+          if (event.payload.pty_id !== pty.id || !terminal) return;
+          try { terminal.write(event.payload.data); } catch { /* disposed */ }
+        }).then(fn => { unlistenPtyOutput = fn; }).catch(err => {
+          console.error('[OpenCodePlayground] Failed to subscribe pty-output:', err);
+        });
+
+        // Handle PTY exit/errors through PTYService lifecycle events
+        const { getPTYService } = await import('./runtime/PTYService');
+        const ptyService = getPTYService();
+
+        ptyService.on('exit', (event: any) => {
+          if (event.ptyId === localPty?.id) {
+            console.log(`[OPENCODE_EXITED] Process exited with code: ${event.exitCode}`);
+            localIsConnected = false;
+            setIsConnected(false);
+            setStatus('disconnected');
+            setPid(null);
+            if (terminal) {
+              terminal.write('\r\n\x1b[31m[OpenCode Process Terminated]\x1b[0m\r\n');
+            }
+          }
+        });
+
+        ptyService.on('error', (event: any) => {
+          if (event.ptyId === localPty?.id) {
+            console.error('OpenCode PTY error:', event.error);
+            if (terminal) {
+              terminal.write(`\r\n\x1b[31m[ERROR] ${event.error?.message || 'Unknown error'}\x1b[0m\r\n`);
+            }
+          }
+        });
+
+      } catch (error) {
+        console.error('Failed to initialize OpenCode terminal:', error);
+        setStatus('error');
         if (terminal) {
-          const fitAddon = new FitAddon();
-          terminal.loadAddon(fitAddon);
-          fitAddon.fit();
+          terminal.write(`\r\n\x1b[31m[FAILED TO SPAWN OPENCODE] ${error}\x1b[0m\r\n`);
         }
-      }, 100);
-    }
-  }, [activeSession]);
+      }
 
-  // Get process info for status display - AUTHENTIC STATE ONLY
-  const getProcessInfo = () => {
-    const terminal = activeSession ? sessionTerminals.current.get(activeSession) : null;
-    const ptyHandle = terminal ? (terminal as any)._ptyHandle : null;
-    
-    // AUTHENTIC: Only show connected if PTY actually exists and is active
-    const isRealConnected = ptyHandle && 
-                           ptyHandle.processId > 0 && 
-                           ptyHandle.isActive;
-    
-    return {
-      pid: ptyHandle?.processId > 0 ? ptyHandle.processId : 'unknown',
-      status: isRealConnected ? 'connected' : 'disconnected'
+      cleanup = async () => {
+        window.removeEventListener('resize', handleResize);
+        if (resizeObserver) resizeObserver.disconnect();
+        if (unlistenPtyOutput) { unlistenPtyOutput(); unlistenPtyOutput = null; }
+
+        const terminalManager = getTerminalManager();
+        try {
+          if (currentSessionId) {
+            await terminalManager.destroyTerminal(currentSessionId);
+          }
+        } catch (error) {
+          console.error('Failed to destroy terminal via manager:', error);
+          if (localPty) {
+            localPty.destroy();
+          }
+        }
+        
+        if (terminal) {
+          terminal.dispose();
+        }
+      };
     };
-  };
 
-  const processInfo = getProcessInfo();
+    initializeTerminal();
+
+    return () => {
+      isUnmounted = true;
+      if (cleanup) {
+        (async () => {
+          try {
+            await cleanup();
+          } catch (error: unknown) {
+            console.error('Cleanup error:', error);
+          }
+        })();
+      }
+    };
+  }, []);
 
   return (
-    <div className="flex flex-col h-full bg-black text-white">
-      {/* TOP THIN HOST BAR - 36px */}
-      <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-800" style={{ height: '36px' }}>
-        <div className="flex items-center space-x-4">
-          <span className="text-sm font-medium text-white">OpenCode Playground</span>
-          <span className="text-xs text-gray-400">PID {processInfo.pid}</span>
+    <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', backgroundColor: '#000000' }}>
+      {/* Header with status */}
+      <div style={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'space-between', 
+        padding: '8px 16px',
+        backgroundColor: '#111111',
+        borderBottom: '1px solid #333333',
+        height: '36px',
+        flexShrink: 0
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <span style={{ fontSize: '13px', fontWeight: 600, color: '#ffffff' }}>OpenCode AI TUI</span>
+          <span style={{ fontSize: '12px', color: '#8b949e', fontFamily: 'monospace' }}>
+            PID {pid || '...'}
+          </span>
         </div>
         
-        <div className="flex items-center space-x-4">
-          <button
-            onClick={() => createNewSession()}
-            className="text-xs text-gray-400 hover:text-white transition-colors"
-          >
-            New Session
-          </button>
-          <span className="text-xs text-gray-500">{processInfo.status}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <div style={{ 
+              width: '8px', 
+              height: '8px', 
+              borderRadius: '50%',
+              backgroundColor: status === 'connected' ? '#3fb950' : 
+                             status === 'spawning' ? '#d29922' : '#f85149',
+              boxShadow: status === 'connected' ? '0 0 8px rgba(63, 185, 80, 0.4)' : 'none'
+            }} />
+            <span style={{ fontSize: '12px', color: '#8b949e', textTransform: 'capitalize' }}>
+              {status}
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* REAL XTERM TERMINAL - 90%+ VIEWPORT */}
-      <div className="flex-1 overflow-hidden bg-black">
-        <div
-          className="h-full w-full"
-          ref={(el) => {
-            if (el && activeSession) {
-              terminalRefs.current.set(activeSession, el);
-            }
-          }}
+      {/* Terminal Container */}
+      <div 
+        style={{ 
+          flex: 1, 
+          overflow: 'hidden',
+          backgroundColor: '#000000',
+          position: 'relative',
+          padding: '4px'
+        }}
+      >
+        <div 
+          ref={terminalRef} 
+          style={{ width: '100%', height: '100%' }} 
+          className="terminal-container"
         />
       </div>
 
-      {/* BOTTOM STATUS STRIP - 20px - AUTHENTIC STATE ONLY */}
-      <div className="flex items-center justify-between px-4 py-1 bg-gray-900 border-t border-gray-800 text-xs font-mono" style={{ height: '20px' }}>
-        <div className="flex items-center space-x-4 text-gray-400">
-          <span>{processInfo.status === 'connected' ? 'PTY CONNECTED' : 'PTY DISCONNECTED'}</span>
+      {/* Footer Status Bar */}
+      <div style={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'space-between', 
+        padding: '0 16px',
+        backgroundColor: '#111111',
+        borderTop: '1px solid #333333',
+        height: '24px',
+        flexShrink: 0,
+        fontSize: '11px',
+        fontFamily: 'monospace',
+        color: '#8b949e'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <span style={{ color: isConnected ? '#3fb950' : '#8b949e' }}>
+            {isConnected ? 'PTY CONNECTED' : 'PTY DISCONNECTED'}
+          </span>
           <span>•</span>
-          <span>PID {processInfo.pid}</span>
-          <span>•</span>
-          <span>{processInfo.status === 'connected' ? 'WORKSPACE READY' : 'NO PTY'}</span>
-        </div>
-        
-        <div className="text-gray-500">
-          {activeSession ? `${(config as OpenCodeConfig).terminal?.workingDirectory || '/tmp'}/workspace-${activeSession}` : 'no session'}
+          <span>{sessionId || 'no session'}</span>
         </div>
       </div>
     </div>

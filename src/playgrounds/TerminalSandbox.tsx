@@ -1,185 +1,100 @@
 import React, { useEffect, useRef } from 'react';
-import { Terminal } from '@xterm/xterm';
-import { FitAddon } from 'xterm-addon-fit';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { TerminalHost } from './runtime/TerminalHost';
 import '@xterm/xterm/css/xterm.css';
 
-interface TerminalHost {
-  terminal: Terminal | null;
-  fitAddon: FitAddon | null;
-  ptyId: string | null;
-  unlisten: (() => void) | null;
-}
-
+/**
+ * TerminalSandbox — minimal, self-contained terminal panel.
+ *
+ * Mounts a TerminalHost into the page and handles the React lifecycle
+ * cleanly, including StrictMode double-invocation.
+ */
 const TerminalSandbox: React.FC = () => {
   const terminalRef = useRef<HTMLDivElement>(null);
-  const hostRef = useRef<TerminalHost>({
-    terminal: null,
-    fitAddon: null,
-    ptyId: null,
-    unlisten: null
-  });
+  const hostRef = useRef<TerminalHost | null>(null);
+  // Guard against React StrictMode double-mount
+  const mountedRef = useRef(false);
 
   useEffect(() => {
-    const host = hostRef.current;
-    let mounted = true;
+    if (mountedRef.current) return;
+    mountedRef.current = true;
 
-    const initializeTerminal = async () => {
-      if (!terminalRef.current || !mounted) return;
+    const container = terminalRef.current;
+    if (!container) return;
 
-      try {
-        // Create xterm instance with modern settings
-        const terminal = new Terminal({
-          cols: 80,
-          rows: 24,
-          fontFamily: 'Consolas, "Courier New", monospace',
-          fontSize: 14,
-          theme: {
-            background: '#1e1e1e',
-            foreground: '#cccccc',
-            cursor: '#ffffff',
-            selectionBackground: '#264f78',
-            black: '#000000',
-            red: '#cd3131',
-            green: '#0dbc79',
-            yellow: '#e5e510',
-            blue: '#2472c8',
-            magenta: '#bc3fbc',
-            cyan: '#11a8cd',
-            white: '#e5e5e5',
-            brightBlack: '#666666',
-            brightRed: '#f14c4c',
-            brightGreen: '#23d18b',
-            brightYellow: '#f5f543',
-            brightBlue: '#3b8eea',
-            brightMagenta: '#d670d6',
-            brightCyan: '#29b8db',
-            brightWhite: '#e5e5e5'
-          },
-          cursorBlink: true,
-          cursorStyle: 'bar',
-          scrollback: 10000,
-          allowTransparency: false,
-          macOptionIsMeta: true,
-          rightClickSelectsWord: true
+    const host = new TerminalHost();
+    hostRef.current = host;
+
+    // Two rAF cycles ensure the flex-box layout has committed real pixel
+    // dimensions before TerminalHost tries to read getBoundingClientRect().
+    let rafId1: number;
+    let rafId2: number;
+
+    rafId1 = requestAnimationFrame(() => {
+      rafId2 = requestAnimationFrame(() => {
+        if (!mountedRef.current) return; // unmounted before paint
+        host.initialize(container).catch((err) => {
+          console.error('[TerminalSandbox] initialize error:', err);
         });
-
-        // Add fit addon for responsive sizing
-        const fitAddon = new FitAddon();
-        terminal.loadAddon(fitAddon);
-
-        // Open terminal in container
-        terminal.open(terminalRef.current);
-        fitAddon.fit();
-
-        // Store references
-        host.terminal = terminal;
-        host.fitAddon = fitAddon;
-
-        // Create PTY
-        const ptyId = await invoke('pty_create', {
-          config: {
-            cols: terminal.cols,
-            rows: terminal.rows,
-            cwd: 'C:\\Users\\',
-            env: {},
-            shell: 'powershell.exe'
-          }
-        }) as string;
-
-        host.ptyId = ptyId;
-
-        // Listen for PTY output
-        host.unlisten = await listen('pty-output', (event) => {
-          const payload = event.payload as { ptyId: string; data: string };
-          if (payload.ptyId === ptyId) {
-            terminal.write(payload.data);
-          }
-        });
-
-        // Handle terminal input -> PTY
-        terminal.onData((data) => {
-          if (host.ptyId) {
-            invoke('pty_write', { ptyId: host.ptyId, data }).catch(console.error);
-          }
-        });
-
-        // Handle resize
-        const handleResize = () => {
-          if (host.fitAddon && host.ptyId) {
-            host.fitAddon.fit();
-            const { cols, rows } = host.terminal!;
-            invoke('pty_resize', { ptyId: host.ptyId, cols, rows }).catch(console.error);
-          }
-        };
-
-        window.addEventListener('resize', handleResize);
-
-        // Return cleanup function
-        return () => {
-          window.removeEventListener('resize', handleResize);
-        };
-
-      } catch (error) {
-        console.error('Terminal initialization error:', error);
-      }
-    };
-
-    let cleanupFn: (() => void) | undefined;
-
-    initializeTerminal().then(cleanup => {
-      cleanupFn = cleanup;
+      });
     });
 
     return () => {
-      mounted = false;
-      if (cleanupFn) cleanupFn();
-      
-      if (host.unlisten) {
-        host.unlisten();
-      }
-      
-      if (host.ptyId) {
-        invoke('pty_destroy', { ptyId: host.ptyId }).catch(console.error);
-      }
-      
-      if (host.terminal) {
-        host.terminal.dispose();
+      mountedRef.current = false;
+      cancelAnimationFrame(rafId1);
+      cancelAnimationFrame(rafId2);
+      if (hostRef.current) {
+        hostRef.current.dispose();
+        hostRef.current = null;
       }
     };
   }, []);
 
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100vh',
-      background: '#1e1e1e'
-    }}>
-      {/* Minimal header */}
-      <div style={{
-        padding: '8px 16px',
-        background: '#252526',
-        borderBottom: '1px solid #333',
+    <div
+      style={{
         display: 'flex',
-        alignItems: 'center',
-        gap: '8px',
-        fontSize: '12px',
-        color: '#cccccc'
-      }}>
-        <span style={{ fontWeight: 600 }}>PowerShell</span>
-        <span style={{ color: '#666' }}>|</span>
-        <span style={{ color: '#888' }}>Integrated Terminal</span>
+        flexDirection: 'column',
+        height: '100%',
+        minHeight: 0,
+        background: '#0d1117',
+      }}
+    >
+      {/* Header bar */}
+      <div
+        style={{
+          padding: '6px 14px',
+          background: '#161b22',
+          borderBottom: '1px solid #30363d',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          fontSize: '12px',
+          color: '#8b949e',
+          flexShrink: 0,
+        }}
+      >
+        <span
+          style={{
+            display: 'inline-block',
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            background: '#3fb950',
+          }}
+        />
+        <span style={{ fontWeight: 600, color: '#c9d1d9' }}>PowerShell</span>
+        <span style={{ color: '#484f58' }}>│</span>
+        <span>Integrated Terminal</span>
       </div>
 
-      {/* Terminal container - edge to edge */}
-      <div 
+      {/* Terminal container — must have explicit flex:1 so getBoundingClientRect
+          returns non-zero dimensions before FitAddon runs */}
+      <div
         ref={terminalRef}
         style={{
           flex: 1,
+          minHeight: 0,   // ← critical: prevents flex child from overflowing
           overflow: 'hidden',
-          padding: '4px'
         }}
       />
     </div>

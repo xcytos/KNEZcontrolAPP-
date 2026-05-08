@@ -130,24 +130,45 @@ const PLAYGROUND_ICONS: any = {
 };
 
 export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk }) => {
-  const [playgrounds, setPlaygrounds] = useState<PlaygroundInstance[]>([]);
-  const [activePlayground, setActivePlayground] = useState<string | null>(null);
+  const [playgrounds, setPlaygrounds] = useState<PlaygroundInstance[]>(() => {
+    try {
+      const saved = localStorage.getItem('knez_opened_playgrounds');
+      if (saved) {
+        const types = JSON.parse(saved) as PlaygroundType[];
+        return types.map(type => ({
+          id: `${type}-${crypto.randomUUID()}`,
+          type,
+          name: PLAYGROUND_CONFIGS[type].name,
+          component: PLAYGROUND_COMPONENTS[type],
+          config: PLAYGROUND_CONFIGS[type],
+          status: 'active',
+          lastActivity: new Date()
+        }));
+      }
+    } catch (e) {
+      console.error('Failed to parse saved playgrounds', e);
+    }
+    return [];
+  });
+  
+  const [activePlayground, setActivePlayground] = useState<string | null>(() => {
+    return localStorage.getItem('knez_active_playground') || null;
+  });
   const [showSettings, setShowSettings] = useState(false);
 
-  // Initialize with Terminal playground
+  // Sync state to localStorage
   useEffect(() => {
-    const initializePlaygrounds = async () => {
-      try {
-        // Start with Terminal playground as default
-        await loadPlayground(PlaygroundType.TERMINAL);
-        console.log('Playground container initialized');
-      } catch (error) {
-        console.error('Failed to initialize playground container:', error);
-      }
-    };
+    const types = playgrounds.map(p => p.type);
+    localStorage.setItem('knez_opened_playgrounds', JSON.stringify(types));
+  }, [playgrounds]);
 
-    void initializePlaygrounds();
-  }, [sdk]);
+  useEffect(() => {
+    if (activePlayground) {
+      localStorage.setItem('knez_active_playground', activePlayground);
+    } else {
+      localStorage.removeItem('knez_active_playground');
+    }
+  }, [activePlayground]);
 
   // Load a playground
   const loadPlayground = useCallback(async (type: PlaygroundType) => {
@@ -208,9 +229,26 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
     console.log(`Unloaded ${playground.name}`);
   }, [activePlayground, playgrounds]);
 
+  // Initialize with Terminal playground
+  useEffect(() => {
+    const initializePlaygrounds = async () => {
+      // Prevent double initialization if already loading or loaded
+      if (playgrounds.length > 0) return;
+      
+      try {
+        // Start with Terminal playground as default
+        await loadPlayground(PlaygroundType.TERMINAL);
+        console.log('Playground container initialized');
+      } catch (error) {
+        console.error('Failed to initialize playground container:', error);
+      }
+    };
+
+    void initializePlaygrounds();
+  }, [sdk, loadPlayground, playgrounds.length]);
+
   // Get active playground component
   const activePlaygroundInstance = playgrounds.find(p => p.id === activePlayground);
-  const ActiveComponent = activePlaygroundInstance?.component;
 
   return (
     <div className="flex flex-col h-full bg-gray-900">
@@ -336,9 +374,28 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
       </div>
 
       {/* Active Playground Content */}
-      <div className="flex-1 overflow-hidden">
-        {ActiveComponent ? (
-          <ActiveComponent sdk={sdk} config={activePlaygroundInstance!.config} />
+      <div className="flex-1 overflow-hidden relative">
+        {playgrounds.length > 0 ? (
+          playgrounds.map(playground => {
+            const Component = playground.component;
+            return (
+              <div 
+                key={playground.id}
+                style={{
+                  visibility: activePlayground === playground.id ? 'visible' : 'hidden',
+                  pointerEvents: activePlayground === playground.id ? 'auto' : 'none',
+                  height: '100%',
+                  width: '100%',
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  zIndex: activePlayground === playground.id ? 10 : 0
+                }}
+              >
+                <Component sdk={sdk} config={playground.config} />
+              </div>
+            );
+          })
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-gray-400">
             <div className="text-center mb-8">

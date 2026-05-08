@@ -1,5 +1,6 @@
 // Import Tauri API directly
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 // Tauri type declarations
 declare global {
@@ -281,64 +282,52 @@ export class PTYService {
   }
 
   private async createConPTYProcess(ptyId: string, config: PTYConfig): Promise<PTYHandle> {
-    // Only allow Tauri WebView environment - no browser fallback
-    console.log(`[PTY DEBUG] typeof window: ${typeof window}`);
-    console.log(`[PTY DEBUG] window exists: ${typeof window !== 'undefined'}`);
-    console.log(`[PTY DEBUG] window.__TAURI__:`, window.__TAURI__);
-    console.log(`[PTY DEBUG] __TAURI__ in window:`, '__TAURI__' in window);
-    
-    // Check for Tauri context AND invoke method
-    const hasTauriContext = typeof window !== 'undefined' && window.__TAURI__;
-    const hasInvokeMethod = hasTauriContext && (window.__TAURI__?.invoke !== undefined);
-    
-    console.log(`[PTY DEBUG] hasTauriContext: ${hasTauriContext}`);
-    console.log(`[PTY DEBUG] hasInvokeMethod: ${hasInvokeMethod}`);
-    
-    if (hasTauriContext && hasInvokeMethod) {
-      // Tauri environment with proper API - use real PTY backend
-      console.log('PTY Service: Tauri environment with invoke method detected, using real PTY backend');
+    // ── Tauri v2 detection ────────────────────────────────────────────────
+    // In Tauri v2, invoke() is a pure ESM import from '@tauri-apps/api/core'.
+    // It is NOT exposed as window.__TAURI__.invoke (that was Tauri v1).
+    // window.__TAURI__ exists in v2 as a namespace object ({app, core, event, …})
+    // but does NOT have .invoke on it — so checking .invoke always returns false.
+    //
+    // Correct detection: check window.__TAURI__ OR window.__TAURI_INTERNALS__,
+    // then call the already-imported `invoke` function directly.
+    const w = window as any;
+    const isTauri = !!(w.__TAURI__ || w.__TAURI_INTERNALS__ || w.__TAURI_IPC__);
+
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[PTY DEBUG] isTauri (v2 check): ${isTauri}`);
+      console.log(`[PTY DEBUG] window.__TAURI__:`, w.__TAURI__);
+      console.log(`[PTY DEBUG] window.__TAURI_INTERNALS__:`, !!w.__TAURI_INTERNALS__);
+    }
+
+    if (isTauri) {
+      // Tauri environment — use the ESM-imported invoke() directly.
+      console.log('[PTYService] Tauri v2 environment detected, using real PTY backend via ESM invoke');
       return this.createWebPTY(ptyId, config);
-    } else if (hasTauriContext && !hasInvokeMethod) {
-      // Tauri context exists but API not ready - wait and retry
-      console.log('PTY Service: Tauri context detected but invoke method not ready, waiting...');
-      
-      // Wait for Tauri API to be ready
-      return new Promise((resolve, reject) => {
-        const checkInterval = setInterval(() => {
-          if (window.__TAURI__?.invoke) {
-            clearInterval(checkInterval);
-            console.log('PTY Service: Tauri invoke method now available');
-            this.createWebPTY(ptyId, config).then(resolve).catch(reject);
-          }
-        }, 100);
-        
-        // Timeout after 5 seconds
-        setTimeout(() => {
-          clearInterval(checkInterval);
-          reject(new Error('Tauri API not ready within timeout - Terminal Playground requires Tauri environment'));
-        }, 5000);
-      });
     } else {
-      // No fallback - throw error if not in Tauri environment
-      console.log('[PTY DEBUG] Tauri backend not available - throwing error');
-      throw new Error('Tauri backend not available - Terminal Playground requires Tauri environment');
+      throw new Error('Tauri backend not available — Terminal Playground requires the Tauri desktop app (npm run tauri dev)');
     }
   }
   private async createWebPTY(_ptyId: string, config: PTYConfig): Promise<PTYHandle> {
     return new Promise(async (resolve, reject) => {
       try {
-        console.log('[PTY DEBUG] Using direct invoke function');
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[PTY DEBUG] Using direct invoke function');
+        }
         
         // Spawn actual PTY process with real shell using direct invoke
         const result = await invoke('pty_create', {
-          cols: config.cols,
-          rows: config.rows,
-          cwd: config.cwd || 'C:\\Users\\',
-          env: config.env || {},
-          shell: config.shell || 'powershell.exe'
+          config: {
+            cols: config.cols,
+            rows: config.rows,
+            cwd: config.cwd || 'C:\\Users\\',
+            env: config.env || {},
+            shell: config.shell || 'powershell.exe'
+          }
         }) as string;
         
-        console.log('[PTY DEBUG] PTY created successfully:', result);
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[PTY DEBUG] PTY created successfully:', result);
+        }
         
         const handle: PTYHandle = {
           id: result, // PTY ID returned from pty_create
@@ -354,7 +343,7 @@ export class PTYService {
           
           resize: async (cols: number, rows: number) => {
             try {
-              await invoke('pty_resize', { pty_id: result, cols, rows });
+              await invoke('pty_resize', { ptyId: result, cols, rows });
             } catch (error) {
               console.error('Resize error:', error);
             }
@@ -362,7 +351,7 @@ export class PTYService {
           
           write: async (data: string) => {
             try {
-              await invoke('pty_write', { pty_id: result, data });
+              await invoke('pty_write', { ptyId: result, data });
             } catch (error) {
               console.error('Write error:', error);
             }
@@ -370,7 +359,7 @@ export class PTYService {
           
           kill: async (signal?: number) => {
             try {
-              await invoke('pty_kill', { pty_id: result, signal });
+              await invoke('pty_kill', { ptyId: result, signal });
             } catch (error) {
               console.error('Kill error:', error);
             }
@@ -379,7 +368,7 @@ export class PTYService {
           destroy: async () => {
             handle.isActive = false;
             try {
-              await invoke('pty_destroy', { pty_id: result });
+              await invoke('pty_destroy', { ptyId: result });
             } catch (error) {
               console.error('Destroy error:', error);
             }
@@ -389,7 +378,9 @@ export class PTYService {
         resolve(handle);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        console.error('[PTY DEBUG] Failed to create PTY:', errorMessage);
+        if (process.env.NODE_ENV === 'development') {
+          console.error('[PTY DEBUG] Failed to create PTY:', errorMessage);
+        }
         reject(new Error(`Failed to create PTY: ${errorMessage}`));
       }
     });
@@ -400,52 +391,41 @@ export class PTYService {
     ptyId: string, 
     handle: PTYHandle,
     stdoutController: TransformStream,
-    stderrController: TransformStream
+    _stderrController: TransformStream
   ): void {
-    // REAL PTY streaming using Tauri IPC - no WebSocket simulation
-    
-    // Listen for REAL PTY data from Tauri backend
-    if (window.__TAURI__?.invoke) {
-      // Set up event listener for PTY data events
-      window.__TAURI__.invoke('pty_listen', { ptyId }).then(() => {
-        console.log(`[PTYService] REAL PTY streaming established for ${ptyId}`);
-      }).catch(error => {
-        console.error('[PTYService] Failed to establish PTY streaming:', error);
-        this.emitEvent('error', { ptyId, error: error as Error });
-      });
-    }
+    // Subscribe to the canonical Tauri event emitted by pty.rs.
+    // The Rust backend calls: app_handle.emit("pty-output", &PtyOutputEvent { pty_id, data })
+    // Note: window.addEventListener('pty-event') was WRONG — that event never fires.
+    let unlistenFn: (() => void) | null = null;
 
-    // Set up global event listener for PTY data from Tauri
-    const handlePTYData = (event: any) => {
-      if (event.detail?.ptyId === ptyId) {
-        const { type, data, stream } = event.detail;
-        
-        if (type === 'data') {
-          console.log(`[STDOUT_RECEIVED] ${data.length} bytes from PTY ${ptyId}`);
-          this.emitEvent('data', { ptyId, data });
-          
-          // Route to appropriate stream
-          const writer = stream === 'stderr' 
-            ? stderrController.writable.getWriter()
-            : stdoutController.writable.getWriter();
-            
-          writer.write(data).finally(() => writer.releaseLock());
-        } else if (type === 'exit') {
-          console.log(`[PROCESS_EXITED] PTY ${ptyId} exited with code ${data}`);
-          handle.isActive = false;
-          this.emitEvent('exit', { ptyId, exitCode: data });
-        } else if (type === 'error') {
-          this.emitEvent('error', { ptyId, error: new Error(data) });
-        }
+    listen<{ pty_id: string; data: string }>('pty-output', (event) => {
+      if (event.payload.pty_id !== ptyId) return;
+
+      const data = event.payload.data;
+      console.log(`[STDOUT_RECEIVED] ${data.length} bytes from PTY ${ptyId}`);
+      this.emitEvent('data', { ptyId, data });
+
+      // Also pipe into the TransformStream for any consumers using stdout.getReader()
+      try {
+        const writer = stdoutController.writable.getWriter();
+        writer.write(data).finally(() => writer.releaseLock());
+      } catch (_) {
+        // TransformStream may be closed; ignore
       }
-    };
+    }).then((unlisten) => {
+      unlistenFn = unlisten;
+      console.log(`[PTYService] pty-output listener established for ${ptyId}`);
+    }).catch((error) => {
+      console.error('[PTYService] Failed to subscribe to pty-output:', error);
+      this.emitEvent('error', { ptyId, error: error as Error });
+    });
 
-    // Register event listener for PTY events
-    window.addEventListener('pty-event', handlePTYData);
-    
-    // Store cleanup function
+    // Store cleanup so handle.destroy() can remove the Tauri listener
     (handle as any)._cleanup = () => {
-      window.removeEventListener('pty-event', handlePTYData);
+      if (unlistenFn) {
+        unlistenFn();
+        unlistenFn = null;
+      }
     };
   }
 

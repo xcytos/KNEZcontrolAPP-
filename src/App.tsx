@@ -20,9 +20,9 @@ import { UpdatesPanel } from './features/updates/UpdatesPanel';
 import { ExtractionDashboard } from './features/extraction/ExtractionDashboard';
 import { TestPanel } from './features/diagnostics/TestPanel';
 import { SkillsView } from './features/skills/SkillsView';
+// TerminalSandbox is kept for reference; PlaygroundContainer is used via TerminalSandboxView
+// import TerminalSandbox from './playgrounds/TerminalSandbox';
 import { PlaygroundContainer } from './playgrounds/PlaygroundContainer';
-import TerminalSandbox from './playgrounds/TerminalSandbox';
-import { playgroundSDK } from './services/playground/PlaygroundSDK';
 import { PresenceState, McpRegistrySnapshot } from './domain/DataContracts';
 import { knezClient } from './services/knez/KnezClient';
 import { chatService } from './services/ChatService';
@@ -47,6 +47,7 @@ import { logger } from './services/utils/LogService';
 import { features } from './config/features';
 import { initMcpBoot } from './mcp/mcpBoot';
 import { getStaticMemoryLoader } from './services/memory/StaticMemoryLoader';
+import { playgroundSDK } from './services/playground/PlaygroundSDK';
 
 // ...
 
@@ -260,8 +261,6 @@ function AppContent() {
         );
       case 'logs':
         return <LogsPanel />;
-      case 'playground':
-        return <PlaygroundContainer sdk={playgroundSDK} />;
       case 'updates':
         return <UpdatesPanel />;
       case 'extraction':
@@ -271,8 +270,10 @@ function AppContent() {
       case 'skills':
         return <SkillsView />;
       case 'terminal-sandbox':
-        return <TerminalSandbox />;
-        
+        // PlaygroundContainer is the canonical entry for all terminal/playground
+        // instances. TerminalSandbox remains for lightweight single-terminal use.
+        return <TerminalSandboxView />;
+
       default:
         return <ChatPane sessionId={sessionId} readOnly={readOnly} systemStatus={systemStatus} />;
     }
@@ -415,6 +416,19 @@ const McpLoader = () => {
   const load = () => knezClient.tryGetMcpRegistry().then(setSnapshot);
   useEffect(() => { load(); }, []);
   return <McpRegistryView snapshot={snapshot} onRefresh={load} />;
+}
+
+/**
+ * TerminalSandboxView — bridges the App 'terminal-sandbox' route to the
+ * canonical PlaygroundContainer, sharing the global playgroundSDK instance.
+ * Falls back to the lightweight TerminalSandbox if PlaygroundContainer fails.
+ */
+const TerminalSandboxView = () => {
+  return (
+    <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <PlaygroundContainer sdk={playgroundSDK} />
+    </div>
+  );
 }
 
 function App() {

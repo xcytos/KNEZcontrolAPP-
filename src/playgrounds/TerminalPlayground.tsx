@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { listen } from '@tauri-apps/api/event';
 import '@xterm/xterm/css/xterm.css';
 import { getTerminalManager } from './TerminalRuntimeManager';
 import { PlaygroundSDK } from '../services/playground/PlaygroundSDK';
@@ -29,6 +30,11 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
     let terminal: Terminal | null = null;
     let fitAddon: FitAddon | null = null;
     let cleanup: (() => void) | null = null;
+    let unlistenPtyOutput: (() => void) | null = null;
+    let localPty: any = null;
+    let localIsConnected = false;
+    let isUnmounted = false;
+    let currentSessionId = '';
 
     const initializeTerminal = async () => {
       if (!terminalRef.current) return;
@@ -38,33 +44,34 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
       // Create xterm.js instance
       terminal = new Terminal({
         cursorBlink: true,
-        cursorStyle: 'block',
+        cursorStyle: 'bar',
         fontSize: 14,
-        fontFamily: 'Consolas, "Courier New", monospace',
+        fontFamily: 'Cascadia Code, Consolas, "Courier New", monospace',
         theme: {
-          background: '#000000',
-          foreground: '#ffffff',
-          cursor: '#ffffff',
+          background: '#0d1117',
+          foreground: '#c9d1d9',
+          cursor: '#58a6ff',
+          selectionBackground: '#264f78',
           black: '#000000',
-          red: '#ff0000',
-          green: '#00ff00',
-          yellow: '#ffff00',
-          blue: '#0000ff',
-          magenta: '#ff00ff',
-          cyan: '#00ffff',
-          white: '#ffffff',
-          brightBlack: '#808080',
-          brightRed: '#ff8080',
-          brightGreen: '#80ff80',
-          brightYellow: '#ffff80',
-          brightBlue: '#8080ff',
-          brightMagenta: '#ff80ff',
-          brightCyan: '#80ffff',
-          brightWhite: '#ffffff',
+          red: '#ff7b72',
+          green: '#3fb950',
+          yellow: '#d29922',
+          blue: '#58a6ff',
+          magenta: '#bc8cff',
+          cyan: '#39c5cf',
+          white: '#b1bac4',
+          brightBlack: '#6e7681',
+          brightRed: '#ffa198',
+          brightGreen: '#56d364',
+          brightYellow: '#e3b341',
+          brightBlue: '#79c0ff',
+          brightMagenta: '#d2a8ff',
+          brightCyan: '#56d4dd',
+          brightWhite: '#f0f6fc',
         },
         cols: 80,
         rows: 24,
-        scrollback: 1000,
+        scrollback: 10000,
         tabStopWidth: 4,
       });
 
@@ -75,13 +82,19 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
       terminal.loadAddon(fitAddon);
       terminal.loadAddon(webLinksAddon);
 
-      // Mount terminal
+      // Mount terminal — FitAddon MUST be called after the browser layout pass,
+      // not synchronously after open(), to avoid the scrollBarWidth crash.
       terminal.open(terminalRef.current);
-      fitAddon.fit();
 
       // Store references
       terminalInstanceRef.current = terminal;
       fitAddonRef.current = fitAddon;
+
+      // Defer first fit until the container has committed layout
+      await new Promise<void>(resolve => requestAnimationFrame(() =>
+        requestAnimationFrame(() => resolve())
+      ));
+      try { fitAddon.fit(); } catch { /* ignore pre-layout errors */ }
 
       // Handle terminal resize
       const handleResize = () => {
@@ -102,12 +115,19 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
       };
 
       window.addEventListener('resize', handleResize);
+      
+      const resizeObserver = new ResizeObserver(() => {
+        handleResize();
+      });
+      if (terminalRef.current) {
+        resizeObserver.observe(terminalRef.current);
+      }
 
       // Handle terminal input
       terminal.onData((data) => {
-        if (ptyHandle && isConnected) {
+        if (localPty && localIsConnected) {
           try {
-            ptyHandle.write(data);
+            localPty.write(data);
           } catch (error) {
             console.error('Failed to write to PTY:', error);
             if (terminal) {
@@ -125,7 +145,7 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
       try {
         const terminalManager = getTerminalManager();
         
-        const currentSessionId = `terminal-${Date.now()}`;
+        currentSessionId = `terminal-${Date.now()}`;
         setSessionId(currentSessionId);
         
         const session = await terminalManager.createTerminal(currentSessionId, {
@@ -139,10 +159,20 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
           throw new Error('PTY not found after session creation');
         }
 
+        localPty = pty;
+        localIsConnected = true;
+
         setPtyHandle(pty);
         setPid(session.pid);
         setIsConnected(true);
         setStatus('connected');
+
+        if (isUnmounted) {
+          // If component unmounted while we were spawning, destroy it immediately
+          await terminalManager.destroyTerminal(currentSessionId);
+          terminal.dispose();
+          return;
+        }
 
         // Debug Tauri backend availability
         const tauriAvailable = typeof window !== 'undefined' && window.__TAURI__;
@@ -168,23 +198,24 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
           console.log('Terminal destroyed:', event);
         });
 
-        // Set up PTY data streaming via PTYService
+        // Set up PTY output directly via canonical Tauri event.
+        // PTYService.on('data') was silently broken — it listened for 'pty-event'
+        // but the Rust backend emits 'pty-output'.
+        listen<{ pty_id: string; data: string }>('pty-output', (event) => {
+          if (event.payload.pty_id !== pty.id || !terminal) return;
+          try { terminal.write(event.payload.data); } catch { /* disposed */ }
+        }).then(fn => { unlistenPtyOutput = fn; }).catch(err => {
+          console.error('[TerminalPlayground] Failed to subscribe pty-output:', err);
+        });
+
+        // Handle PTY exit/errors through PTYService lifecycle events
         const { getPTYService } = await import('./runtime/PTYService');
         const ptyService = getPTYService();
-        
-        ptyService.on('data', (event: any) => {
-          if (event.ptyId === pty.id && terminal) {
-            try {
-              terminal.write(event.data);
-            } catch (error) {
-              console.error('Failed to write PTY data to terminal:', error);
-            }
-          }
-        });
 
         // Handle PTY exit
         ptyService.on('exit', (event: any) => {
-          if (event.ptyId === pty.id) {
+          if (event.ptyId === localPty?.id) {
+            localIsConnected = false;
             setIsConnected(false);
             setPid(null);
             setStatus('error');
@@ -196,7 +227,7 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
 
         // Handle PTY errors
         ptyService.on('error', (event: any) => {
-          if (event.ptyId === pty.id && terminal) {
+          if (event.ptyId === localPty?.id && terminal) {
             const errorMsg = event.error?.message || 'Unknown PTY error';
             console.error('PTY Error:', errorMsg);
             terminal.write(`\r\n\x1b[31m[PTY ERROR] ${errorMsg}\x1b[0m\r\n`);
@@ -222,18 +253,20 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
 
       cleanup = async () => {
         window.removeEventListener('resize', handleResize);
-        
+        if (resizeObserver) resizeObserver.disconnect();
+        if (unlistenPtyOutput) { unlistenPtyOutput(); unlistenPtyOutput = null; }
+
         // Clean up terminal via TerminalRuntimeManager
         const terminalManager = getTerminalManager();
         try {
-          if (sessionId) {
-            await terminalManager.destroyTerminal(sessionId);
+          if (currentSessionId) {
+            await terminalManager.destroyTerminal(currentSessionId);
           }
         } catch (error) {
           console.error('Failed to destroy terminal via manager:', error);
           // Fallback: direct PTY cleanup
-          if (ptyHandle) {
-            ptyHandle.destroy();
+          if (localPty) {
+            localPty.destroy();
           }
         }
         
@@ -246,6 +279,7 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
     initializeTerminal();
 
     return () => {
+      isUnmounted = true;
       if (cleanup) {
         (async () => {
           try {
@@ -258,28 +292,20 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
     };
   }, []);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (ptyHandle) {
-        ptyHandle.destroy();
-      }
-    };
-  }, [ptyHandle]);
-
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#000' }}>
+    <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', backgroundColor: '#0d1117' }}>
       {/* Header with status */}
       <div style={{ 
-        padding: '8px 12px', 
-        backgroundColor: '#1a1a1a', 
-        color: '#fff', 
-        fontFamily: 'Consolas, monospace',
+        padding: '6px 14px', 
+        backgroundColor: '#161b22', 
+        color: '#c9d1d9', 
+        fontFamily: 'Cascadia Code, Consolas, monospace',
         fontSize: '12px',
-        borderBottom: '1px solid #333',
+        borderBottom: '1px solid #30363d',
         display: 'flex',
         justifyContent: 'space-between',
-        alignItems: 'center'
+        alignItems: 'center',
+        flexShrink: 0
       }}>
         <div>
           <div style={{ fontWeight: 'bold' }}>Terminal Playground</div>
@@ -311,13 +337,13 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
       </div>
 
       {/* Terminal */}
-      <div style={{ flex: 1, position: 'relative' }}>
+      <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         <div 
           ref={terminalRef} 
           style={{ 
             height: '100%', 
             width: '100%',
-            backgroundColor: '#000000'
+            backgroundColor: '#0d1117'
           }} 
         />
       </div>

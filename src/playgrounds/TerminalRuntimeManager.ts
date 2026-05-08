@@ -74,6 +74,54 @@ export class TerminalRuntimeManager {
     return session;
   }
 
+  async createOpenCodeTerminal(sessionId: string, config: PTYConfig): Promise<TerminalSession> {
+    console.log(`[TerminalRuntimeManager] Creating OpenCode terminal session: ${sessionId}`);
+    
+    const ptyService = getPTYService();
+    
+    // Explicitly use the opencode absolute path
+    const shell = 'C:\\Users\\syedm\\AppData\\Roaming\\npm\\node_modules\\opencode-windows-x64\\bin\\opencode.exe';
+    let pty: PTYHandle | null = null;
+    let lastError = null;
+
+    try {
+      console.log(`[TerminalRuntimeManager] Attempting to spawn OpenCode: ${shell}`);
+      pty = await ptyService.createPTY({
+        ...config,
+        shell
+      });
+      console.log(`[TerminalRuntimeManager] Successfully spawned OpenCode with PID: ${pty.processId}`);
+    } catch (error) {
+      lastError = error;
+      console.warn(`[TerminalRuntimeManager] Failed to spawn OpenCode:`, error);
+    }
+
+    if (!pty) {
+      const errorMsg = `Failed to spawn OpenCode. Last error: ${lastError}`;
+      console.error('[TerminalRuntimeManager]', errorMsg);
+      throw new Error(errorMsg);
+    }
+
+    const session: TerminalSession = {
+      id: sessionId,
+      ptyId: pty.id,
+      pid: pty.processId,
+      shell: 'opencode',
+      cwd: config.cwd || 'C:\\Users\\',
+      isActive: true,
+      createdAt: new Date(),
+      lastActivity: new Date()
+    };
+
+    this.sessions.set(sessionId, session);
+    this.ptyHandles.set(pty.id, pty);
+
+    this.emit('terminalCreated', { sessionId, session });
+
+    console.log(`[TerminalRuntimeManager] OpenCode session created: ${sessionId} (PID: ${pty.processId})`);
+    return session;
+  }
+
   async destroyTerminal(sessionId: string): Promise<void> {
     console.log(`[TerminalRuntimeManager] Destroying terminal session: ${sessionId}`);
     

@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::process::{Command, Stdio};
-use std::io::{self, Write, BufReader, BufRead};
+use std::io::{self, Write, Read};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use tauri::{AppHandle, Emitter};
+use portable_pty::{CommandBuilder, native_pty_system, PtySize, MasterPty};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PTYConfig {
@@ -15,17 +15,17 @@ pub struct PTYConfig {
     pub shell: Option<String>,
 }
 
-#[derive(Debug)]
 pub struct PTYProcess {
     pub id: String,
-    pub child: Option<std::process::Child>,
+    pub master: Option<Box<dyn MasterPty + Send>>,
+    pub writer: Option<Box<dyn Write + Send>>,
     pub config: PTYConfig,
     pub is_active: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PtyOutputEvent {
-    pub ptyId: String,
+    pub pty_id: String,
     pub data: String,
 }
 
@@ -33,21 +33,40 @@ impl PTYProcess {
     pub fn new(id: String, config: PTYConfig) -> Self {
         Self {
             id,
-            child: None,
+            master: None,
+            writer: None,
             config,
             is_active: false,
         }
     }
 
-    #[cfg(target_os = "windows")]
     pub fn spawn(&mut self) -> io::Result<()> {
-        let shell = self.config.shell.clone()
-            .unwrap_or_else(|| "powershell.exe".to_string());
+        let pty_system = native_pty_system();
+        
+        let size = PtySize {
+            rows: self.config.rows,
+            cols: self.config.cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
 
-        let mut cmd = Command::new(&shell);
+        let pair = pty_system.openpty(size)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+
+        let shell = self.config.shell.clone().unwrap_or_else(|| {
+            if cfg!(target_os = "windows") {
+                "powershell.exe".to_string()
+            } else if cfg!(target_os = "macos") {
+                "/bin/zsh".to_string()
+            } else {
+                "/bin/bash".to_string()
+            }
+        });
+
+        let mut cmd = CommandBuilder::new(&shell);
         
         if let Some(ref cwd) = self.config.cwd {
-            cmd.current_dir(cwd);
+            cmd.cwd(cwd);
         }
 
         if let Some(ref env_vars) = self.config.env {
@@ -56,72 +75,21 @@ impl PTYProcess {
             }
         }
 
-        // Configure for terminal I/O
-        cmd.stdin(Stdio::piped())
-           .stdout(Stdio::piped())
-           .stderr(Stdio::piped());
+        pair.slave.spawn_command(cmd)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 
-        match cmd.spawn() {
-            Ok(child) => {
-                self.child = Some(child);
-                self.is_active = true;
-                println!("[SHELL_SPAWNED] Process {} spawned at {:?}", self.id, std::time::Instant::now());
-                Ok(())
-            }
-            Err(e) => {
-                self.is_active = false;
-                println!("[SHELL_SPAWN_FAILED] Failed to spawn process {}: {:?}", self.id, e);
-                Err(e)
-            }
-        }
-    }
+        self.writer = Some(pair.master.take_writer().map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?);
+        self.master = Some(pair.master);
+        self.is_active = true;
 
-    #[cfg(not(target_os = "windows"))]
-    pub fn spawn(&mut self) -> io::Result<()> {
-        let shell = self.config.shell.clone()
-            .unwrap_or_else(|| {
-                if cfg!(target_os = "macos") {
-                    "/bin/zsh".to_string()
-                } else {
-                    "/bin/bash".to_string()
-                }
-            });
-
-        let mut cmd = Command::new(&shell);
-        
-        if let Some(ref cwd) = self.config.cwd {
-            cmd.current_dir(cwd);
-        }
-
-        if let Some(ref env_vars) = self.config.env {
-            for (key, value) in env_vars {
-                cmd.env(key, value);
-            }
-        }
-
-        cmd.stdin(Stdio::piped())
-           .stdout(Stdio::piped())
-           .stderr(Stdio::piped());
-
-        match cmd.spawn() {
-            Ok(child) => {
-                self.child = Some(child);
-                self.is_active = true;
-                Ok(())
-            }
-            Err(e) => {
-                self.is_active = false;
-                Err(e)
-            }
-        }
+        println!("[SHELL_SPAWNED] Process {} spawned at {:?}", self.id, std::time::Instant::now());
+        Ok(())
     }
 
     pub fn write(&mut self, data: &str) -> io::Result<()> {
-        if let Some(ref mut child) = self.child {
-            if let Some(ref mut stdin) = child.stdin {
-                stdin.write_all(data.as_bytes())?;
-                stdin.flush()?;
-            }
+        if let Some(ref mut writer) = self.writer {
+            writer.write_all(data.as_bytes())?;
+            writer.flush()?;
         }
         Ok(())
     }
@@ -130,100 +98,58 @@ impl PTYProcess {
         self.config.cols = cols;
         self.config.rows = rows;
 
-        #[cfg(target_os = "windows")]
-        {
-            // Windows ConPTY resize would be implemented here
-            // For now, just update the stored dimensions
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            // Unix PTY resize using SIGWINCH
-            if let Some(ref child) = self.child {
-                // Send resize signal to child process
-                // Implementation depends on PTY library used
-            }
+        if let Some(ref master) = self.master {
+            master.resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            }).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
         }
 
         Ok(())
     }
 
-    pub fn kill(&mut self, signal: Option<i32>) -> io::Result<()> {
-        if let Some(ref mut child) = self.child {
-            #[cfg(target_os = "windows")]
-            {
-                if let Some(_sig) = signal {
-                    // Windows-specific signal handling
-                    child.kill()?;
-                } else {
-                    child.kill()?;
-                }
-            }
-
-            #[cfg(not(target_os = "windows"))]
-            {
-                use nix::sys::signal::{self, Signal};
-                use nix::unistd::Pid;
-                
-                if let Some(ref child) = self.child {
-                    if let Some(pid) = child.id() {
-                        let sig = if let Some(sig_num) = signal {
-                            match sig_num {
-                                2 => Signal::SIGINT,
-                                9 => Signal::SIGKILL,
-                                15 => Signal::SIGTERM,
-                                _ => Signal::SIGTERM,
-                            }
-                        } else {
-                            Signal::SIGTERM
-                        };
-                        
-                        signal::kill(Pid::from_raw(pid as pid_t), sig)?;
-                    }
-                }
-            }
-        }
+    pub fn kill(&mut self, _signal: Option<i32>) -> io::Result<()> {
+        // Drop the master and writer which sends EOF and closes the PTY
+        self.writer.take();
+        self.master.take();
         self.is_active = false;
         Ok(())
     }
 
-    pub fn start_stdout_reader(&mut self, app_handle: AppHandle) {
-        if let Some(ref mut child) = self.child {
-            if let Some(stdout) = child.stdout.take() {
-                let pty_id = self.id.clone();
-                let app_handle = app_handle.clone();
-                
-                tokio::spawn(async move {
-                    let mut reader = BufReader::new(stdout);
-                    let mut buffer = String::new();
-                    
-                    loop {
-                        match reader.read_line(&mut buffer) {
-                            Ok(0) => break, // EOF
-                            Ok(_) => {
-                                let data = buffer.clone();
-                                buffer.clear();
-                                
-                                // Emit PTY output event
-                                let event = PtyOutputEvent {
-                                    ptyId: pty_id.clone(),
-                                    data,
-                                };
-                                
-                                if let Err(e) = app_handle.emit("pty-output", &event) {
-                                    eprintln!("[PTY_ERROR] Failed to emit output event: {}", e);
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("[PTY_ERROR] Failed to read stdout: {}", e);
+    pub fn start_stdout_reader(&mut self, app_handle: AppHandle) -> io::Result<()> {
+        if let Some(ref master) = self.master {
+            let mut reader = master.try_clone_reader().map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            let pty_id = self.id.clone();
+            let app_handle = app_handle.clone();
+
+            tokio::task::spawn_blocking(move || {
+                let mut buf = [0u8; 4096];
+                loop {
+                    match reader.read(&mut buf) {
+                        Ok(0) => break, // EOF
+                        Ok(n) => {
+                            let data = String::from_utf8_lossy(&buf[..n]).into_owned();
+                            let event = PtyOutputEvent {
+                                pty_id: pty_id.clone(),
+                                data,
+                            };
+                            if let Err(e) = app_handle.emit("pty-output", &event) {
+                                eprintln!("[PTY_ERROR] Failed to emit output event: {}", e);
                                 break;
                             }
                         }
+                        Err(e) => {
+                            eprintln!("[PTY_ERROR] Failed to read stdout chunk: {}", e);
+                            break;
+                        }
                     }
-                });
-            }
+                }
+                println!("[PTY_EXIT] Reader thread exiting for {}", pty_id);
+            });
         }
+        Ok(())
     }
 }
 
@@ -252,7 +178,7 @@ impl PTYService {
         match process.spawn() {
             Ok(()) => {
                 // Start stdout reader task
-                process.start_stdout_reader(app_handle);
+                let _ = process.start_stdout_reader(app_handle);
                 
                 let mut processes = self.processes.lock().unwrap();
                 processes.insert(pty_id.clone(), process);
