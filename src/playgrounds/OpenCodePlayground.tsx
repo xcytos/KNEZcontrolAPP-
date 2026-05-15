@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { listen } from '@tauri-apps/api/event';
+import { Activity } from 'lucide-react';
 import '@xterm/xterm/css/xterm.css';
 import { getTerminalManager } from './TerminalRuntimeManager';
 import { PlaygroundSDK } from '../services/playground/PlaygroundSDK';
@@ -124,6 +125,14 @@ export const OpenCodePlayground: React.FC<OpenCodePlaygroundProps> = ({
           } catch (error) {
             console.error('Failed to handle terminal resize:', error);
           }
+        }
+      };
+
+      // Exposed for manual refresh
+      (window as any).refreshOpenCodeTerminal = () => {
+        handleResize();
+        if (terminal) {
+          terminal.refresh(0, terminal.rows - 1);
         }
       };
 
@@ -282,6 +291,26 @@ export const OpenCodePlayground: React.FC<OpenCodePlaygroundProps> = ({
         </div>
         
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <button 
+            onClick={() => handleResizeRef.current?.()}
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              backgroundColor: '#333333',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+            title="Force Terminal Refit"
+          >
+            <Activity size={12} />
+            Refresh UI
+          </button>
+
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <div style={{ 
               width: '8px', 

@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { listen } from '@tauri-apps/api/event';
+import { Activity } from 'lucide-react';
 import '@xterm/xterm/css/xterm.css';
 import { getTerminalManager } from './TerminalRuntimeManager';
 import { PlaygroundSDK } from '../services/playground/PlaygroundSDK';
@@ -331,20 +332,42 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
             </div>
           )}
         </div>
-        <div style={{ textAlign: 'right' }}>
-          <div>
-            {status === 'connected' ? (
-              <span style={{ color: '#00ff00' }}>● Connected</span>
-            ) : status === 'spawning' ? (
-              <span style={{ color: '#ffaa00' }}>● Spawning...</span>
-            ) : status === 'error' ? (
-              <span style={{ color: '#ff0000' }}>● Error</span>
-            ) : (
-              <span style={{ color: '#888888' }}>● Idle</span>
-            )}
-          </div>
-          <div style={{ fontSize: '10px', opacity: 0.7 }}>
-            PID: {pid || 'N/A'} | Status: {status.toUpperCase()}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <button 
+            onClick={() => handleResizeRef.current?.()}
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              backgroundColor: '#333333',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+            title="Force Terminal Refit"
+          >
+            <Activity size={12} />
+            Refresh UI
+          </button>
+
+          <div style={{ textAlign: 'right' }}>
+            <div>
+              {status === 'connected' ? (
+                <span style={{ color: '#00ff00' }}>● Connected</span>
+              ) : status === 'spawning' ? (
+                <span style={{ color: '#ffaa00' }}>● Spawning...</span>
+              ) : status === 'error' ? (
+                <span style={{ color: '#ff0000' }}>● Error</span>
+              ) : (
+                <span style={{ color: '#888888' }}>● Idle</span>
+              )}
+            </div>
+            <div style={{ fontSize: '10px', opacity: 0.7 }}>
+              PID: {pid || 'N/A'} | Status: {status.toUpperCase()}
+            </div>
           </div>
         </div>
       </div>

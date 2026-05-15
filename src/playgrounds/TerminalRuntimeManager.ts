@@ -1,4 +1,5 @@
 import { PTYHandle, PTYConfig, getPTYService } from './runtime/PTYService';
+import { BaseDirectory, readTextFile, writeTextFile, exists, mkdir } from '@tauri-apps/plugin-fs';
 
 export interface TerminalSession {
   id: string;
@@ -84,6 +85,9 @@ export class TerminalRuntimeManager {
 
   async createOpenCodeTerminal(sessionId: string, config: PTYConfig): Promise<TerminalSession> {
     console.log(`[TerminalRuntimeManager] Creating OpenCode terminal session: ${sessionId}`);
+    
+    // Ensure MCP servers are synced before spawning
+    await this.ensureOpenCodeMcpConfig();
     
     const ptyService = getPTYService();
     
@@ -285,6 +289,87 @@ export class TerminalRuntimeManager {
     this.eventListeners.clear();
     
     console.log('[TerminalRuntimeManager] Shutdown complete');
+  }
+
+  /**
+   * Synchronizes the Knez Control App's MCP registry to OpenCode's configuration.
+   * This ensures OpenCode has access to the same tools as the main app.
+   */
+  private async ensureOpenCodeMcpConfig() {
+    try {
+      console.log('[TerminalRuntimeManager] Synchronizing MCP config to OpenCode...');
+      
+      // 1. Load app's mcp config
+      let appConfigRaw = '';
+      try {
+        appConfigRaw = await readTextFile('mcp.config.json', { baseDir: BaseDirectory.AppLocalData });
+      } catch (e) {
+        console.warn('[TerminalRuntimeManager] No app mcp.config.json found to sync');
+        return;
+      }
+      
+      const appConfig = JSON.parse(appConfigRaw);
+      const appServers = appConfig.mcpServers || {};
+      
+      // 2. Prepare opencode.json path
+      const opencodeConfigDir = '.config/opencode';
+      const opencodeConfigFile = `${opencodeConfigDir}/opencode.json`;
+      
+      // Ensure dir exists
+      try {
+        if (!(await exists(opencodeConfigDir, { baseDir: BaseDirectory.Home }))) {
+          await mkdir(opencodeConfigDir, { baseDir: BaseDirectory.Home, recursive: true });
+        }
+      } catch (e) {
+        console.error('[TerminalRuntimeManager] Failed to ensure opencode config dir:', e);
+      }
+      
+      // 3. Read existing opencode config
+      let opencodeConfig: any = { 
+        "$schema": "https://opencode.ai/config.json",
+        "agent": {}, 
+        "mode": {}, 
+        "plugin": [], 
+        "command": {}, 
+        "username": "syedm", 
+        "mcp": {} 
+      };
+      try {
+        const raw = await readTextFile(opencodeConfigFile, { baseDir: BaseDirectory.Home });
+        opencodeConfig = JSON.parse(raw);
+      } catch (e) {
+        console.log('[TerminalRuntimeManager] Creating new opencode.json');
+      }
+      
+      if (!opencodeConfig.mcp) opencodeConfig.mcp = {};
+      
+      // 4. Sync servers
+      let changed = false;
+      for (const [id, server] of Object.entries<any>(appServers)) {
+        // Only sync if enabled or if it's the core taqwin server
+        if (!server.enabled && id !== 'taqwin') continue; 
+        
+        const mapped: any = {
+          type: 'local', // OpenCode uses 'local' for stdio-based servers
+          command: [server.command, ...(server.args || [])],
+          environment: server.env || {},
+          enabled: true
+        };
+        
+        // Overwrite/Update
+        opencodeConfig.mcp[id] = mapped;
+        changed = true;
+      }
+      
+      if (changed) {
+        await writeTextFile(opencodeConfigFile, JSON.stringify(opencodeConfig, null, 2), { baseDir: BaseDirectory.Home });
+        console.log('[TerminalRuntimeManager] OpenCode MCP config synchronized successfully');
+      } else {
+        console.log('[TerminalRuntimeManager] No changes to sync to OpenCode');
+      }
+    } catch (error) {
+      console.error('[TerminalRuntimeManager] Failed to sync OpenCode MCP config:', error);
+    }
   }
 }
 
