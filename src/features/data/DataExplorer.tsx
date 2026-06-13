@@ -4,8 +4,9 @@ import { ControlAppDataView } from './ControlAppDataView';
 import { PostgresDataView } from './PostgresDataView';
 import { GenericSqliteView } from './GenericSqliteView';
 import { TaqwinHierarchicalView } from './TaqwinHierarchicalView';
+import { GitStatisticsView } from './GitStatisticsView';
 
-type DataSource = 'control-app' | 'postgres' | 'sqlite-browser' | 'taqwin-hierarchy';
+type DataSource = 'control-app' | 'postgres' | 'sqlite-browser' | 'taqwin-hierarchy' | 'git-stats';
 
 export const DataExplorer: React.FC = () => {
   const [activeSource, setActiveSource] = useState<DataSource>('taqwin-hierarchy');
@@ -19,11 +20,18 @@ export const DataExplorer: React.FC = () => {
       color: 'indigo'
     },
     { 
+      id: 'git-stats' as DataSource, 
+      label: 'Git Statistics', 
+      icon: GitBranch,
+      description: 'Commits • File changes • Push to remote',
+      color: 'purple'
+    },
+    { 
       id: 'sqlite-browser' as DataSource, 
       label: 'SQLite Browser', 
       icon: Search,
       description: 'Generic SQLite viewer • Browse any .db file',
-      color: 'purple'
+      color: 'orange'
     },
     { 
       id: 'control-app' as DataSource, 
@@ -118,6 +126,7 @@ export const DataExplorer: React.FC = () => {
       {/* Content Area */}
       <div className="flex-1 overflow-hidden">
         {activeSource === 'taqwin-hierarchy' && <TaqwinHierarchicalView />}
+        {activeSource === 'git-stats' && <GitStatisticsView />}
         {activeSource === 'control-app' && <ControlAppDataView />}
         {activeSource === 'postgres' && <PostgresDataView />}
         {activeSource === 'sqlite-browser' && <GenericSqliteView />}

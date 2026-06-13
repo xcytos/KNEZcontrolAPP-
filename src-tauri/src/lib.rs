@@ -528,7 +528,9 @@ pub fn run() {
             data_commands::list_sqlite_sessions,
             data_commands::list_sqlite_memories,
             data_commands::list_sqlite_checkpoints,
-            data_commands::sqlite_get_session_hierarchy
+            data_commands::sqlite_get_session_hierarchy,
+            data_commands::get_git_stats,
+            data_commands::git_push
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

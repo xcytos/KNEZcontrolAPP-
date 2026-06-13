@@ -1,6 +1,7 @@
 use tauri::State;
 use std::sync::Mutex;
 use std::path::PathBuf;
+use std::process::Command;
 use sqlx::postgres::PgPool;
 use serde::{Deserialize, Serialize};
 
@@ -488,5 +489,176 @@ pub async fn list_sqlite_checkpoints(
             }
         }
         Err(e) => Ok(DatabaseResponse::error(format!("Failed to connect: {}", e))),
+    }
+}
+
+
+// Git Statistics
+#[derive(Debug, Serialize)]
+pub struct GitFileChange {
+    pub file: String,
+    pub insertions: u32,
+    pub deletions: u32,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GitCommit {
+    pub hash: String,
+    pub short_hash: String,
+    pub author: String,
+    pub email: String,
+    pub date: String,
+    pub message: String,
+    pub files_changed: u32,
+    pub insertions: u32,
+    pub deletions: u32,
+    pub files: Vec<GitFileChange>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GitStats {
+    pub total_commits: u32,
+    pub total_files_changed: u32,
+    pub total_insertions: u32,
+    pub total_deletions: u32,
+    pub branch: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GitStatsResponse {
+    pub commits: Vec<GitCommit>,
+    pub stats: GitStats,
+}
+
+#[tauri::command]
+pub async fn get_git_stats(
+    repo_path: String,
+    limit: u32,
+) -> Result<GitStatsResponse, String> {
+    // Get current branch
+    let branch_output = Command::new("git")
+        .arg("rev-parse")
+        .arg("--abbrev-ref")
+        .arg("HEAD")
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!("Failed to get branch: {}", e))?;
+    
+    let branch = String::from_utf8_lossy(&branch_output.stdout).trim().to_string();
+
+    // Get commit log with stats
+    let log_output = Command::new("git")
+        .arg("log")
+        .arg(format!("-{}", limit))
+        .arg("--pretty=format:%H|%h|%an|%ae|%ai|%s")
+        .arg("--numstat")
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!("Failed to get git log: {}", e))?;
+    
+    let log_str = String::from_utf8_lossy(&log_output.stdout);
+    
+    let mut commits = Vec::new();
+    let mut total_files_changed = 0;
+    let mut total_insertions = 0;
+    let mut total_deletions = 0;
+    
+    // Parse git log output
+    let mut current_commit: Option<GitCommit> = None;
+    
+    for line in log_str.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        
+        // Check if this is a commit line (contains |)
+        if line.contains('|') && line.split('|').count() == 6 {
+            // Save previous commit if exists
+            if let Some(commit) = current_commit.take() {
+                total_files_changed += commit.files_changed;
+                total_insertions += commit.insertions;
+                total_deletions += commit.deletions;
+                commits.push(commit);
+            }
+            
+            // Parse new commit
+            let parts: Vec<&str> = line.split('|').collect();
+            current_commit = Some(GitCommit {
+                hash: parts[0].to_string(),
+                short_hash: parts[1].to_string(),
+                author: parts[2].to_string(),
+                email: parts[3].to_string(),
+                date: parts[4].to_string(),
+                message: parts[5].to_string(),
+                files_changed: 0,
+                insertions: 0,
+                deletions: 0,
+                files: Vec::new(),
+            });
+        } else if let Some(ref mut commit) = current_commit {
+            // Parse file change line (numstat format: insertions deletions filename)
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 3 {
+                let insertions = parts[0].parse::<u32>().unwrap_or(0);
+                let deletions = parts[1].parse::<u32>().unwrap_or(0);
+                let filename = parts[2..].join(" ");
+                
+                // Determine status
+                let status = if insertions > 0 && deletions == 0 {
+                    "A" // Added
+                } else if insertions == 0 && deletions > 0 {
+                    "D" // Deleted
+                } else {
+                    "M" // Modified
+                };
+                
+                commit.files.push(GitFileChange {
+                    file: filename,
+                    insertions,
+                    deletions,
+                    status: status.to_string(),
+                });
+                
+                commit.files_changed += 1;
+                commit.insertions += insertions;
+                commit.deletions += deletions;
+            }
+        }
+    }
+    
+    // Don't forget the last commit
+    if let Some(commit) = current_commit {
+        total_files_changed += commit.files_changed;
+        total_insertions += commit.insertions;
+        total_deletions += commit.deletions;
+        commits.push(commit);
+    }
+    
+    Ok(GitStatsResponse {
+        commits,
+        stats: GitStats {
+            total_commits: commits.len() as u32,
+            total_files_changed,
+            total_insertions,
+            total_deletions,
+            branch,
+        },
+    })
+}
+
+#[tauri::command]
+pub async fn git_push(repo_path: String) -> Result<String, String> {
+    let output = Command::new("git")
+        .arg("push")
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!("Failed to execute git push: {}", e))?;
+    
+    if output.status.success() {
+        Ok("Push successful".to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("Git push failed: {}", stderr))
     }
 }
