@@ -137,7 +137,7 @@ export const SessionTimelineGraph: React.FC<SessionTimelineGraphProps> = ({ time
                 </div>
               </div>
             )}
-            {data.learned_memories && data.learned_memories.length > 0 && (
+            {data.learned_memories && Array.isArray(data.learned_memories) && data.learned_memories.length > 0 && (
               <div>
                 <div className="text-xs text-zinc-500 mb-1">Learned Memories ({data.learned_memories.length})</div>
                 <ul className="list-disc list-inside text-sm text-zinc-300 space-y-1">
@@ -145,6 +145,14 @@ export const SessionTimelineGraph: React.FC<SessionTimelineGraphProps> = ({ time
                     <li key={idx}>{mem}</li>
                   ))}
                 </ul>
+              </div>
+            )}
+            {data.learned_memories && typeof data.learned_memories === 'string' && (
+              <div>
+                <div className="text-xs text-zinc-500 mb-1">Learned Memories</div>
+                <div className="text-sm text-zinc-300 bg-zinc-900/50 p-2 rounded">
+                  {data.learned_memories}
+                </div>
               </div>
             )}
           </div>
@@ -187,7 +195,7 @@ export const SessionTimelineGraph: React.FC<SessionTimelineGraphProps> = ({ time
                 <div className="text-sm text-zinc-300">{data.reasoning}</div>
               </div>
             )}
-            {data.alternatives && data.alternatives.length > 0 && (
+            {data.alternatives && Array.isArray(data.alternatives) && data.alternatives.length > 0 && (
               <div>
                 <div className="text-xs text-zinc-500 mb-1">Alternatives Considered</div>
                 <ul className="list-disc list-inside text-sm text-zinc-300 space-y-1">
@@ -195,6 +203,12 @@ export const SessionTimelineGraph: React.FC<SessionTimelineGraphProps> = ({ time
                     <li key={idx}>{typeof alt === 'string' ? alt : JSON.stringify(alt)}</li>
                   ))}
                 </ul>
+              </div>
+            )}
+            {data.alternatives && typeof data.alternatives === 'string' && (
+              <div>
+                <div className="text-xs text-zinc-500 mb-1">Alternatives Considered</div>
+                <div className="text-sm text-zinc-300">{data.alternatives}</div>
               </div>
             )}
           </div>
