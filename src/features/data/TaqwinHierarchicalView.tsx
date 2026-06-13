@@ -12,17 +12,22 @@ import {
   Database,
   Search,
   Loader,
+  BarChart3,
+  List,
 } from 'lucide-react';
 import { taqwinDataService, SessionHierarchy, SessionListItem } from '../../services/data/TaqwinDataService';
+import { SessionTimelineGraph } from './components/SessionTimelineGraph';
 
 export const TaqwinHierarchicalView: React.FC = () => {
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
   const [hierarchy, setHierarchy] = useState<SessionHierarchy | null>(null);
+  const [timeline, setTimeline] = useState<any[]>([]);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [viewMode, setViewMode] = useState<'timeline' | 'sections'>('timeline');
 
   // Load sessions on mount
   useEffect(() => {
@@ -81,6 +86,12 @@ export const TaqwinHierarchicalView: React.FC = () => {
         memories: data.memories?.length || 0,
       });
       setHierarchy(data);
+      
+      // Build timeline from hierarchy data
+      const timelineData = await taqwinDataService.getSessionTimeline(sessionId);
+      console.log('[TaqwinHierarchicalView] Timeline built:', timelineData.length, 'events');
+      setTimeline(timelineData);
+      
       setError(null);
       // Expand key sections by default
       setExpandedSections({
@@ -93,6 +104,7 @@ export const TaqwinHierarchicalView: React.FC = () => {
       console.error('[TaqwinHierarchicalView] Error loading hierarchy:', err);
       setError(errorMsg);
       setHierarchy(null);
+      setTimeline([]);
     } finally {
       setLoading(false);
     }
@@ -153,19 +165,21 @@ export const TaqwinHierarchicalView: React.FC = () => {
               <div className="p-4 text-sm text-zinc-500">No sessions found</div>
             ) : (
               <div className="p-2">
-                {filteredSessions.map((session, idx) => {
-                  // Use session_id if id is not available
-                  const sessionId = (session as any).session_id || session.id || session.display_id;
+                {filteredSessions.map((session) => {
+                  // Database uses 'session_id' as the primary key column
+                  const sessionId = (session as any).session_id;
+                  
+                  if (!sessionId) {
+                    console.warn('[TaqwinHierarchicalView] Session missing session_id:', session);
+                    return null;
+                  }
                   
                   return (
                     <button
-                      key={`${sessionId}-${idx}`}
+                      key={`session-${sessionId}`}
                       onClick={() => {
-                        console.log('[TaqwinHierarchicalView] Button clicked! Session:', session);
-                        console.log('[TaqwinHierarchicalView] Session ID (computed):', sessionId);
-                        console.log('[TaqwinHierarchicalView] Current selectedSession:', selectedSession);
+                        console.log('[TaqwinHierarchicalView] Clicking session:', sessionId);
                         setSelectedSession(sessionId);
-                        console.log('[TaqwinHierarchicalView] After setSelectedSession:', sessionId);
                       }}
                       className={`
                         w-full text-left p-3 rounded-lg border-l-4 transition-all mb-2
@@ -228,7 +242,7 @@ export const TaqwinHierarchicalView: React.FC = () => {
               </div>
             </div>
           ) : hierarchy ? (
-            <div className="flex flex-col overflow-hidden">
+            <div className="flex flex-col overflow-hidden h-full">
               {/* Session Header */}
               <div className="p-4 border-b border-zinc-800 bg-zinc-950">
                 <h2 className="text-lg font-semibold text-zinc-100 mb-2">
@@ -238,7 +252,7 @@ export const TaqwinHierarchicalView: React.FC = () => {
                   <div className="grid grid-cols-2 gap-2 text-xs text-zinc-400">
                     <div>
                       <span className="text-zinc-500">ID:</span>{' '}
-                      <span className="font-mono">{(hierarchy.session as any).id || 'N/A'}</span>
+                      <span className="font-mono">{(hierarchy.session as any).session_id || 'N/A'}</span>
                     </div>
                     <div>
                       <span className="text-zinc-500">Type:</span> {(hierarchy.session as any).session_type || 'N/A'}
@@ -255,8 +269,38 @@ export const TaqwinHierarchicalView: React.FC = () => {
                 )}
               </div>
 
-              {/* Sections */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {/* View Mode Tabs */}
+              <div className="flex border-b border-zinc-800 bg-zinc-950">
+                <button
+                  onClick={() => setViewMode('timeline')}
+                  className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors ${
+                    viewMode === 'timeline'
+                      ? 'text-blue-400 border-b-2 border-blue-400'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  <BarChart3 className="w-4 h-4" />
+                  Timeline Graph
+                </button>
+                <button
+                  onClick={() => setViewMode('sections')}
+                  className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors ${
+                    viewMode === 'sections'
+                      ? 'text-blue-400 border-b-2 border-blue-400'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  <List className="w-4 h-4" />
+                  Sections
+                </button>
+              </div>
+
+              {/* Content Area */}
+              <div className="flex-1 overflow-hidden">
+                {viewMode === 'timeline' ? (
+                  <SessionTimelineGraph timeline={timeline} />
+                ) : (
+                  <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 {/* Checkpoints */}
                 {hierarchy.checkpoints.length > 0 && (
                   <div className="bg-zinc-800/50 rounded-lg border border-zinc-700 overflow-hidden">
@@ -505,6 +549,8 @@ export const TaqwinHierarchicalView: React.FC = () => {
                       <p className="text-sm">No related data found for this session</p>
                     </div>
                   )}
+                  </div>
+                )}
               </div>
             </div>
           ) : selectedSession && !loading && !error ? (
