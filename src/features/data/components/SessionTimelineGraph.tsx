@@ -8,6 +8,7 @@ import {
   FileText,
   AlertCircle,
   X,
+  GitCommit,
 } from 'lucide-react';
 
 interface TimelineEvent {
@@ -16,8 +17,16 @@ interface TimelineEvent {
   data: any;
 }
 
+interface GitMetrics {
+  commits: number;
+  files_changed: number;
+  insertions: number;
+  deletions: number;
+}
+
 interface SessionTimelineGraphProps {
   timeline: TimelineEvent[];
+  gitMetrics?: GitMetrics;
 }
 
 const typeConfig = {
@@ -71,7 +80,7 @@ const typeConfig = {
   },
 };
 
-export const SessionTimelineGraph: React.FC<SessionTimelineGraphProps> = ({ timeline }) => {
+export const SessionTimelineGraph: React.FC<SessionTimelineGraphProps> = ({ timeline, gitMetrics }) => {
   const [selectedEvent, setSelectedEvent] = useState<TimelineEvent | null>(null);
 
   const formatTime = (dateStr: string) => {
@@ -163,7 +172,7 @@ export const SessionTimelineGraph: React.FC<SessionTimelineGraphProps> = ({ time
           <div className="space-y-3">
             <div>
               <div className="text-xs text-zinc-500 mb-1">Event Type</div>
-              <div className="text-sm text-purple-300">{data.event_type || 'Unknown'}</div>
+              <div className="text-sm text-purple-300">{data.event_type || 'Unknown Event'}</div>
             </div>
             {data.trigger && (
               <div>
@@ -171,13 +180,24 @@ export const SessionTimelineGraph: React.FC<SessionTimelineGraphProps> = ({ time
                 <div className="text-sm text-zinc-300">{data.trigger}</div>
               </div>
             )}
-            {data.data && (
+            {data.data && typeof data.data === 'object' && Object.keys(data.data).length > 0 && (
               <div>
                 <div className="text-xs text-zinc-500 mb-1">Event Data</div>
                 <div className="text-sm text-zinc-300 bg-zinc-900/50 p-2 rounded font-mono max-h-40 overflow-y-auto">
-                  {typeof data.data === 'string' ? data.data : JSON.stringify(data.data, null, 2)}
+                  {JSON.stringify(data.data, null, 2)}
                 </div>
               </div>
+            )}
+            {data.data && typeof data.data === 'string' && data.data.trim() && (
+              <div>
+                <div className="text-xs text-zinc-500 mb-1">Event Data</div>
+                <div className="text-sm text-zinc-300 bg-zinc-900/50 p-2 rounded font-mono max-h-40 overflow-y-auto">
+                  {data.data}
+                </div>
+              </div>
+            )}
+            {(!data.data || (typeof data.data === 'object' && Object.keys(data.data).length === 0) || (typeof data.data === 'string' && !data.data.trim())) && !data.trigger && (
+              <div className="text-xs text-zinc-500 italic">No additional event data available</div>
             )}
           </div>
         );
@@ -293,6 +313,34 @@ export const SessionTimelineGraph: React.FC<SessionTimelineGraphProps> = ({ time
 
   return (
     <div className="relative h-full flex flex-col overflow-hidden">
+      {/* Git Metrics Bar (if available) */}
+      {gitMetrics && (
+        <div className="bg-zinc-900/50 border-b border-zinc-800 px-6 py-3">
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-2 text-sm">
+              <GitCommit className="w-4 h-4 text-purple-400" />
+              <span className="text-zinc-400">Git Activity:</span>
+            </div>
+            <div className="flex items-center gap-4 text-xs">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 rounded-full bg-blue-500" />
+                <span className="text-zinc-300">{gitMetrics.commits}</span>
+                <span className="text-zinc-500">commits</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <FileText className="w-3 h-3 text-cyan-400" />
+                <span className="text-zinc-300">{gitMetrics.files_changed}</span>
+                <span className="text-zinc-500">files</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-green-400">+{gitMetrics.insertions}</span>
+                <span className="text-red-400">-{gitMetrics.deletions}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Horizontal Timeline */}
       <div className="flex-1 overflow-x-auto overflow-y-hidden p-6">
         <div className="relative min-w-max pb-4">
@@ -324,19 +372,21 @@ export const SessionTimelineGraph: React.FC<SessionTimelineGraphProps> = ({ time
                   {/* Event card preview */}
                   <div
                     onClick={() => setSelectedEvent(event)}
-                    className={`w-full rounded-lg border ${config.borderColor} ${config.bgColor} p-3 cursor-pointer hover:shadow-lg transition-shadow`}
+                    className={`w-full rounded-lg border-2 ${config.borderColor} ${config.bgColor} p-3 cursor-pointer hover:shadow-xl hover:scale-105 transition-all duration-200`}
                   >
-                    <div className={`text-xs font-semibold uppercase tracking-wider mb-1 ${config.textColor}`}>
+                    <div className={`text-[10px] font-bold uppercase tracking-widest mb-1.5 ${config.textColor}`}>
                       {config.label}
                     </div>
-                    <div className={`text-sm font-medium ${config.textColor} truncate mb-1`}>
+                    <div className={`text-sm font-semibold ${config.textColor} line-clamp-2 mb-2 min-h-[2.5rem]`}>
                       {getTitle(event)}
                     </div>
-                    <div className="text-xs text-zinc-500">
-                      {formatTime(event.timestamp)}
-                    </div>
-                    <div className="text-xs text-zinc-600">
-                      {formatDate(event.timestamp)}
+                    <div className="flex items-center justify-between text-[10px]">
+                      <div className="text-zinc-400 font-medium">
+                        {formatTime(event.timestamp)}
+                      </div>
+                      <div className="text-zinc-600">
+                        {formatDate(event.timestamp)}
+                      </div>
                     </div>
                   </div>
                 </div>

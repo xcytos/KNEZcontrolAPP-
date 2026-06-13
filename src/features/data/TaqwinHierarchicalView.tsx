@@ -15,6 +15,8 @@ import {
   BarChart3,
   List,
   Save,
+  Layout,
+  Puzzle,
 } from 'lucide-react';
 import { taqwinDataService, SessionHierarchy, SessionListItem } from '../../services/data/TaqwinDataService';
 import { SessionTimelineGraph } from './components/SessionTimelineGraph';
@@ -301,10 +303,83 @@ export const TaqwinHierarchicalView: React.FC = () => {
             <div className="flex flex-col overflow-hidden h-full">
               {/* Session Header */}
               <div className="p-4 border-b border-zinc-800 bg-zinc-950">
-                <div className="flex items-start justify-between mb-2">
-                  <h2 className="text-lg font-semibold text-zinc-100">
-                    {(hierarchy.session as any).name || (hierarchy.session as any).id || 'Session'}
-                  </h2>
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex-1">
+                    <h2 className="text-lg font-semibold text-zinc-100 mb-2">
+                      {(hierarchy.session as any).name || (hierarchy.session as any).id || 'Session'}
+                    </h2>
+                    
+                    {/* Session Metadata with Icons */}
+                    <div className="flex flex-wrap items-center gap-2 mb-2">
+                      <div className="flex items-center gap-1.5 px-2 py-1 bg-zinc-800/50 rounded text-xs">
+                        <Database className="w-3 h-3 text-zinc-400" />
+                        <span className="text-zinc-500">ID:</span>
+                        <span className="font-mono text-zinc-300">{(hierarchy.session as any).session_id || (hierarchy.session as any).display_id || 'N/A'}</span>
+                      </div>
+                      
+                      {(hierarchy.session as any).session_type && (
+                        <div className="flex items-center gap-1.5 px-2 py-1 bg-zinc-800/50 rounded text-xs">
+                          <Layers className="w-3 h-3 text-zinc-400" />
+                          <span className="text-zinc-300">{(hierarchy.session as any).session_type}</span>
+                        </div>
+                      )}
+                      
+                      {(hierarchy.session as any).created_at && (
+                        <div className="flex items-center gap-1.5 px-2 py-1 bg-zinc-800/50 rounded text-xs">
+                          <Calendar className="w-3 h-3 text-zinc-400" />
+                          <span className="text-zinc-300">{formatDate((hierarchy.session as any).created_at)}</span>
+                        </div>
+                      )}
+                      
+                      {(hierarchy.session as any).status && (
+                        <div className="flex items-center gap-1.5 px-2 py-1 bg-zinc-800/50 rounded text-xs">
+                          <CheckCircle className="w-3 h-3 text-green-400" />
+                          <span className="text-zinc-300">{(hierarchy.session as any).status}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Session Tags as Icons */}
+                    {(hierarchy.session as any).tags && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {(() => {
+                          try {
+                            const tags = typeof (hierarchy.session as any).tags === 'string' 
+                              ? JSON.parse((hierarchy.session as any).tags) 
+                              : (hierarchy.session as any).tags;
+                            
+                            if (Array.isArray(tags)) {
+                              return tags.map((tag: string, idx: number) => {
+                                const getTagIcon = (tag: string) => {
+                                  if (tag.includes('data') || tag.includes('database')) return Database;
+                                  if (tag.includes('ui') || tag.includes('design')) return Layout;
+                                  if (tag.includes('mcp') || tag.includes('integration')) return Puzzle;
+                                  if (tag.includes('code') || tag.includes('development')) return FileText;
+                                  return Layers;
+                                };
+                                
+                                const TagIcon = getTagIcon(tag.toLowerCase());
+                                
+                                return (
+                                  <div 
+                                    key={idx} 
+                                    className="group relative inline-flex items-center gap-1 px-1.5 py-0.5 bg-blue-900/20 border border-blue-700/30 rounded text-[10px] text-blue-300 hover:bg-blue-900/40 transition-colors cursor-help"
+                                    title={tag}
+                                  >
+                                    <TagIcon className="w-2.5 h-2.5" />
+                                    <span className="max-w-[100px] truncate">{tag}</span>
+                                  </div>
+                                );
+                              });
+                            }
+                          } catch (e) {
+                            return null;
+                          }
+                        })()}
+                      </div>
+                    )}
+                  </div>
+
                   <button
                     onClick={saveCheckpoint}
                     disabled={saving}
@@ -334,25 +409,6 @@ export const TaqwinHierarchicalView: React.FC = () => {
                     )}
                   </button>
                 </div>
-                {Object.keys(hierarchy.session || {}).length > 0 ? (
-                  <div className="grid grid-cols-2 gap-2 text-xs text-zinc-400">
-                    <div>
-                      <span className="text-zinc-500">ID:</span>{' '}
-                      <span className="font-mono">{(hierarchy.session as any).session_id || 'N/A'}</span>
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">Type:</span> {(hierarchy.session as any).session_type || 'N/A'}
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">Created:</span> {formatDate((hierarchy.session as any).created_at || '')}
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">Status:</span> {(hierarchy.session as any).status || 'N/A'}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-xs text-zinc-500">No session metadata available</div>
-                )}
               </div>
 
               {/* View Mode Tabs */}
@@ -384,7 +440,15 @@ export const TaqwinHierarchicalView: React.FC = () => {
               {/* Content Area */}
               <div className="flex-1 overflow-hidden">
                 {viewMode === 'timeline' ? (
-                  <SessionTimelineGraph timeline={timeline} />
+                  <SessionTimelineGraph 
+                    timeline={timeline}
+                    gitMetrics={{
+                      commits: hierarchy.checkpoints.length,
+                      files_changed: hierarchy.files.length,
+                      insertions: hierarchy.events.length * 10, // Mock data
+                      deletions: hierarchy.events.length * 3,  // Mock data
+                    }}
+                  />
                 ) : (
                   <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 {/* Checkpoints */}
