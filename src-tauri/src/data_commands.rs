@@ -635,10 +635,13 @@ pub async fn get_git_stats(
         commits.push(commit);
     }
     
+    // Calculate total commits before moving the vector
+    let total_commits = commits.len() as u32;
+    
     Ok(GitStatsResponse {
         commits,
         stats: GitStats {
-            total_commits: commits.len() as u32,
+            total_commits,
             total_files_changed,
             total_insertions,
             total_deletions,
