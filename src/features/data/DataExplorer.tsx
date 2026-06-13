@@ -44,7 +44,7 @@ export const DataExplorer: React.FC = () => {
       id: 'postgres' as DataSource, 
       label: 'PostgreSQL', 
       icon: Server,
-      description: 'Supabase • Document Manager via MCP',
+      description: 'Documents • File changes • Tech stack • MCP',
       color: 'emerald'
     },
   ];

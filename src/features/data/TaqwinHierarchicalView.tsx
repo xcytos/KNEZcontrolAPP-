@@ -19,7 +19,7 @@ import {
   Puzzle,
 } from 'lucide-react';
 import { taqwinDataService, SessionHierarchy, SessionListItem } from '../../services/data/TaqwinDataService';
-import { SessionTimelineGraph } from './components/SessionTimelineGraph';
+import { SessionEvolutionChart } from './components/SessionEvolutionChart';
 
 export const TaqwinHierarchicalView: React.FC = () => {
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
@@ -422,7 +422,7 @@ export const TaqwinHierarchicalView: React.FC = () => {
                   }`}
                 >
                   <BarChart3 className="w-4 h-4" />
-                  Timeline Graph
+                  Evolution Analysis
                 </button>
                 <button
                   onClick={() => setViewMode('sections')}
@@ -433,21 +433,17 @@ export const TaqwinHierarchicalView: React.FC = () => {
                   }`}
                 >
                   <List className="w-4 h-4" />
-                  Sections
+                  Data Sections
                 </button>
               </div>
 
               {/* Content Area */}
               <div className="flex-1 overflow-hidden">
                 {viewMode === 'timeline' ? (
-                  <SessionTimelineGraph 
+                  <SessionEvolutionChart
                     timeline={timeline}
-                    gitMetrics={{
-                      commits: hierarchy.checkpoints.length,
-                      files_changed: hierarchy.files.length,
-                      insertions: hierarchy.events.length * 10, // Mock data
-                      deletions: hierarchy.events.length * 3,  // Mock data
-                    }}
+                    sessionStart={(hierarchy.session as any).created_at || ''}
+                    sessionEnd={(hierarchy.session as any).updated_at || new Date().toISOString()}
                   />
                 ) : (
                   <div className="flex-1 overflow-y-auto p-4 space-y-3">

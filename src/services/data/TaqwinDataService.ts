@@ -125,6 +125,7 @@ export class TaqwinDataService {
 
   /**
    * Get chronological timeline of events for a session
+   * INCLUDES documents from PostgreSQL database
    */
   async getSessionTimeline(sessionId: string): Promise<any[]> {
     const hierarchy = await this.getSessionHierarchy(sessionId);
@@ -186,6 +187,21 @@ export class TaqwinDataService {
       });
     });
 
+    // Add documents from PostgreSQL (if available)
+    try {
+      const documents = await this.getSessionDocuments(sessionId);
+      documents.forEach((doc) => {
+        timeline.push({
+          type: 'document',
+          timestamp: doc.created_at,
+          data: doc,
+        });
+      });
+    } catch (error) {
+      console.warn('[TaqwinDataService] Could not fetch documents:', error);
+      // Continue without documents
+    }
+
     // Sort by timestamp
     timeline.sort((a, b) => {
       const timeA = new Date(a.timestamp).getTime();
@@ -194,6 +210,33 @@ export class TaqwinDataService {
     });
 
     return timeline;
+  }
+
+  /**
+   * Get documents linked to a session from PostgreSQL
+   */
+  async getSessionDocuments(sessionId: string): Promise<any[]> {
+    try {
+      // Query PostgreSQL for documents linked to this session
+      const response = await invoke<DatabaseResponse<any[]>>('postgres_query', {
+        query: `
+          SELECT document_id, title, doc_type, content, created_at, updated_at,
+                 size_bytes, file_path
+          FROM documents
+          WHERE session_id = $1
+          ORDER BY created_at ASC
+        `,
+        params: [sessionId],
+      });
+
+      if (response.success && response.data) {
+        return response.data;
+      }
+      return [];
+    } catch (error) {
+      console.error('[TaqwinDataService] Get session documents error:', error);
+      return [];
+    }
   }
 
   /**
