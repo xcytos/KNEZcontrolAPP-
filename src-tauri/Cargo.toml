@@ -22,6 +22,7 @@ tauri = { version = "2.11.1", features = [] }
 tauri-plugin-shell = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-http = "2"
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-single-instance = { version = "2.3.7", features = ["deep-link"] }
@@ -30,6 +31,9 @@ tauri-plugin-playwright = { version = "0.1", optional = true }
 reqwest = { version = "0.11", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
 portable-pty = "0.8.1"
+# Database dependencies for Data Explorer
+sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "sqlite"] }
+rusqlite = { version = "0.30", features = ["bundled"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = [

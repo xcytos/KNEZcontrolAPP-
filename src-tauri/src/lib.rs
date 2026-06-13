@@ -2,9 +2,14 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use tauri::Manager;
+use std::sync::Mutex;
 
 mod mcp_host;
 mod pty;
+mod database;
+mod data_commands;
+
+use data_commands::DatabaseState;
 
 #[tauri::command]
 fn test_tauri_connection() -> String {
@@ -439,7 +444,8 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_http::init());
+        .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_dialog::init());
     
     #[cfg(feature = "e2e-testing")]
     {
@@ -475,6 +481,9 @@ pub fn run() {
             }
 
             app.manage(mcp_host::McpHostRuntime::new(app.handle().clone()));
+            app.manage(DatabaseState {
+                postgres_pool: Mutex::new(None),
+            });
             app.handle().plugin(tauri_plugin_fs::init())?;
             app.handle().plugin(tauri_plugin_http::init())?;
             Ok(())
@@ -506,7 +515,20 @@ pub fn run() {
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,
-            pty::pty_destroy
+            pty::pty_destroy,
+            data_commands::connect_to_postgres,
+            data_commands::list_pg_documents,
+            data_commands::get_pg_document,
+            data_commands::search_pg_documents,
+            data_commands::list_pg_checkpoints,
+            data_commands::sqlite_list_tables,
+            data_commands::sqlite_get_table_info,
+            data_commands::sqlite_query_table,
+            data_commands::sqlite_get_row_count,
+            data_commands::list_sqlite_sessions,
+            data_commands::list_sqlite_memories,
+            data_commands::list_sqlite_checkpoints,
+            data_commands::sqlite_get_session_hierarchy
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

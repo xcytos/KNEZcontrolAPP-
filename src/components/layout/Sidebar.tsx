@@ -15,13 +15,14 @@ import {
   TerminalSquare, 
   Zap,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  HardDrive
 } from 'lucide-react';
 import { tabErrorStore } from '../../services/infrastructure/error/TabErrorStore';
 import { features } from '../../config/features';
 import { Badge } from '../ui/core/Badge';
 
-export type View = 'chat' | 'memory' | 'timeline' | 'reflection' | 'infrastructure' | 'mcp' | 'governance' | 'agent' | 'logs' | 'replay' | 'updates' | 'extraction' | 'diagnostics' | 'skills' | 'terminal-sandbox';
+export type View = 'chat' | 'memory' | 'timeline' | 'reflection' | 'infrastructure' | 'mcp' | 'governance' | 'agent' | 'logs' | 'replay' | 'updates' | 'extraction' | 'diagnostics' | 'skills' | 'terminal-sandbox' | 'data';
 
 export type PlaygroundView = 'playground';
 
@@ -79,6 +80,7 @@ export const Sidebar: FC<SidebarProps> = ({ activeView, onViewChange, tabErrors 
       items: [
         { id: 'skills', label: 'Skills', icon: Wrench },
         ...(features.mcpViews ? [{ id: 'mcp' as const, label: 'MCP Registry', icon: Puzzle }] : []),
+        { id: 'data', label: 'Data Explorer', icon: HardDrive },
         { id: 'diagnostics', label: 'Diagnostics', icon: Cpu },
       ]
     },

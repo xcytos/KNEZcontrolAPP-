@@ -1,0 +1,47 @@
+# TAQWIN Database Schema Reference
+
+## SQLite (taqwin_memory.db)
+
+### sessions table:
+- session_id TEXT PRIMARY KEY
+- display_id TEXT NOT NULL
+- name TEXT NOT NULL
+- type TEXT NOT NULL  
+- tags TEXT (JSON array)
+- created_at TEXT NOT NULL
+- updated_at TEXT NOT NULL
+- status TEXT NOT NULL DEFAULT 'active'
+- summary TEXT
+- event_count INTEGER DEFAULT 0
+- file_count INTEGER DEFAULT 0
+- embedding_vector TEXT
+- indexed_at TEXT DEFAULT CURRENT_TIMESTAMP
+
+### checkpoints table:
+- checkpoint_id TEXT PRIMARY KEY
+- session_id TEXT
+- title TEXT NOT NULL
+- created_at TEXT NOT NULL
+- context_data TEXT NOT NULL (renamed from context)
+- learned_memories TEXT
+- decisions TEXT
+- findings TEXT
+- metadata TEXT
+- type TEXT DEFAULT 'agent_checkpoint'
+
+## PostgreSQL (Supabase)
+
+### documents table:
+- document_id UUID PRIMARY KEY
+- title TEXT NOT NULL
+- doc_type TEXT NOT NULL
+- content TEXT
+- project_name TEXT
+- session_id TEXT
+- checkpoint_id TEXT
+- created_at TIMESTAMP
+- updated_at TIMESTAMP
+- is_large BOOLEAN
+- file_path TEXT
+
+Note: NO "domain" column, NO "tags" column in actual schema
