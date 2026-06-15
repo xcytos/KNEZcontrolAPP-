@@ -100,6 +100,26 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
       {/* Metadata Section (Collapsible) */}
       {showMetadata && (
         <div className="px-6 py-4 border-b border-zinc-800 bg-zinc-900/50 space-y-3 flex-shrink-0">
+          {/* Document ID - Prominent Display */}
+          <div>
+            <div className="text-zinc-500 text-xs mb-1 flex items-center gap-1 font-semibold">
+              <FileText className="w-3 h-3" />
+              Document ID
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="text-zinc-100 text-xs font-mono bg-blue-950/50 border border-blue-800/30 px-2 py-1.5 rounded break-all flex-1">
+                {document.document_id}
+              </div>
+              <button
+                onClick={() => navigator.clipboard.writeText(document.document_id)}
+                className="p-1 hover:bg-zinc-800 rounded transition-colors"
+                title="Copy document ID"
+              >
+                <Copy className="w-3 h-3 text-zinc-400" />
+              </button>
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-4 text-sm">
             <div>
               <div className="text-zinc-500 text-xs mb-1 flex items-center gap-1">
@@ -124,8 +144,17 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
           {document.session_id && (
             <div>
               <div className="text-zinc-500 text-xs mb-1">Session ID</div>
-              <div className="text-zinc-300 text-xs font-mono bg-zinc-800/50 px-2 py-1 rounded break-all">
-                {document.session_id}
+              <div className="flex items-center gap-2">
+                <div className="text-zinc-300 text-xs font-mono bg-zinc-800/50 px-2 py-1 rounded break-all flex-1">
+                  {document.session_id}
+                </div>
+                <button
+                  onClick={() => document.session_id && navigator.clipboard.writeText(document.session_id)}
+                  className="p-1 hover:bg-zinc-800 rounded transition-colors"
+                  title="Copy session ID"
+                >
+                  <Copy className="w-3 h-3 text-zinc-400" />
+                </button>
               </div>
             </div>
           )}
@@ -133,8 +162,17 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
           {document.checkpoint_id && (
             <div>
               <div className="text-zinc-500 text-xs mb-1">Checkpoint ID</div>
-              <div className="text-zinc-300 text-xs font-mono bg-zinc-800/50 px-2 py-1 rounded break-all">
-                {document.checkpoint_id}
+              <div className="flex items-center gap-2">
+                <div className="text-zinc-300 text-xs font-mono bg-zinc-800/50 px-2 py-1 rounded break-all flex-1">
+                  {document.checkpoint_id}
+                </div>
+                <button
+                  onClick={() => document.checkpoint_id && navigator.clipboard.writeText(document.checkpoint_id)}
+                  className="p-1 hover:bg-zinc-800 rounded transition-colors"
+                  title="Copy checkpoint ID"
+                >
+                  <Copy className="w-3 h-3 text-zinc-400" />
+                </button>
               </div>
             </div>
           )}

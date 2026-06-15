@@ -31,6 +31,7 @@ import { genericSqliteService } from '../../services/data/GenericSqliteService';
 import { DocumentList, Document } from './components/DocumentList';
 import { DocumentDetailPanel } from './components/DocumentDetailPanel';
 import { ensurePostgresConnection } from '../../services/data/PostgresConnectionManager';
+import { LiveActivityNotifier } from './components/LiveActivityNotifier';
 
 type ViewLevel = 'projects' | 'sessions' | 'session-detail';
 
@@ -354,6 +355,22 @@ export const TaqwinHierarchicalView: React.FC<{
                 className="w-full pl-8 pr-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
               />
             </div>
+
+            {/* Live Activity Notifier - Fixed Below Search */}
+            {(viewLevel === 'session-detail' || viewLevel === 'sessions') && (
+              <div className="mt-2">
+                <LiveActivityNotifier
+                  sessionId={selectedSessionId || undefined}
+                  sessionName={
+                    viewLevel === 'session-detail' 
+                      ? (hierarchy?.session as any)?.name 
+                      : sessions.find(s => (s as any).session_id === selectedSessionId)?.name
+                  }
+                  projectId={selectedProjectId || undefined}
+                  pollingInterval={5000}
+                />
+              </div>
+            )}
           </div>
 
           <div className="flex-1 overflow-y-auto">
