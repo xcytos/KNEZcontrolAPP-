@@ -39,10 +39,20 @@ export const SessionEvolutionChart: React.FC<SessionEvolutionChartProps> = ({
     }
   }, [selectedEvent]);
 
-  // Sort timeline by timestamp (newest first for vertical display)
+  // Normalize timestamp to UTC milliseconds for consistent sorting
+  const normalizeTimestamp = (dateStr: string): number => {
+    try {
+      const date = new Date(dateStr);
+      return date.getTime();  // UTC milliseconds
+    } catch {
+      return 0;
+    }
+  };
+
+  // Sort timeline by timestamp (OLDEST FIRST for top-to-bottom display)
   const sortedTimeline = useMemo(() => {
     return [...timeline].sort(
-      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      (a, b) => normalizeTimestamp(a.timestamp) - normalizeTimestamp(b.timestamp)
     );
   }, [timeline]);
 

@@ -5,6 +5,7 @@ import { PostgresDataView } from './PostgresDataView';
 import { GenericSqliteView } from './GenericSqliteView';
 import { TaqwinHierarchicalView } from './TaqwinHierarchicalView';
 import { GitStatisticsView } from './GitStatisticsView';
+import { LiveActivityNotifier } from './components/LiveActivityNotifier';
 
 type DataSource = 'control-app' | 'postgres' | 'sqlite-browser' | 'taqwin-hierarchy' | 'git-stats';
 
@@ -14,9 +15,16 @@ interface SqliteBrowserState {
   issueType?: string;
 }
 
+interface LiveActivityContext {
+  sessionId?: string;
+  sessionName?: string;
+  projectId?: string;
+}
+
 export const DataExplorer: React.FC = () => {
   const [activeSource, setActiveSource] = useState<DataSource>('taqwin-hierarchy');
   const [sqliteBrowserState, setSqliteBrowserState] = useState<SqliteBrowserState>({});
+  const [liveActivityContext, setLiveActivityContext] = useState<LiveActivityContext>({});
 
   const sources = [
     { 
@@ -105,6 +113,18 @@ export const DataExplorer: React.FC = () => {
               );
             })}
           </div>
+
+          {/* Live Activity Notifier - Below Data Sources */}
+          {activeSource === 'taqwin-hierarchy' && (liveActivityContext.sessionId || liveActivityContext.projectId) && (
+            <div className="mt-3">
+              <LiveActivityNotifier
+                sessionId={liveActivityContext.sessionId}
+                sessionName={liveActivityContext.sessionName}
+                projectId={liveActivityContext.projectId}
+                pollingInterval={5000}
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -116,6 +136,7 @@ export const DataExplorer: React.FC = () => {
               setSqliteBrowserState({ tableName, filter, issueType });
               setActiveSource('sqlite-browser');
             }}
+            onActivityContextChange={setLiveActivityContext}
           />
         )}
         {activeSource === 'git-stats' && <GitStatisticsView />}
