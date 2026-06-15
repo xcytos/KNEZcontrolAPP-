@@ -437,6 +437,115 @@ pub async fn sqlite_get_row_count(
     }
 }
 
+#[tauri::command]
+pub async fn sqlite_delete_row(
+    db_path: String,
+    table_name: String,
+    primary_key_column: String,
+    primary_key_value: String,
+) -> Result<DatabaseResponse<String>, String> {
+    let path = PathBuf::from(db_path);
+    
+    match connect_sqlite(path) {
+        Ok(conn) => {
+            let query = format!("DELETE FROM {} WHERE {} = ?1", table_name, primary_key_column);
+            match conn.execute(&query, [&primary_key_value]) {
+                Ok(rows_affected) => Ok(DatabaseResponse::success(format!("Deleted {} row(s)", rows_affected))),
+                Err(e) => Ok(DatabaseResponse::error(format!("Failed to delete: {}", e))),
+            }
+        }
+        Err(e) => Ok(DatabaseResponse::error(format!("Failed to connect: {}", e))),
+    }
+}
+
+#[tauri::command]
+pub async fn sqlite_update_row(
+    db_path: String,
+    table_name: String,
+    primary_key_column: String,
+    primary_key_value: String,
+    column_name: String,
+    new_value: String,
+) -> Result<DatabaseResponse<String>, String> {
+    let path = PathBuf::from(db_path);
+    
+    match connect_sqlite(path) {
+        Ok(conn) => {
+            let query = format!("UPDATE {} SET {} = ?1 WHERE {} = ?2", table_name, column_name, primary_key_column);
+            match conn.execute(&query, [&new_value, &primary_key_value]) {
+                Ok(rows_affected) => Ok(DatabaseResponse::success(format!("Updated {} row(s)", rows_affected))),
+                Err(e) => Ok(DatabaseResponse::error(format!("Failed to update: {}", e))),
+            }
+        }
+        Err(e) => Ok(DatabaseResponse::error(format!("Failed to connect: {}", e))),
+    }
+}
+
+#[tauri::command]
+pub async fn sqlite_execute_query(
+    db_path: String,
+    query: String,
+) -> Result<DatabaseResponse<Vec<serde_json::Value>>, String> {
+    let path = PathBuf::from(db_path);
+    
+    match connect_sqlite(path) {
+        Ok(conn) => {
+            // Check if it's a SELECT query
+            let query_upper = query.trim().to_uppercase();
+            if query_upper.starts_with("SELECT") {
+                match conn.prepare(&query) {
+                    Ok(mut stmt) => {
+                        // Get column count
+                        let column_count = stmt.column_count();
+                        let column_names: Vec<String> = (0..column_count)
+                            .map(|i| stmt.column_name(i).unwrap_or("unknown").to_string())
+                            .collect();
+
+                        match stmt.query_map([], |row| {
+                            let mut obj = serde_json::Map::new();
+                            for (idx, col_name) in column_names.iter().enumerate() {
+                                let value = if let Ok(v) = row.get::<_, String>(idx) {
+                                    serde_json::Value::String(v)
+                                } else if let Ok(v) = row.get::<_, i64>(idx) {
+                                    serde_json::Value::Number(v.into())
+                                } else if let Ok(v) = row.get::<_, f64>(idx) {
+                                    serde_json::json!(v)
+                                } else {
+                                    serde_json::Value::Null
+                                };
+                                obj.insert(col_name.clone(), value);
+                            }
+                            Ok(serde_json::Value::Object(obj))
+                        }) {
+                            Ok(iter) => {
+                                let results: Result<Vec<_>, _> = iter.collect();
+                                match results {
+                                    Ok(rows) => Ok(DatabaseResponse::success(rows)),
+                                    Err(e) => Ok(DatabaseResponse::error(format!("Query error: {}", e))),
+                                }
+                            }
+                            Err(e) => Ok(DatabaseResponse::error(format!("Query mapping error: {}", e))),
+                        }
+                    }
+                    Err(e) => Ok(DatabaseResponse::error(format!("Failed to prepare query: {}", e))),
+                }
+            } else {
+                // For non-SELECT queries (INSERT, UPDATE, DELETE)
+                match conn.execute(&query, []) {
+                    Ok(rows_affected) => {
+                        Ok(DatabaseResponse::success(vec![serde_json::json!({
+                            "rows_affected": rows_affected,
+                            "message": format!("Query executed successfully. {} row(s) affected.", rows_affected)
+                        })]))
+                    }
+                    Err(e) => Ok(DatabaseResponse::error(format!("Execute error: {}", e))),
+                }
+            }
+        }
+        Err(e) => Ok(DatabaseResponse::error(format!("Failed to connect: {}", e))),
+    }
+}
+
 // SQLite Commands (legacy TAQWIN-specific)
 #[tauri::command]
 pub async fn list_sqlite_sessions(

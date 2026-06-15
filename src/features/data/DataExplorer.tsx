@@ -8,8 +8,15 @@ import { GitStatisticsView } from './GitStatisticsView';
 
 type DataSource = 'control-app' | 'postgres' | 'sqlite-browser' | 'taqwin-hierarchy' | 'git-stats';
 
+interface SqliteBrowserState {
+  tableName?: string;
+  filter?: string;
+  issueType?: string;
+}
+
 export const DataExplorer: React.FC = () => {
   const [activeSource, setActiveSource] = useState<DataSource>('taqwin-hierarchy');
+  const [sqliteBrowserState, setSqliteBrowserState] = useState<SqliteBrowserState>({});
 
   const sources = [
     { 
@@ -103,11 +110,23 @@ export const DataExplorer: React.FC = () => {
 
       {/* Main Content Area - Maximized */}
       <div className="flex-1 overflow-hidden">
-        {activeSource === 'taqwin-hierarchy' && <TaqwinHierarchicalView />}
+        {activeSource === 'taqwin-hierarchy' && (
+          <TaqwinHierarchicalView 
+            onNavigateToSqlite={(tableName, filter, issueType) => {
+              setSqliteBrowserState({ tableName, filter, issueType });
+              setActiveSource('sqlite-browser');
+            }}
+          />
+        )}
         {activeSource === 'git-stats' && <GitStatisticsView />}
         {activeSource === 'control-app' && <ControlAppDataView />}
         {activeSource === 'postgres' && <PostgresDataView />}
-        {activeSource === 'sqlite-browser' && <GenericSqliteView />}
+        {activeSource === 'sqlite-browser' && (
+          <GenericSqliteView 
+            initialState={sqliteBrowserState}
+            onClearState={() => setSqliteBrowserState({})}
+          />
+        )}
       </div>
     </div>
   );

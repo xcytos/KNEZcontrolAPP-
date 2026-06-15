@@ -119,6 +119,77 @@ export class GenericSqliteService {
       throw error;
     }
   }
+
+  async deleteRow(tableName: string, pkColumn: string, pkValue: string): Promise<void> {
+    if (!this.dbPath) {
+      throw new Error('Database path not set');
+    }
+
+    try {
+      const response = await invoke<DatabaseResponse<void>>('sqlite_delete_row', {
+        dbPath: this.dbPath,
+        tableName: tableName,
+        primaryKeyColumn: pkColumn,
+        primaryKeyValue: pkValue,
+      });
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to delete row');
+      }
+    } catch (error) {
+      console.error('[GenericSqliteService] Delete row error:', error);
+      throw error;
+    }
+  }
+
+  async updateRow(
+    tableName: string,
+    pkColumn: string,
+    pkValue: string,
+    columnName: string,
+    newValue: string
+  ): Promise<void> {
+    if (!this.dbPath) {
+      throw new Error('Database path not set');
+    }
+
+    try {
+      const response = await invoke<DatabaseResponse<void>>('sqlite_update_row', {
+        dbPath: this.dbPath,
+        tableName: tableName,
+        primaryKeyColumn: pkColumn,
+        primaryKeyValue: pkValue,
+        columnName: columnName,
+        newValue: newValue,
+      });
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to update row');
+      }
+    } catch (error) {
+      console.error('[GenericSqliteService] Update row error:', error);
+      throw error;
+    }
+  }
+
+  async executeQuery(query: string): Promise<any> {
+    if (!this.dbPath) {
+      throw new Error('Database path not set');
+    }
+
+    try {
+      const response = await invoke<DatabaseResponse<any>>('sqlite_execute_query', {
+        dbPath: this.dbPath,
+        query,
+      });
+      if (response.success) {
+        return response.data;
+      } else {
+        throw new Error(response.error || 'Failed to execute query');
+      }
+    } catch (error) {
+      console.error('[GenericSqliteService] Execute query error:', error);
+      throw error;
+    }
+  }
 }
 
 export const genericSqliteService = GenericSqliteService.getInstance();

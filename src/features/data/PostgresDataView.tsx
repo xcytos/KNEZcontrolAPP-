@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Server, FileText, Search, RefreshCw, AlertCircle, CheckCircle, XCircle, Database as DatabaseIcon, Settings } from 'lucide-react';
 import { postgresService, PgDocument } from '../../services/data/DatabaseService';
 import { RecordDetailPanel } from './components/RecordDetailPanel';
+import { ensurePostgresConnection } from '../../services/data/PostgresConnectionManager';
 
 interface HealthStatus {
   connected: boolean;
@@ -35,7 +36,7 @@ export const PostgresDataView: React.FC = () => {
     setConnecting(true);
     setError(null);
     try {
-      const connected = await postgresService.connect(config);
+      const connected = await ensurePostgresConnection(config);
       if (connected) {
         setHealth({
           connected: true,
