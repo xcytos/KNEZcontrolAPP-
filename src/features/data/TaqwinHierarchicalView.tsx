@@ -46,6 +46,7 @@ export const TaqwinHierarchicalView: React.FC<{
   
   // Data state
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
+  const [allSessions, setAllSessions] = useState<SessionListItem[]>([]); // For session_id search
   const [hierarchy, setHierarchy] = useState<SessionHierarchy | null>(null);
   const [timeline, setTimeline] = useState<any[]>([]);
   const [integrityIssues, setIntegrityIssues] = useState<DataIntegrityIssues | null>(null);
@@ -77,6 +78,7 @@ export const TaqwinHierarchicalView: React.FC<{
     loadProjects();
     loadIntegrityIssues();
     loadAllDocuments(); // Load all documents for counts
+    loadAllSessions(); // Load all sessions for search
   }, []);
 
   // Notify parent of activity context changes
@@ -107,6 +109,17 @@ export const TaqwinHierarchicalView: React.FC<{
     } catch (err) {
       console.warn('[TaqwinHierarchicalView] Could not load all documents:', err);
       setAllDocuments([]);
+    }
+  };
+
+  const loadAllSessions = async () => {
+    try {
+      const allSessionsData = await taqwinDataService.listSessions(10000); // Get all sessions
+      console.log('[TaqwinHierarchicalView] All sessions loaded:', allSessionsData.length);
+      setAllSessions(allSessionsData);
+    } catch (err) {
+      console.warn('[TaqwinHierarchicalView] Could not load all sessions:', err);
+      setAllSessions([]);
     }
   };
 
@@ -304,6 +317,32 @@ export const TaqwinHierarchicalView: React.FC<{
     s.display_id.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  // Session ID search results (Level 1 view only)
+  const sessionIdSearchResults = viewLevel === 'projects' && searchTerm.length > 3
+    ? allSessions.filter((s: any) => {
+        const sessionId = s.session_id || '';
+        return sessionId.toLowerCase().includes(searchTerm.toLowerCase());
+      }).slice(0, 5) // Show top 5 matches
+    : [];
+
+  // Direct navigation to session by ID
+  const navigateToSessionDirect = async (sessionId: string, projectId: string) => {
+    try {
+      // Load project if needed
+      if (selectedProjectId !== projectId) {
+        setSelectedProjectId(projectId);
+        await loadProjectSessions(projectId);
+      }
+      
+      // Navigate to session
+      setSelectedSessionId(sessionId);
+      await loadSessionHierarchy(sessionId);
+    } catch (err) {
+      console.error('[TaqwinHierarchicalView] Error navigating to session:', err);
+      setError(`Failed to navigate to session: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full bg-zinc-950 overflow-hidden">
       {/* Main Content */}
@@ -370,7 +409,11 @@ export const TaqwinHierarchicalView: React.FC<{
               <Search className="absolute left-2 top-2.5 w-4 h-4 text-zinc-500" />
               <input
                 type="text"
-                placeholder={viewLevel === 'projects' ? 'Search projects...' : 'Search sessions...'}
+                placeholder={
+                  viewLevel === 'projects' 
+                    ? 'Search projects or session ID...' 
+                    : 'Search sessions...'
+                }
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-8 pr-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
@@ -389,8 +432,47 @@ export const TaqwinHierarchicalView: React.FC<{
             ) : viewLevel === 'projects' ? (
               /* Projects View - Enhanced with detailed cards */
               <div className="p-2 space-y-2">
-                {filteredProjects.length === 0 ? (
-                  <div className="p-4 text-sm text-zinc-500">No projects found</div>
+                {/* Session ID Search Results */}
+                {sessionIdSearchResults.length > 0 && (
+                  <div className="mb-3">
+                    <div className="text-xs font-semibold text-green-400 mb-2 px-2 flex items-center gap-2">
+                      <Search className="w-3 h-3" />
+                      Sessions by ID ({sessionIdSearchResults.length})
+                    </div>
+                    {sessionIdSearchResults.map((session: any) => {
+                      const sessionProject = projects.find(p => p.project_id === session.project_id);
+                      return (
+                        <button
+                          key={session.session_id}
+                          onClick={() => navigateToSessionDirect(session.session_id, session.project_id)}
+                          className="w-full text-left p-3 rounded-lg border border-green-700 bg-green-900/20 hover:bg-green-900/40 transition-all"
+                        >
+                          <div className="flex items-start justify-between gap-2 mb-1">
+                            <div className="font-medium text-xs text-green-100 truncate flex-1">
+                              {session.name || 'Unnamed Session'}
+                            </div>
+                            <div className="text-[10px] text-green-400 font-mono">
+                              {session.display_id}
+                            </div>
+                          </div>
+                          <div className="text-[10px] text-green-300 font-mono truncate mb-1">
+                            ID: {session.session_id}
+                          </div>
+                          {sessionProject && (
+                            <div className="text-[10px] text-green-500">
+                              Project: {sessionProject.project_name}
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                    <div className="border-t border-zinc-700 my-2"></div>
+                  </div>
+                )}
+
+                {/* Regular Project Results */}
+                {filteredProjects.length === 0 && sessionIdSearchResults.length === 0 ? (
+                  <div className="p-4 text-sm text-zinc-500">No projects or sessions found</div>
                 ) : (
                   filteredProjects.map((project) => {
                     // Calculate document count for this project
