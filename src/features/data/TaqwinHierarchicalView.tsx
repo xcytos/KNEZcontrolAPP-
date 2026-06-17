@@ -31,6 +31,7 @@ import { genericSqliteService } from '../../services/data/GenericSqliteService';
 import { DocumentList, Document } from './components/DocumentList';
 import { DocumentDetailPanel } from './components/DocumentDetailPanel';
 import { ensurePostgresConnection } from '../../services/data/PostgresConnectionManager';
+import { RelationshipGraph } from './components/RelationshipGraph';
 
 type ViewLevel = 'projects' | 'sessions' | 'session-detail';
 
@@ -43,6 +44,8 @@ export const TaqwinHierarchicalView: React.FC<{
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [projectBreadcrumb, setProjectBreadcrumb] = useState<Project[]>([]); // Navigation breadcrumb trail
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set()); // Track which parent projects are expanded
   
   // Data state
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
@@ -64,6 +67,7 @@ export const TaqwinHierarchicalView: React.FC<{
   const [viewMode, setViewMode] = useState<'timeline' | 'sections'>('timeline');
   const [showIssues, setShowIssues] = useState(false);
   const [showAddProjectModal, setShowAddProjectModal] = useState(false);
+  const [showRelationshipGraph, setShowRelationshipGraph] = useState(false);
   const [newProjectData, setNewProjectData] = useState({
     project_id: '',
     project_name: '',
@@ -75,10 +79,14 @@ export const TaqwinHierarchicalView: React.FC<{
   useEffect(() => {
     taqwinDataService.setDatabasePath('C:\\Users\\syedm\\taqwin_memory.db');
     ensurePostgresConnection(); // Use shared utility
+    
+    // Load core data
     loadProjects();
     loadIntegrityIssues();
-    loadAllDocuments(); // Load all documents for counts
-    loadAllSessions(); // Load all sessions for search
+    
+    // Load optional data in background (don't block UI)
+    loadAllDocuments().catch(err => console.warn('[TaqwinHierarchicalView] Background document load failed:', err));
+    loadAllSessions().catch(err => console.warn('[TaqwinHierarchicalView] Background session load failed:', err));
   }, []);
 
   // Notify parent of activity context changes
@@ -104,7 +112,9 @@ export const TaqwinHierarchicalView: React.FC<{
 
   const loadAllDocuments = async () => {
     try {
+      console.log('[TaqwinHierarchicalView] Loading all documents...');
       const docs = await taqwinDataService.getSessionDocuments(''); // Empty string to get all
+      console.log('[TaqwinHierarchicalView] All documents loaded:', docs.length);
       setAllDocuments(docs);
     } catch (err) {
       console.warn('[TaqwinHierarchicalView] Could not load all documents:', err);
@@ -127,17 +137,25 @@ export const TaqwinHierarchicalView: React.FC<{
     try {
       setLoading(true);
       setError(null);
-      const projectData = await taqwinDataService.listProjects();
-      console.log('[TaqwinHierarchicalView] Projects loaded:', projectData);
+      const projectData = await taqwinDataService.getProjectHierarchy(); // Use hierarchy instead of flat list
+      console.log('[TaqwinHierarchicalView] Projects hierarchy loaded:', projectData);
       
-      // Load session counts for each project
+      // Load session counts for each project (recursively for children)
       const allSessions = await taqwinDataService.listSessions(10000);
-      const projectsWithCounts = projectData.map(project => ({
-        ...project,
-        sessions: allSessions.filter(s => s.project_id === project.project_id)
-      }));
       
-      setProjects(projectsWithCounts);
+      const enrichProjects = (projects: Project[]): Project[] => {
+        return projects.map(project => {
+          const projectSessions = allSessions.filter(s => s.project_id === project.project_id);
+          return {
+            ...project,
+            sessions: projectSessions,
+            children: project.children ? enrichProjects(project.children) : []
+          };
+        });
+      };
+      
+      const enrichedProjects = enrichProjects(projectData);
+      setProjects(enrichedProjects);
       
       // Count orphaned sessions
       const orphanedSessions = allSessions.filter((s: any) => !s.project_id || s.project_id === '');
@@ -166,21 +184,56 @@ export const TaqwinHierarchicalView: React.FC<{
     try {
       setLoading(true);
       setError(null);
+      
+      // Find the project in hierarchy
+      const findProject = (projects: Project[], id: string): Project | null => {
+        for (const p of projects) {
+          if (p.project_id === id) return p;
+          if (p.children) {
+            const found = findProject(p.children, id);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+      
+      const project = findProject(projects, projectId);
+      if (!project) {
+        throw new Error(`Project ${projectId} not found`);
+      }
+      
+      // Build breadcrumb trail
+      const buildBreadcrumb = (projects: Project[], targetId: string, trail: Project[] = []): Project[] | null => {
+        for (const p of projects) {
+          const newTrail = [...trail, p];
+          if (p.project_id === targetId) {
+            return newTrail;
+          }
+          if (p.children) {
+            const found = buildBreadcrumb(p.children, targetId, newTrail);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+      
+      const breadcrumb = buildBreadcrumb(projects, projectId) || [project];
+      setProjectBreadcrumb(breadcrumb);
+      
       const projectSessions = await taqwinDataService.getProjectSessions(projectId);
       console.log('[TaqwinHierarchicalView] Project sessions loaded:', projectSessions);
       setSessions(projectSessions);
       setViewLevel('sessions');
       
       // Load Git stats for this project
-      const project = projects.find(p => p.project_id === projectId);
-      if (project && project.project_path) {
+      if (project.project_path) {
         const stats = await taqwinDataService.getProjectGitStats(project.project_path);
         setGitStats(stats);
       }
       
       // Load project documents - filter by project sessions
       try {
-        const sessionIds = projectSessions.map((s: any) => s.session_id).filter(Boolean);
+        const sessionIds = projectSessions.map((s) => s.session_id || s.id).filter(Boolean);
         const projectDocs = allDocuments.filter(doc => 
           doc.session_id && sessionIds.includes(doc.session_id)
         );
@@ -205,12 +258,15 @@ export const TaqwinHierarchicalView: React.FC<{
       setError(null);
       setHierarchy(null);
       
+      console.log('[TaqwinHierarchicalView] Loading hierarchy for session:', sessionId);
       const data = await taqwinDataService.getSessionHierarchy(sessionId);
       console.log('[TaqwinHierarchicalView] Hierarchy loaded:', data);
       setHierarchy(data);
       
       // Build timeline
+      console.log('[TaqwinHierarchicalView] Loading timeline...');
       const timelineData = await taqwinDataService.getSessionTimeline(sessionId);
+      console.log('[TaqwinHierarchicalView] Timeline loaded:', timelineData.length, 'items');
       setTimeline(timelineData);
       
       // Load session documents
@@ -223,6 +279,7 @@ export const TaqwinHierarchicalView: React.FC<{
         setSessionDocuments([]);
       }
       
+      console.log('[TaqwinHierarchicalView] Setting view level to session-detail');
       setViewLevel('session-detail');
       setExpandedSections({
         checkpoints: true,
@@ -230,11 +287,13 @@ export const TaqwinHierarchicalView: React.FC<{
         decisions: true,
         documents: true,
       });
+      console.log('[TaqwinHierarchicalView] Hierarchy loading complete');
     } catch (err) {
       const errorMsg = `Failed to load hierarchy: ${err instanceof Error ? err.message : 'Unknown error'}`;
       console.error('[TaqwinHierarchicalView] Error loading hierarchy:', err);
       setError(errorMsg);
     } finally {
+      console.log('[TaqwinHierarchicalView] Finally block - clearing loading state');
       setLoading(false);
     }
   };
@@ -256,16 +315,136 @@ export const TaqwinHierarchicalView: React.FC<{
   };
 
   const navigateBack = () => {
+    setLoading(false); // Clear any stuck loading state
+    setError(null); // Clear any errors
+    
     if (viewLevel === 'session-detail') {
       setViewLevel('sessions');
       setSelectedSessionId(null);
       setHierarchy(null);
       setTimeline([]);
     } else if (viewLevel === 'sessions') {
-      setViewLevel('projects');
-      setSelectedProjectId(null);
-      setSessions([]);
+      // If we have a breadcrumb trail with parent, go back to parent project
+      if (projectBreadcrumb.length > 1) {
+        const parentProject = projectBreadcrumb[projectBreadcrumb.length - 2];
+        setSelectedProjectId(parentProject.project_id);
+        loadProjectSessions(parentProject.project_id);
+      } else {
+        // Go back to root projects view
+        setViewLevel('projects');
+        setSelectedProjectId(null);
+        setSessions([]);
+        setProjectBreadcrumb([]);
+      }
     }
+  };
+
+  const toggleProjectExpand = (projectId: string) => {
+    setExpandedProjects(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(projectId)) {
+        newSet.delete(projectId);
+      } else {
+        newSet.add(projectId);
+      }
+      return newSet;
+    });
+  };
+
+  const renderProjectTree = (projectList: Project[], level: number = 0) => {
+    return projectList.map((project) => {
+      const getAllSessionsFromProject = (p: Project): SessionListItem[] => {
+        const sessions = p.sessions || [];
+        if (p.children) {
+          return sessions.concat(...p.children.map(getAllSessionsFromProject));
+        }
+        return sessions;
+      };
+      
+      const allProjectSessions = getAllSessionsFromProject(project);
+      const projectSessionIds = allProjectSessions.map((s) => s.session_id || s.id).filter(Boolean);
+      const projectDocCount = allDocuments.filter(doc => 
+        doc.session_id && projectSessionIds.includes(doc.session_id)
+      ).length;
+      
+      const hasChildren = project.children && project.children.length > 0;
+      const isExpanded = expandedProjects.has(project.project_id);
+      
+      return (
+        <div key={project.project_id} style={{ marginLeft: `${level * 16}px` }}>
+          {/* Project Card */}
+          <div className="mb-1">
+            <div className="flex items-stretch gap-1">
+              {/* Expand/Collapse Button (only for parents) */}
+              {hasChildren && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleProjectExpand(project.project_id);
+                  }}
+                  className="w-6 flex items-center justify-center bg-zinc-800 hover:bg-zinc-700 rounded border border-zinc-700 transition-colors"
+                  title={isExpanded ? 'Collapse' : 'Expand'}
+                >
+                  {isExpanded ? (
+                    <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
+                  ) : (
+                    <ChevronRight className="w-3.5 h-3.5 text-zinc-400" />
+                  )}
+                </button>
+              )}
+              
+              {/* Project Card Button */}
+              <button
+                onClick={() => {
+                  setSelectedProjectId(project.project_id);
+                  loadProjectSessions(project.project_id);
+                }}
+                className={`flex-1 text-left p-2.5 rounded border transition-all ${
+                  !hasChildren && level > 0
+                    ? 'border-l-4 border-l-blue-600 border-zinc-700 hover:border-blue-600 hover:bg-blue-900/10'
+                    : hasChildren 
+                      ? 'border-amber-700 hover:border-amber-600 bg-amber-900/5 hover:bg-amber-900/15'
+                      : 'border-zinc-700 hover:border-purple-600 hover:bg-zinc-800/50'
+                }`}
+              >
+                {/* Project Name */}
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    {level > 0 && <span className="text-zinc-600">└</span>}
+                    <span className="font-medium text-sm text-zinc-100">
+                      {project.project_name}
+                    </span>
+                    {hasChildren && (
+                      <span className="text-xs px-1.5 py-0.5 bg-amber-900/40 text-amber-300 rounded">
+                        📦 {project.children!.length}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                
+                {/* Project ID */}
+                <div className="text-[10px] text-zinc-500 font-mono mb-1.5">
+                  {project.project_id}
+                </div>
+                
+                {/* Stats */}
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  <span className="px-1.5 py-0.5 bg-purple-900/30 text-purple-300 rounded">
+                    {project.sessions?.length || 0} sessions
+                  </span>
+                  <span className="px-1.5 py-0.5 bg-pink-900/30 text-pink-300 rounded">
+                    {projectDocCount} docs
+                  </span>
+                </div>
+              </button>
+            </div>
+          </div>
+          
+          {/* Render Children if Expanded */}
+          {hasChildren && isExpanded && renderProjectTree(project.children!, level + 1)}
+        </div>
+      );
+    });
   };
 
   const handleAddProject = async () => {
@@ -318,9 +497,9 @@ export const TaqwinHierarchicalView: React.FC<{
   );
 
   // Session ID search results (Level 1 view only)
-  const sessionIdSearchResults = viewLevel === 'projects' && searchTerm.length > 3
-    ? allSessions.filter((s: any) => {
-        const sessionId = s.session_id || '';
+  const sessionIdSearchResults = viewLevel === 'projects' && searchTerm.length > 0
+    ? allSessions.filter((s) => {
+        const sessionId = s.session_id || s.id || '';
         return sessionId.toLowerCase().includes(searchTerm.toLowerCase());
       }).slice(0, 5) // Show top 5 matches
     : [];
@@ -328,18 +507,23 @@ export const TaqwinHierarchicalView: React.FC<{
   // Direct navigation to session by ID
   const navigateToSessionDirect = async (sessionId: string, projectId: string) => {
     try {
-      // Load project if needed
-      if (selectedProjectId !== projectId) {
-        setSelectedProjectId(projectId);
-        await loadProjectSessions(projectId);
-      }
+      setError(null);
       
-      // Navigate to session
+      // Clear search term to hide search results
+      setSearchTerm('');
+      
+      // Set project context
+      setSelectedProjectId(projectId);
+      
+      // Navigate directly to session without loading all project sessions
       setSelectedSessionId(sessionId);
+      
+      // loadSessionHierarchy manages its own loading state
       await loadSessionHierarchy(sessionId);
     } catch (err) {
       console.error('[TaqwinHierarchicalView] Error navigating to session:', err);
       setError(`Failed to navigate to session: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      setLoading(false); // Ensure loading is cleared on error
     }
   };
 
@@ -349,6 +533,63 @@ export const TaqwinHierarchicalView: React.FC<{
       <div className="flex flex-1 overflow-hidden gap-4 p-4">
         {/* Left Panel: Navigator */}
         <div className="w-80 flex flex-col bg-zinc-900 rounded-lg border border-zinc-800 overflow-hidden">
+          {/* Address Bar - Always visible breadcrumb */}
+          <div className="px-3 py-2 border-b border-zinc-800 bg-zinc-950 flex items-center gap-2 text-xs">
+            <Database className="w-3 h-3 text-blue-400 flex-shrink-0" />
+            <div className="flex items-center gap-1 text-zinc-400 flex-1 min-w-0 overflow-x-auto">
+              <button
+                onClick={() => {
+                  if (viewLevel !== 'projects') {
+                    setViewLevel('projects');
+                    setSelectedProjectId(null);
+                    setSelectedSessionId(null);
+                    setSessions([]);
+                    setProjectBreadcrumb([]);
+                  }
+                }}
+                className={`hover:text-purple-400 transition-colors whitespace-nowrap ${
+                  viewLevel === 'projects' ? 'text-purple-300 font-medium' : ''
+                }`}
+              >
+                Projects
+              </button>
+              
+              {projectBreadcrumb.length > 0 && (
+                <>
+                  {projectBreadcrumb.map((project, index) => (
+                    <React.Fragment key={project.project_id}>
+                      <span className="text-zinc-600">/</span>
+                      <button
+                        onClick={() => {
+                          if (index < projectBreadcrumb.length - 1 || viewLevel === 'session-detail') {
+                            setSelectedProjectId(project.project_id);
+                            loadProjectSessions(project.project_id);
+                          }
+                        }}
+                        className={`hover:text-purple-400 transition-colors whitespace-nowrap ${
+                          index === projectBreadcrumb.length - 1 && viewLevel !== 'session-detail'
+                            ? 'text-purple-300 font-medium' 
+                            : ''
+                        }`}
+                      >
+                        {project.project_name}
+                      </button>
+                    </React.Fragment>
+                  ))}
+                  
+                  {viewLevel === 'session-detail' && hierarchy && (
+                    <>
+                      <span className="text-zinc-600">/</span>
+                      <span className="text-purple-300 font-medium whitespace-nowrap truncate">
+                        {(hierarchy.session as any).display_id}
+                      </span>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+          
           <div className="flex flex-col gap-2 p-4 border-b border-zinc-800">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-zinc-300 flex items-center gap-2">
@@ -430,7 +671,7 @@ export const TaqwinHierarchicalView: React.FC<{
             ) : error ? (
               <div className="p-4 text-sm text-red-400">{error}</div>
             ) : viewLevel === 'projects' ? (
-              /* Projects View - Enhanced with detailed cards */
+              /* Projects View - Tree structure */
               <div className="p-2 space-y-2">
                 {/* Session ID Search Results */}
                 {sessionIdSearchResults.length > 0 && (
@@ -439,12 +680,12 @@ export const TaqwinHierarchicalView: React.FC<{
                       <Search className="w-3 h-3" />
                       Sessions by ID ({sessionIdSearchResults.length})
                     </div>
-                    {sessionIdSearchResults.map((session: any) => {
+                    {sessionIdSearchResults.map((session) => {
                       const sessionProject = projects.find(p => p.project_id === session.project_id);
                       return (
                         <button
-                          key={session.session_id}
-                          onClick={() => navigateToSessionDirect(session.session_id, session.project_id)}
+                          key={session.session_id || session.id}
+                          onClick={() => navigateToSessionDirect(session.session_id || session.id, session.project_id || '')}
                           className="w-full text-left p-3 rounded-lg border border-green-700 bg-green-900/20 hover:bg-green-900/40 transition-all"
                         >
                           <div className="flex items-start justify-between gap-2 mb-1">
@@ -456,7 +697,7 @@ export const TaqwinHierarchicalView: React.FC<{
                             </div>
                           </div>
                           <div className="text-[10px] text-green-300 font-mono truncate mb-1">
-                            ID: {session.session_id}
+                            ID: {session.session_id || session.id}
                           </div>
                           {sessionProject && (
                             <div className="text-[10px] text-green-500">
@@ -470,53 +711,11 @@ export const TaqwinHierarchicalView: React.FC<{
                   </div>
                 )}
 
-                {/* Regular Project Results */}
+                {/* Hierarchical Project Tree */}
                 {filteredProjects.length === 0 && sessionIdSearchResults.length === 0 ? (
                   <div className="p-4 text-sm text-zinc-500">No projects or sessions found</div>
                 ) : (
-                  filteredProjects.map((project) => {
-                    // Calculate document count for this project
-                    const projectSessionIds = (project.sessions || []).map((s: any) => s.session_id).filter(Boolean);
-                    const projectDocCount = allDocuments.filter(doc => 
-                      doc.session_id && projectSessionIds.includes(doc.session_id)
-                    ).length;
-                    
-                    return (
-                      <button
-                        key={project.project_id}
-                        onClick={() => {
-                          setSelectedProjectId(project.project_id);
-                          loadProjectSessions(project.project_id);
-                        }}
-                        className="w-full text-left p-3 rounded-lg border border-zinc-700 hover:border-purple-600 hover:bg-zinc-800/50 transition-all"
-                      >
-                        <div className="font-medium text-sm text-zinc-100 mb-1">
-                          {project.project_name}
-                        </div>
-                        <div className="text-xs text-zinc-500 font-mono truncate mb-2">
-                          {project.project_id}
-                        </div>
-                        {project.project_path && (
-                          <div className="text-xs text-zinc-600 truncate mb-2">
-                            📁 {project.project_path}
-                          </div>
-                        )}
-                        {project.description && (
-                          <div className="text-xs text-zinc-400 line-clamp-2 mb-2">
-                            {project.description}
-                          </div>
-                        )}
-                        <div className="flex items-center gap-2 text-xs">
-                          <span className="px-2 py-0.5 bg-purple-900/30 text-purple-300 rounded">
-                            {project.sessions?.length || 0} sessions
-                          </span>
-                          <span className="px-2 py-0.5 bg-pink-900/30 text-pink-300 rounded">
-                            {projectDocCount} docs
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })
+                  renderProjectTree(filteredProjects)
                 )}
               </div>
             ) : viewLevel === 'sessions' ? (
@@ -532,7 +731,7 @@ export const TaqwinHierarchicalView: React.FC<{
                     <div className="p-4 text-sm text-zinc-500">No sessions found for this project</div>
                   ) : (
                     filteredSessions.map((session) => {
-                      const sessionId = (session as any).session_id;
+                      const sessionId = session.session_id || session.id;
                       if (!sessionId) return null;
 
                       return (
@@ -770,6 +969,27 @@ export const TaqwinHierarchicalView: React.FC<{
                     </div>
                   </div>
                 </div>
+
+                {/* Relationship Graph Button */}
+                <button
+                  onClick={() => setShowRelationshipGraph(true)}
+                  className="w-full bg-gradient-to-r from-purple-900/40 to-blue-900/40 hover:from-purple-900/60 hover:to-blue-900/60 border border-purple-600 rounded-lg p-4 transition-all shadow-lg hover:shadow-purple-600/30"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-purple-600/30 rounded-lg flex items-center justify-center">
+                        <BarChart3 className="w-5 h-5 text-purple-300" />
+                      </div>
+                      <div className="text-left">
+                        <div className="text-sm font-semibold text-purple-100">Relationship Graph</div>
+                        <div className="text-xs text-purple-300/70 mt-0.5">
+                          Visualize project connections
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-purple-400">→</div>
+                  </div>
+                </button>
               </div>
             </div>
           ) : viewLevel === 'sessions' ? (
@@ -1235,6 +1455,32 @@ export const TaqwinHierarchicalView: React.FC<{
         <DocumentDetailPanel
           document={selectedDocument}
           onClose={() => setSelectedDocument(null)}
+        />
+      )}
+
+      {/* Relationship Graph */}
+      {showRelationshipGraph && (
+        <RelationshipGraph
+          projects={projects}
+          allSessions={allSessions}
+          allDocuments={allDocuments}
+          onClose={() => setShowRelationshipGraph(false)}
+          onNavigateToProject={(projectId) => {
+            setShowRelationshipGraph(false);
+            setSelectedProjectId(projectId);
+            loadProjectSessions(projectId);
+          }}
+          onNavigateToSession={(sessionId, projectId) => {
+            setShowRelationshipGraph(false);
+            navigateToSessionDirect(sessionId, projectId);
+          }}
+          onNavigateToDocument={(documentId) => {
+            setShowRelationshipGraph(false);
+            const doc = allDocuments.find(d => d.document_id === documentId);
+            if (doc) {
+              setSelectedDocument(doc);
+            }
+          }}
         />
       )}
     </div>

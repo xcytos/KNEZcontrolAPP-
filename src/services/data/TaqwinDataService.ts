@@ -21,6 +21,7 @@ export interface SessionHierarchy {
 
 export interface SessionListItem {
   id: string;
+  session_id: string;  // Added: Full UUID session ID for direct search
   display_id: string;
   name: string;
   session_type: string;
@@ -66,7 +67,10 @@ export interface Project {
   created_at: string;
   last_accessed: string;
   metadata?: Record<string, any>;
+  parent_project_id?: string | null;
+  type?: 'standalone' | 'parent' | 'child';
   sessions?: SessionListItem[];
+  children?: Project[];  // Child projects
 }
 
 export interface DataIntegrityIssues {
@@ -182,7 +186,7 @@ export class TaqwinDataService {
 
   /**
    * Get chronological timeline of events for a session
-   * INCLUDES documents from PostgreSQL database
+   * INCLUDES documents from PostgreSQL database (with fallback if connection fails)
    */
   async getSessionTimeline(sessionId: string): Promise<any[]> {
     const hierarchy = await this.getSessionHierarchy(sessionId);
@@ -244,26 +248,28 @@ export class TaqwinDataService {
       });
     });
 
-    // Add documents from PostgreSQL (if available)
+    // Add documents from PostgreSQL (with error handling)
     try {
       const documents = await this.getSessionDocuments(sessionId);
-      documents.forEach((doc) => {
-        timeline.push({
-          type: 'document',
-          timestamp: doc.created_at,
-          data: doc,
+      if (documents && documents.length > 0) {
+        documents.forEach((doc) => {
+          timeline.push({
+            type: 'document',
+            timestamp: doc.created_at,
+            data: doc,
+          });
         });
-      });
+      }
     } catch (error) {
-      console.warn('[TaqwinDataService] Could not fetch documents:', error);
-      // Continue without documents
+      console.warn('[TaqwinDataService] PostgreSQL connection unavailable, skipping documents in timeline:', error);
+      // Continue without documents - timeline will work with SQLite data only
     }
 
-    // Sort by timestamp
+    // Sort by timestamp (oldest to newest for chronological order)
     timeline.sort((a, b) => {
       const timeA = new Date(a.timestamp).getTime();
       const timeB = new Date(b.timestamp).getTime();
-      return timeB - timeA; // Newest first
+      return timeA - timeB; // Oldest first (chronological)
     });
 
     return timeline;
@@ -272,16 +278,62 @@ export class TaqwinDataService {
   /**
    * Get documents linked to a session from PostgreSQL
    * @param sessionId - Session ID to filter by, or empty string for all documents
+   * @returns Promise<any[]> - Array of documents (empty array if connection fails)
    */
   async getSessionDocuments(sessionId: string): Promise<any[]> {
     try {
-      // For now, filter from all documents since we don't have a direct session filter method
-      // This should be replaced with a proper backend implementation later
-      const allDocs = await postgresService.listDocuments(1000);
+      console.log('[TaqwinDataService] Getting session documents for:', sessionId || 'all');
       
-      // If sessionId is empty, return all documents
-      if (!sessionId) {
-        return allDocs.map(doc => ({
+      // Set a timeout for PostgreSQL operations
+      const timeoutPromise = new Promise<any[]>((resolve) => {
+        setTimeout(() => {
+          console.warn('[TaqwinDataService] PostgreSQL query timeout after 3s, returning empty array');
+          resolve([]);
+        }, 3000); // 3 second timeout
+      });
+      
+      // Check if PostgreSQL is available before attempting query
+      const fetchPromise = (async () => {
+        if (!postgresService.isConnected()) {
+          console.warn('[TaqwinDataService] PostgreSQL not connected, attempting connection...');
+          const connected = await postgresService.connect({
+            host: 'db.sspsljqdhesqezrmspcj.supabase.co',
+            port: 5432,
+            database: 'postgres',
+            user: 'postgres',
+            password: 'TAQWIN%21%40%23777',
+          });
+          
+          if (!connected) {
+            console.warn('[TaqwinDataService] PostgreSQL connection failed, returning empty documents array');
+            return [];
+          }
+        }
+
+        // For now, filter from all documents since we don't have a direct session filter method
+        const allDocs = await postgresService.listDocuments(1000);
+        
+        // If sessionId is empty, return all documents
+        if (!sessionId) {
+          return allDocs.map(doc => ({
+            document_id: doc.document_id,
+            title: doc.title,
+            doc_type: doc.doc_type,
+            content: doc.content,
+            created_at: doc.created_at,
+            updated_at: doc.updated_at,
+            is_large: doc.is_large,
+            file_path: doc.file_path,
+            session_id: doc.session_id,
+            checkpoint_id: doc.checkpoint_id,
+            project_name: doc.project_name,
+            tags: doc.tags,
+          }));
+        }
+        
+        const sessionDocs = allDocs.filter(doc => doc.session_id === sessionId);
+        
+        return sessionDocs.map(doc => ({
           document_id: doc.document_id,
           title: doc.title,
           doc_type: doc.doc_type,
@@ -295,26 +347,15 @@ export class TaqwinDataService {
           project_name: doc.project_name,
           tags: doc.tags,
         }));
-      }
+      })();
       
-      const sessionDocs = allDocs.filter(doc => doc.session_id === sessionId);
-      
-      return sessionDocs.map(doc => ({
-        document_id: doc.document_id,
-        title: doc.title,
-        doc_type: doc.doc_type,
-        content: doc.content,
-        created_at: doc.created_at,
-        updated_at: doc.updated_at,
-        is_large: doc.is_large,
-        file_path: doc.file_path,
-        session_id: doc.session_id,
-        checkpoint_id: doc.checkpoint_id,
-        project_name: doc.project_name,
-        tags: doc.tags,
-      }));
+      // Race between timeout and actual fetch
+      const result = await Promise.race([timeoutPromise, fetchPromise]);
+      console.log('[TaqwinDataService] Session documents result:', result.length, 'documents');
+      return result;
     } catch (error) {
       console.error('[TaqwinDataService] Get session documents error:', error);
+      // Return empty array instead of throwing - allows UI to continue without documents
       return [];
     }
   }
@@ -370,6 +411,50 @@ export class TaqwinDataService {
   }
 
   /**
+   * Build hierarchical project tree with parent-child relationships
+   * Returns only top-level (root) projects with their children nested
+   */
+  async getProjectHierarchy(): Promise<Project[]> {
+    const allProjects = await this.listProjects();
+    
+    // Build hierarchy map for quick lookup
+    const projectMap = new Map<string, Project>();
+    allProjects.forEach(project => {
+      projectMap.set(project.project_id, { ...project, children: [] });
+    });
+
+    // Build tree structure
+    const rootProjects: Project[] = [];
+    
+    projectMap.forEach(project => {
+      if (project.parent_project_id && projectMap.has(project.parent_project_id)) {
+        // This is a child project, add to parent's children array
+        const parent = projectMap.get(project.parent_project_id)!;
+        parent.children = parent.children || [];
+        parent.children.push(project);
+        
+        // Update parent type if it has children
+        if (parent.type === 'standalone') {
+          parent.type = 'parent';
+        }
+      } else {
+        // This is a root project (no parent or parent doesn't exist)
+        rootProjects.push(project);
+      }
+    });
+
+    return rootProjects;
+  }
+
+  /**
+   * Get all child projects for a specific parent project
+   */
+  async getChildProjects(parentProjectId: string): Promise<Project[]> {
+    const allProjects = await this.listProjects();
+    return allProjects.filter(p => p.parent_project_id === parentProjectId);
+  }
+
+  /**
    * Get sessions for a specific project
    */
   async getProjectSessions(projectId: string): Promise<SessionListItem[]> {
@@ -388,9 +473,9 @@ export class TaqwinDataService {
   }
 
   /**
-   * Get project hierarchy: project + all its sessions + session counts
+   * Get project details with sessions and counts
    */
-  async getProjectHierarchy(projectId: string): Promise<Project> {
+  async getProjectDetails(projectId: string): Promise<Project> {
     if (!this.dbPath) {
       throw new Error('Database path not set');
     }

@@ -49,10 +49,10 @@ export const SessionEvolutionChart: React.FC<SessionEvolutionChartProps> = ({
     }
   };
 
-  // Sort timeline by timestamp (OLDEST FIRST for top-to-bottom display)
+  // Sort timeline by timestamp (NEWEST FIRST for bottom-to-top display - latest at top)
   const sortedTimeline = useMemo(() => {
     return [...timeline].sort(
-      (a, b) => normalizeTimestamp(a.timestamp) - normalizeTimestamp(b.timestamp)
+      (a, b) => normalizeTimestamp(b.timestamp) - normalizeTimestamp(a.timestamp)
     );
   }, [timeline]);
 
