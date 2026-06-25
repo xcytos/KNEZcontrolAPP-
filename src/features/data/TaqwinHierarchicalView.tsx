@@ -27,6 +27,7 @@ import {
   GitStats 
 } from '../../services/data/TaqwinDataService';
 import { SessionEvolutionChart } from './components/SessionEvolutionChart';
+import { SessionEvolutionFullView } from './components/SessionEvolutionFullView';
 import { genericSqliteService } from '../../services/data/GenericSqliteService';
 import { DocumentList, Document } from './components/DocumentList';
 import { DocumentDetailPanel } from './components/DocumentDetailPanel';
@@ -68,6 +69,7 @@ export const TaqwinHierarchicalView: React.FC<{
   const [showIssues, setShowIssues] = useState(false);
   const [showAddProjectModal, setShowAddProjectModal] = useState(false);
   const [showRelationshipGraph, setShowRelationshipGraph] = useState(false);
+  const [showSessionFullView, setShowSessionFullView] = useState(false);
   const [newProjectData, setNewProjectData] = useState({
     project_id: '',
     project_name: '',
@@ -231,14 +233,29 @@ export const TaqwinHierarchicalView: React.FC<{
         setGitStats(stats);
       }
       
-      // Load project documents - filter by project sessions
+      // Load project documents - fetch fresh data for all sessions
       try {
+        console.log('[TaqwinHierarchicalView] Loading documents for project sessions...');
         const sessionIds = projectSessions.map((s) => s.session_id || s.id).filter(Boolean);
-        const projectDocs = allDocuments.filter(doc => 
-          doc.session_id && sessionIds.includes(doc.session_id)
+        
+        // Fetch documents for each session (parallel requests)
+        const docPromises = sessionIds.map(sessionId => 
+          taqwinDataService.getSessionDocuments(sessionId).catch(err => {
+            console.warn(`[TaqwinHierarchicalView] Failed to load docs for session ${sessionId}:`, err);
+            return [];
+          })
         );
-        console.log('[TaqwinHierarchicalView] Project documents loaded:', projectDocs.length);
-        setProjectDocuments(projectDocs);
+        
+        const docsArrays = await Promise.all(docPromises);
+        const allProjectDocs = docsArrays.flat();
+        
+        // Deduplicate by document_id
+        const uniqueDocs = Array.from(
+          new Map(allProjectDocs.map(doc => [doc.document_id, doc])).values()
+        );
+        
+        console.log('[TaqwinHierarchicalView] Project documents loaded:', uniqueDocs.length, 'unique docs from', sessionIds.length, 'sessions');
+        setProjectDocuments(uniqueDocs);
       } catch (docErr) {
         console.warn('[TaqwinHierarchicalView] Could not load project documents:', docErr);
         setProjectDocuments([]);
@@ -1195,6 +1212,8 @@ export const TaqwinHierarchicalView: React.FC<{
                     timeline={timeline}
                     sessionStart={(hierarchy.session as any).created_at || ''}
                     sessionEnd={(hierarchy.session as any).updated_at || new Date().toISOString()}
+                    sessionId={selectedSessionId || undefined}
+                    onOpenFullView={() => setShowSessionFullView(true)}
                   />
                 ) : (
                   <div className="h-full overflow-y-auto p-4 space-y-3">
@@ -1481,6 +1500,15 @@ export const TaqwinHierarchicalView: React.FC<{
               setSelectedDocument(doc);
             }
           }}
+        />
+      )}
+
+      {/* Session Full View Modal */}
+      {showSessionFullView && selectedSessionId && (
+        <SessionEvolutionFullView
+          sessionId={selectedSessionId}
+          initialView="timeline"
+          onClose={() => setShowSessionFullView(false)}
         />
       )}
     </div>

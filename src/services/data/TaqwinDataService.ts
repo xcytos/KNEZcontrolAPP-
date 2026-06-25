@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { postgresService } from './DatabaseService';
+// postgresService removed - using MCP bridge instead
 
 interface DatabaseResponse<T> {
   success: boolean;
@@ -21,8 +21,8 @@ export interface SessionHierarchy {
 
 export interface SessionListItem {
   id: string;
-  session_id: string;  // Added: Full UUID session ID for direct search
-  display_id: string;
+  session_id: string;  // Full UUID session ID
+  display_id: string;  // Human-readable ID (CA009, DA003)
   name: string;
   session_type: string;
   tags?: string;
@@ -34,6 +34,17 @@ export interface SessionListItem {
   document_count?: number;
   project_id?: string;
   project_path?: string;
+  
+  // NEW: DA003 Session Lifecycle Fields
+  summary?: string;  // AI-generated session summary
+  file_count?: number;  // Number of files modified
+  last_heartbeat_at?: string;  // Last activity timestamp
+  heartbeat_timeout_seconds?: number;  // Connection timeout (default 120)
+  client_metadata?: string;  // JSON string with client info
+  
+  // COMPUTED: Connection state
+  connection_state?: 'active' | 'idle' | 'disconnected';  // Derived from last_heartbeat_at
+  idle_duration_minutes?: number;  // Minutes since last heartbeat
 }
 
 export interface Document {
@@ -128,7 +139,37 @@ export class TaqwinDataService {
       });
 
       if (response.success && response.data) {
-        return response.data as SessionListItem[];
+        // Enrich sessions with computed connection state
+        return response.data.map((session: any) => {
+          const enriched: SessionListItem = {
+            ...session,
+            session_id: session.session_id || session.id,
+          };
+          
+          // Compute connection state from last_heartbeat_at
+          if (session.last_heartbeat_at) {
+            const lastHeartbeat = new Date(session.last_heartbeat_at);
+            const now = new Date();
+            const idleMs = now.getTime() - lastHeartbeat.getTime();
+            const idleMinutes = Math.floor(idleMs / 60000);
+            const timeoutSeconds = session.heartbeat_timeout_seconds || 120;
+            
+            enriched.idle_duration_minutes = idleMinutes;
+            
+            if (idleMs < 60000) {
+              // Less than 1 minute = active
+              enriched.connection_state = 'active';
+            } else if (idleMs < timeoutSeconds * 1000) {
+              // Within timeout = idle
+              enriched.connection_state = 'idle';
+            } else {
+              // Beyond timeout = disconnected
+              enriched.connection_state = 'disconnected';
+            }
+          }
+          
+          return enriched;
+        });
       } else {
         throw new Error(response.error || 'Failed to list sessions');
       }
@@ -280,82 +321,32 @@ export class TaqwinDataService {
    * @param sessionId - Session ID to filter by, or empty string for all documents
    * @returns Promise<any[]> - Array of documents (empty array if connection fails)
    */
+  /**
+   * Get documents for a session using PostgreSQL bridge
+   * @param sessionId - Session UUID (or empty for all documents)
+   * @returns Promise<any[]> - Array of documents (never fails, returns empty array on error)
+   */
   async getSessionDocuments(sessionId: string): Promise<any[]> {
     try {
       console.log('[TaqwinDataService] Getting session documents for:', sessionId || 'all');
       
-      // Set a timeout for PostgreSQL operations
-      const timeoutPromise = new Promise<any[]>((resolve) => {
-        setTimeout(() => {
-          console.warn('[TaqwinDataService] PostgreSQL query timeout after 3s, returning empty array');
-          resolve([]);
-        }, 3000); // 3 second timeout
-      });
+      // Use PostgreSQL Document Bridge (reuses existing Tauri connection)
+      const { mcpDocumentBridge } = await import('./McpDocumentBridge');
       
-      // Check if PostgreSQL is available before attempting query
-      const fetchPromise = (async () => {
-        if (!postgresService.isConnected()) {
-          console.warn('[TaqwinDataService] PostgreSQL not connected, attempting connection...');
-          const connected = await postgresService.connect({
-            host: 'db.sspsljqdhesqezrmspcj.supabase.co',
-            port: 5432,
-            database: 'postgres',
-            user: 'postgres',
-            password: 'TAQWIN%21%40%23777',
-          });
-          
-          if (!connected) {
-            console.warn('[TaqwinDataService] PostgreSQL connection failed, returning empty documents array');
-            return [];
-          }
-        }
+      // If sessionId is empty, get all documents
+      if (!sessionId) {
+        const allDocs = await mcpDocumentBridge.listAllDocuments();
+        console.log(`[TaqwinDataService] Loaded ${allDocs.length} documents via PostgreSQL`);
+        return allDocs;
+      }
 
-        // For now, filter from all documents since we don't have a direct session filter method
-        const allDocs = await postgresService.listDocuments(1000);
-        
-        // If sessionId is empty, return all documents
-        if (!sessionId) {
-          return allDocs.map(doc => ({
-            document_id: doc.document_id,
-            title: doc.title,
-            doc_type: doc.doc_type,
-            content: doc.content,
-            created_at: doc.created_at,
-            updated_at: doc.updated_at,
-            is_large: doc.is_large,
-            file_path: doc.file_path,
-            session_id: doc.session_id,
-            checkpoint_id: doc.checkpoint_id,
-            project_name: doc.project_name,
-            tags: doc.tags,
-          }));
-        }
-        
-        const sessionDocs = allDocs.filter(doc => doc.session_id === sessionId);
-        
-        return sessionDocs.map(doc => ({
-          document_id: doc.document_id,
-          title: doc.title,
-          doc_type: doc.doc_type,
-          content: doc.content,
-          created_at: doc.created_at,
-          updated_at: doc.updated_at,
-          is_large: doc.is_large,
-          file_path: doc.file_path,
-          session_id: doc.session_id,
-          checkpoint_id: doc.checkpoint_id,
-          project_name: doc.project_name,
-          tags: doc.tags,
-        }));
-      })();
+      // Get documents for specific session
+      const response = await mcpDocumentBridge.getSessionDocuments(sessionId);
+      console.log(`[TaqwinDataService] Session ${sessionId}: ${response.total_documents} documents`);
       
-      // Race between timeout and actual fetch
-      const result = await Promise.race([timeoutPromise, fetchPromise]);
-      console.log('[TaqwinDataService] Session documents result:', result.length, 'documents');
-      return result;
+      return response.documents || [];
     } catch (error) {
-      console.error('[TaqwinDataService] Get session documents error:', error);
-      // Return empty array instead of throwing - allows UI to continue without documents
+      console.error('[TaqwinDataService] Error getting documents:', error);
       return [];
     }
   }

@@ -21,6 +21,7 @@ import { ExtractionDashboard } from './features/extraction/ExtractionDashboard';
 import { TestPanel } from './features/diagnostics/TestPanel';
 import { SkillsView } from './features/skills/SkillsView';
 import { DataExplorer } from './features/data/DataExplorer';
+import { Dashboard } from './features/dashboard/Dashboard';
 // TerminalSandbox is kept for reference; PlaygroundContainer is used via TerminalSandboxView
 // import TerminalSandbox from './playgrounds/TerminalSandbox';
 import { PlaygroundContainer } from './playgrounds/PlaygroundContainer';
@@ -272,6 +273,8 @@ function AppContent() {
         return <SkillsView />;
       case 'data':
         return <DataExplorer />;
+      case 'dashboard':
+        return <Dashboard />;
       case 'terminal-sandbox':
         // PlaygroundContainer is the canonical entry for all terminal/playground
         // instances. TerminalSandbox remains for lightweight single-terminal use.

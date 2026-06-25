@@ -16,7 +16,7 @@ pub struct PostgresConfig {
 impl PostgresConfig {
     pub fn connection_string(&self) -> String {
         format!(
-            "postgresql://{}:{}@{}:{}/{}",
+            "postgresql://{}:{}@{}:{}/{}?sslmode=require",
             self.user, self.password, self.host, self.port, self.database
         )
     }
@@ -29,15 +29,26 @@ pub struct PgDocument {
     pub title: String,
     pub doc_type: String,
     pub content: Option<String>,
-    pub domain: Option<String>,
+    pub session_id: String, // REQUIRED
     pub project_name: Option<String>,
-    pub session_id: Option<String>,
+    pub project_id: Option<String>, // NEW
     pub checkpoint_id: Option<String>,
     pub tags: Option<Vec<String>>,
     pub created_at: String,
     pub updated_at: String,
     pub is_large: bool,
     pub file_path: Option<String>,
+    
+    // NEW: Version control fields
+    pub version_number: Option<i32>,
+    pub parent_version_id: Option<String>,
+    pub created_by: Option<String>,
+    pub updated_by: Option<String>,
+    
+    // NEW: Metadata fields
+    pub content_size: Option<i32>,
+    pub slug: Option<String>,
+    pub category: Option<String>,
 }
 
 // Checkpoint from PostgreSQL (TAQWIN checkpoints table)
@@ -95,7 +106,17 @@ pub struct TaqwinCheckpoint {
 
 // PostgreSQL Operations
 pub async fn connect_postgres(config: PostgresConfig) -> Result<PgPool, sqlx::Error> {
-    let pool = PgPool::connect(&config.connection_string()).await?;
+    use sqlx::postgres::PgPoolOptions;
+    use std::time::Duration;
+    
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .acquire_timeout(Duration::from_secs(10))
+        .idle_timeout(Duration::from_secs(300))
+        .max_lifetime(Duration::from_secs(1800))
+        .connect(&config.connection_string())
+        .await?;
+    
     Ok(pool)
 }
 
@@ -120,10 +141,22 @@ pub async fn list_postgres_documents(pool: &PgPool, limit: i64) -> Result<Vec<Pg
     let has_tags = columns.contains(&"tags".to_string());
     let has_is_large = columns.contains(&"is_large".to_string());
     let has_file_path = columns.contains(&"file_path".to_string());
+    let has_project_id = columns.contains(&"project_id".to_string());
+    let has_version_number = columns.contains(&"version_number".to_string());
+    let has_created_by = columns.contains(&"created_by".to_string());
+    let has_content_size = columns.contains(&"content_size".to_string());
+    let has_slug = columns.contains(&"slug".to_string());
+    let has_category = columns.contains(&"category".to_string());
 
     let tags_col = if has_tags { "tags" } else { "NULL as tags" };
     let is_large_col = if has_is_large { "is_large" } else { "false as is_large" };
     let file_path_col = if has_file_path { "file_path" } else { "NULL as file_path" };
+    let project_id_col = if has_project_id { "project_id" } else { "NULL as project_id" };
+    let version_number_col = if has_version_number { "version_number" } else { "NULL as version_number" };
+    let created_by_col = if has_created_by { "created_by" } else { "NULL as created_by" };
+    let content_size_col = if has_content_size { "content_size" } else { "NULL as content_size" };
+    let slug_col = if has_slug { "slug" } else { "NULL as slug" };
+    let category_col = if has_category { "category" } else { "NULL as category" };
 
     let query_str = format!(
         r#"
@@ -132,19 +165,29 @@ pub async fn list_postgres_documents(pool: &PgPool, limit: i64) -> Result<Vec<Pg
             title,
             doc_type,
             content,
-            project_name,
             session_id,
+            project_name,
+            {},
             checkpoint_id,
             {},
             created_at::text,
             updated_at::text,
+            {},
+            {},
+            {},
+            NULL as parent_version_id,
+            {},
+            NULL as updated_by,
+            {},
             {},
             {}
         FROM documents
         ORDER BY created_at DESC
         LIMIT $1
         "#,
-        tags_col, is_large_col, file_path_col
+        project_id_col, tags_col, is_large_col, file_path_col, 
+        version_number_col, created_by_col, content_size_col, 
+        slug_col, category_col
     );
 
     let rows = sqlx::query(&query_str)
@@ -153,15 +196,25 @@ pub async fn list_postgres_documents(pool: &PgPool, limit: i64) -> Result<Vec<Pg
         .await?;
 
     let documents = rows.iter().map(|row| {
+        // Handle tags column - PostgreSQL returns TEXT[] as Vec<String>
         let tags = if has_tags {
-            let tags_json: Option<serde_json::Value> = row.get(7);
-            tags_json.and_then(|v| {
-                v.as_array().map(|arr| {
-                    arr.iter()
-                        .filter_map(|val| val.as_str().map(String::from))
-                        .collect()
-                })
-            })
+            // Try to get as Vec<String> directly (PostgreSQL ARRAY type)
+            match row.try_get::<Vec<String>, _>(8) {
+                Ok(tag_vec) => Some(tag_vec),
+                Err(_) => {
+                    // Fallback: try as JSON if it's stored as JSONB
+                    row.try_get::<Option<serde_json::Value>, _>(8)
+                        .ok()
+                        .flatten()
+                        .and_then(|v| {
+                            v.as_array().map(|arr| {
+                                arr.iter()
+                                    .filter_map(|val| val.as_str().map(String::from))
+                                    .collect()
+                            })
+                        })
+                }
+            }
         } else {
             None
         };
@@ -171,15 +224,22 @@ pub async fn list_postgres_documents(pool: &PgPool, limit: i64) -> Result<Vec<Pg
             title: row.get(1),
             doc_type: row.get(2),
             content: row.get(3),
-            domain: None,
-            project_name: row.get(4),
-            session_id: row.get(5),
-            checkpoint_id: row.get(6),
+            session_id: row.get(4),
+            project_name: row.get(5),
+            project_id: row.get(6),
+            checkpoint_id: row.get(7),
             tags,
-            created_at: row.get(8),
-            updated_at: row.get(9),
-            is_large: row.get(10),
-            file_path: row.get(11),
+            created_at: row.get(9),
+            updated_at: row.get(10),
+            is_large: row.get(11),
+            file_path: row.get(12),
+            version_number: row.get(13),
+            parent_version_id: row.get(14),
+            created_by: row.get(15),
+            updated_by: row.get(16),
+            content_size: row.get(17),
+            slug: row.get(18),
+            category: row.get(19),
         }
     }).collect();
 
@@ -237,15 +297,23 @@ pub async fn get_postgres_document(pool: &PgPool, document_id: &str) -> Result<O
         .await?;
 
     Ok(row.map(|row| {
+        // Handle tags column - PostgreSQL returns TEXT[] as Vec<String>
         let tags = if has_tags {
-            let tags_json: Option<serde_json::Value> = row.get(7);
-            tags_json.and_then(|v| {
-                v.as_array().map(|arr| {
-                    arr.iter()
-                        .filter_map(|val| val.as_str().map(String::from))
-                        .collect()
-                })
-            })
+            match row.try_get::<Vec<String>, _>(7) {
+                Ok(tag_vec) => Some(tag_vec),
+                Err(_) => {
+                    row.try_get::<Option<serde_json::Value>, _>(7)
+                        .ok()
+                        .flatten()
+                        .and_then(|v| {
+                            v.as_array().map(|arr| {
+                                arr.iter()
+                                    .filter_map(|val| val.as_str().map(String::from))
+                                    .collect()
+                            })
+                        })
+                }
+            }
         } else {
             None
         };
@@ -255,15 +323,22 @@ pub async fn get_postgres_document(pool: &PgPool, document_id: &str) -> Result<O
             title: row.get(1),
             doc_type: row.get(2),
             content: row.get(3),
-            domain: None,
             project_name: row.get(4),
             session_id: row.get(5),
             checkpoint_id: row.get(6),
+            project_id: None,
             tags,
             created_at: row.get(8),
             updated_at: row.get(9),
             is_large: row.get(10),
             file_path: row.get(11),
+            version_number: None,
+            parent_version_id: None,
+            created_by: None,
+            updated_by: None,
+            content_size: None,
+            slug: None,
+            category: None,
         }
     }))
 }
@@ -325,15 +400,23 @@ pub async fn search_postgres_documents(pool: &PgPool, query: &str, limit: i64) -
         .await?;
 
     let documents = rows.iter().map(|row| {
+        // Handle tags column - PostgreSQL returns TEXT[] as Vec<String>
         let tags = if has_tags {
-            let tags_json: Option<serde_json::Value> = row.get(7);
-            tags_json.and_then(|v| {
-                v.as_array().map(|arr| {
-                    arr.iter()
-                        .filter_map(|val| val.as_str().map(String::from))
-                        .collect()
-                })
-            })
+            match row.try_get::<Vec<String>, _>(7) {
+                Ok(tag_vec) => Some(tag_vec),
+                Err(_) => {
+                    row.try_get::<Option<serde_json::Value>, _>(7)
+                        .ok()
+                        .flatten()
+                        .and_then(|v| {
+                            v.as_array().map(|arr| {
+                                arr.iter()
+                                    .filter_map(|val| val.as_str().map(String::from))
+                                    .collect()
+                            })
+                        })
+                }
+            }
         } else {
             None
         };
@@ -343,15 +426,22 @@ pub async fn search_postgres_documents(pool: &PgPool, query: &str, limit: i64) -
             title: row.get(1),
             doc_type: row.get(2),
             content: row.get(3),
-            domain: None,
             project_name: row.get(4),
             session_id: row.get(5),
             checkpoint_id: row.get(6),
+            project_id: None,
             tags,
             created_at: row.get(8),
             updated_at: row.get(9),
             is_large: row.get(10),
             file_path: row.get(11),
+            version_number: None,
+            parent_version_id: None,
+            created_by: None,
+            updated_by: None,
+            content_size: None,
+            slug: None,
+            category: None,
         }
     }).collect();
 

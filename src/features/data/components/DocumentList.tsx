@@ -6,14 +6,26 @@ export interface Document {
   title: string;
   doc_type: 'requirement' | 'design' | 'specification' | 'note' | 'form' | 'other';
   content?: string;
-  session_id?: string;
+  session_id: string; // REQUIRED in PostgreSQL
   project_name?: string;
+  project_id?: string; // NEW: Added to match PostgreSQL schema
   checkpoint_id?: string;
   created_at: string;
   updated_at: string;
   is_large: boolean;
   file_path?: string;
   tags?: string[];
+  
+  // NEW: Version control fields
+  version_number?: number;
+  parent_version_id?: string;
+  created_by?: string;
+  updated_by?: string;
+  
+  // NEW: Metadata fields
+  content_size?: number;
+  slug?: string;
+  category?: string;
 }
 
 interface DocumentListProps {

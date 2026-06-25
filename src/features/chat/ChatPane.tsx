@@ -35,6 +35,9 @@ import { ChatMemorySyncModal } from "./ChatMemorySyncModal";
 import { getConnectionManager } from "../../services/connection/ConnectionManager";
 // Manual approval removed - tools auto-approve
 // import { ToolApprovalModal } from "./ToolApprovalModal";
+import { ModelSelectionDropdown } from './components/ModelSelectionDropdown';
+import { ModelConfigModal } from './components/ModelConfigModal';
+import { ModelSelectionService, ModelInfo } from '../../services/models/ModelSelectionService';
 type Props = {
   sessionId: string | null;
   readOnly: boolean;
@@ -82,6 +85,14 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [activeConnectionType, setActiveConnectionType] = useState<'sse' | 'websocket'>('websocket');
   const [showRetryWebSocket, setShowRetryWebSocket] = useState(false);
   const [lastFailedAssistantId, setLastFailedAssistantId] = useState<string | null>(null);
+
+  // Model Selection State
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [modelConfigModalOpen, setModelConfigModalOpen] = useState(false);
+  const [configModelId, setConfigModelId] = useState<string>('');
+  const [loadingModels, setLoadingModels] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -734,6 +745,68 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     return () => window.removeEventListener("knez-terminal-run", onRun);
   }, [runTerminal]);
 
+  // Load available models and poll health
+  useEffect(() => {
+    const fetchModelsAndSelection = async () => {
+      try {
+        setLoadingModels(true);
+        const data = await ModelSelectionService.getAvailableModels();
+        setAvailableModels(data.models || []);
+        setSelectedModelId(data.preferred_model_id || null);
+      } catch (error) {
+        console.error('[ChatPane] Failed to fetch models:', error);
+      } finally {
+        setLoadingModels(false);
+      }
+    };
+
+    fetchModelsAndSelection();
+    const interval = setInterval(fetchModelsAndSelection, 10000); // Poll every 10 seconds
+    return () => clearInterval(interval);
+  }, []);
+
+  // Model selection handlers
+  const handleSelectModel = async (modelId: string) => {
+    try {
+      const data = await ModelSelectionService.selectModel(modelId);
+      setSelectedModelId(modelId);
+      showToast(data.message || `Switched to ${modelId}`, 'success');
+    } catch (error) {
+      showToast((error as Error).message, 'error');
+      console.error('[ChatPane] Model selection error:', error);
+    }
+  };
+
+  const handleClearSelection = async () => {
+    try {
+      const data = await ModelSelectionService.clearSelection();
+      setSelectedModelId(null);
+      showToast(data.message || 'Cleared selection (automatic mode)', 'success');
+    } catch (error) {
+      showToast((error as Error).message, 'error');
+      console.error('[ChatPane] Clear selection error:', error);
+    }
+  };
+
+  const handleConfigureModel = (modelId: string) => {
+    setConfigModelId(modelId);
+    setModelConfigModalOpen(true);
+  };
+
+  const handleSaveApiKey = async (key: string, value: string) => {
+    try {
+      await ModelSelectionService.saveApiKey(key, value);
+      showToast('API key saved successfully. Restart KNEZ backend to apply.', 'success');
+    } catch (error) {
+      showToast((error as Error).message, 'error');
+      console.error('[ChatPane] API key save error:', error);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    return await ModelSelectionService.testConnection();
+  };
+
   // CP16: Enterprise Header
   return (
     <div className="flex flex-col h-full bg-zinc-950 relative">
@@ -787,6 +860,19 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
               <span>•</span>
               <span>mcp_tools:{exposedAllowedCount}</span>
             </div>
+            
+            {/* Model Selection Dropdown */}
+            <ModelSelectionDropdown
+              isOpen={modelDropdownOpen}
+              onToggle={() => setModelDropdownOpen(!modelDropdownOpen)}
+              models={availableModels}
+              selectedModelId={selectedModelId}
+              onSelectModel={handleSelectModel}
+              onConfigureModel={handleConfigureModel}
+              onClearSelection={handleClearSelection}
+              loading={loadingModels}
+            />
+            
             <button
                 onClick={async () => {
                    try {
@@ -1410,8 +1496,8 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
       <AvailableToolsModal
         isOpen={availableToolsOpen}
         onClose={() => setAvailableToolsOpen(false)}
+        runtimeById={runtimeById}
         tools={exposedTools as any}
-        runtimeById={runtimeById as any}
         panelError={toolPanelError}
         onStartServer={(serverId) => {
           setToolPanelError(null);
@@ -1429,6 +1515,13 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
             showToast(msg, "error");
           });
         }}
+      />
+      <ModelConfigModal
+        isOpen={modelConfigModalOpen}
+        onClose={() => setModelConfigModalOpen(false)}
+        modelId={configModelId}
+        onSave={handleSaveApiKey}
+        onTest={handleTestConnection}
       />
       <HistoryModal
         isOpen={historyOpen}

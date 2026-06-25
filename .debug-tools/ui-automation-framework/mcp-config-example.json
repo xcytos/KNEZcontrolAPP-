@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "native-windows": {
+      "command": "python",
+      "args": [
+        "C:/Users/syedm/Downloads/ASSETS/controlAPP/knez-control-app/.debug-tools/ui-automation-framework/mcp_server/__main__.py"
+      ],
+      "disabled": false,
+      "autoApprove": [],
+      "cwd": "C:/Users/syedm/Downloads/ASSETS/controlAPP/knez-control-app/.debug-tools/ui-automation-framework"
+    }
+  }
+}

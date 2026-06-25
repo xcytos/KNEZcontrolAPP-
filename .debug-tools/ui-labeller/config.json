@@ -1,0 +1,48 @@
+{
+  "enabled": true,
+  "hotkey": "ctrl+shift+d",
+  "targetComponents": [
+    "Hero",
+    "SearchBar",
+    "BrowseByStayType",
+    "Navbar",
+    "PropertyCard",
+    "TopDestinations"
+  ],
+  "autoDetect": true,
+  "labelPosition": "top-left",
+  "showDimensions": true,
+  "showSpacing": true,
+  "showZIndex": true,
+  "colorScheme": {
+    "container": "rgba(59, 130, 246, 0.08)",
+    "component": "rgba(16, 185, 129, 0.08)",
+    "section": "rgba(245, 158, 11, 0.08)",
+    "text": "#ffffff",
+    "border": "#3b82f6"
+  },
+  "spacing": {
+    "showMargin": true,
+    "showPadding": true,
+    "marginColor": "rgba(251, 191, 36, 0.15)",
+    "paddingColor": "rgba(34, 197, 94, 0.15)"
+  },
+  "export": {
+    "format": "json",
+    "includeStyles": true,
+    "includeHierarchy": true
+  },
+  "naming": {
+    "preferDisplayName": true,
+    "stripGenericNames": true,
+    "useSemanticNames": true,
+    "componentTypeMap": {
+      "nav": "Navbar",
+      "header": "Header",
+      "footer": "Footer",
+      "section": "Section",
+      "main": "MainContent",
+      "aside": "Sidebar"
+    }
+  }
+}

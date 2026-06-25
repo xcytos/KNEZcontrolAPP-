@@ -13,15 +13,30 @@ export interface PgDocument {
   title: string;
   doc_type: string;
   content?: string;
-  domain?: string;
+  session_id: string; // REQUIRED in PostgreSQL
   project_name?: string;
-  session_id?: string;
+  project_id?: string; // NEW: Added in schema
   checkpoint_id?: string;
   tags?: string[];
   created_at: string;
   updated_at: string;
   is_large: boolean;
   file_path?: string;
+  
+  // NEW: Version control fields
+  version_number?: number;
+  parent_version_id?: string;
+  created_by?: string;
+  updated_by?: string;
+  
+  // NEW: Metadata fields
+  content_size?: number;
+  slug?: string;
+  category?: string;
+  embedding?: string;
+  
+  // DEPRECATED: Not in schema
+  domain?: string; // This field doesn't exist in PostgreSQL schema
 }
 
 export interface PostgresConnectionConfig {

@@ -8,6 +8,21 @@
   </head>
   <body>
     <div id="root"></div>
+    
     <script type="module" src="/src/main.tsx"></script>
+    
+    <!-- UI Labeller v4 - Development Only Inspector -->
+    <!-- Press Ctrl+Shift+D to activate element inspector -->
+    <script type="module">
+      // Only load UI Labeller in development mode (Vite sets import.meta.env.DEV)
+      if (import.meta.env.DEV) {
+        const script = document.createElement('script');
+        script.src = '/.debug-tools/ui-labeller.js';
+        script.async = true;
+        script.onload = () => console.log('[KNEZ] UI Labeller loaded - Press Ctrl+Shift+D to activate');
+        script.onerror = () => console.warn('[KNEZ] UI Labeller failed to load');
+        document.body.appendChild(script);
+      }
+    </script>
   </body>
 </html>

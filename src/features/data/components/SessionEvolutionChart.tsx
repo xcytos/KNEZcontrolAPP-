@@ -10,6 +10,7 @@ import {
   X,
   Clock,
   Calendar,
+  Maximize2,
 } from 'lucide-react';
 import { DocumentViewer } from './DocumentViewer';
 import { Document } from './DocumentList';
@@ -24,10 +25,14 @@ interface SessionEvolutionChartProps {
   timeline: TimelineEvent[];
   sessionStart: string;
   sessionEnd: string;
+  sessionId?: string;
+  onOpenFullView?: () => void;
 }
 
 export const SessionEvolutionChart: React.FC<SessionEvolutionChartProps> = ({
   timeline,
+  sessionId,
+  onOpenFullView,
 }) => {
   const [selectedEvent, setSelectedEvent] = useState<TimelineEvent | null>(null);
   const [viewingDocument, setViewingDocument] = useState<Document | null>(null);
@@ -221,10 +226,24 @@ export const SessionEvolutionChart: React.FC<SessionEvolutionChartProps> = ({
           <div className="text-[10px] uppercase tracking-wide text-zinc-500 mt-0.5">Insights Found</div>
         </div>
         
-        <div className="flex-1 px-4 py-3 hover:bg-zinc-800/30 transition-colors">
+        <div className="flex-1 px-4 py-3 border-r border-zinc-800/50 hover:bg-zinc-800/30 transition-colors">
           <div className="text-2xl font-bold text-green-400">{metrics.checkpoints}</div>
           <div className="text-[10px] uppercase tracking-wide text-zinc-500 mt-0.5">Checkpoints</div>
         </div>
+        
+        {/* Full View Button */}
+        {sessionId && onOpenFullView && (
+          <button
+            onClick={onOpenFullView}
+            className="flex-shrink-0 px-4 py-3 hover:bg-blue-900/30 transition-colors border-l border-zinc-800/50 group"
+            title="Open Full View"
+          >
+            <div className="flex items-center gap-2 text-blue-400 group-hover:text-blue-300">
+              <Maximize2 className="w-5 h-5" />
+              <div className="text-[10px] uppercase tracking-wide">Full View</div>
+            </div>
+          </button>
+        )}
       </div>
 
       {/* Vertical Timeline - Main Content */}

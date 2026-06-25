@@ -36,6 +36,8 @@ interface GraphStats {
   orphanedDocuments: number;
 }
 
+// Define nodeTypes outside component to prevent recreation on each render
+// Define nodeTypes outside component to prevent recreation on each render
 const nodeTypes = {
   project: ProjectNode,
   session: SessionNode,
