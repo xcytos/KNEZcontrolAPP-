@@ -13,12 +13,14 @@ interface AgentPlaygroundProps {
   sdk: PlaygroundSDK;
   agent: AgentDefinition;
   isActive?: boolean;
+  headerVisible?: boolean;
 }
 
 export const AgentPlayground: React.FC<AgentPlaygroundProps> = ({
   sdk: _sdk,
   agent,
   isActive,
+  headerVisible = true,
 }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstanceRef = useRef<Terminal | null>(null);
@@ -26,6 +28,7 @@ export const AgentPlayground: React.FC<AgentPlaygroundProps> = ({
   const [pid, setPid] = useState<number | null>(null);
   const [status, setStatus] = useState<'connecting' | 'spawning' | 'connected' | 'error' | 'disconnected'>('connecting');
   const handleResizeRef = useRef<(() => void) | null>(null);
+  const resizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (isActive && handleResizeRef.current) {
@@ -51,6 +54,7 @@ export const AgentPlayground: React.FC<AgentPlaygroundProps> = ({
       setStatus('spawning');
 
       terminal = new Terminal({
+        smoothScrollDuration: 150,
         cursorBlink: true,
         cursorStyle: 'bar',
         fontSize: 14,
@@ -100,19 +104,24 @@ export const AgentPlayground: React.FC<AgentPlaygroundProps> = ({
       try { fitAddon.fit(); } catch { /* ignore pre-layout errors */ }
 
       const handleResize = () => {
-        if (fitAddon && terminal && terminalRef.current && terminalRef.current.offsetHeight > 0) {
-          try {
-            fitAddon.fit();
-            if (localPty && localIsConnected) {
-              localPty.resize(terminal.cols, terminal.rows).catch((error: any) => {
-                console.warn(`[AgentPlayground:${agent.id}] Failed to resize PTY:`, error);
-              });
-            }
-            terminal.refresh(0, terminal.rows - 1);
-          } catch (error) {
-            console.error('Failed to handle terminal resize:', error);
-          }
+        if (resizeTimeoutRef.current) {
+          clearTimeout(resizeTimeoutRef.current);
         }
+        resizeTimeoutRef.current = setTimeout(() => {
+          if (fitAddon && terminal && terminalRef.current && terminalRef.current.offsetHeight > 0) {
+            try {
+              fitAddon.fit();
+              if (localPty && localIsConnected) {
+                localPty.resize(terminal.cols, terminal.rows).catch((error: any) => {
+                  console.warn(`[AgentPlayground:${agent.id}] Failed to resize PTY:`, error);
+                });
+              }
+              terminal.refresh(0, terminal.rows - 1);
+            } catch (error) {
+              console.error('Failed to handle terminal resize:', error);
+            }
+          }
+        }, 150);
       };
 
       handleResizeRef.current = handleResize;
@@ -212,6 +221,9 @@ export const AgentPlayground: React.FC<AgentPlaygroundProps> = ({
       cleanup = async () => {
         window.removeEventListener('resize', handleResize);
         if (resizeObserver) resizeObserver.disconnect();
+        if (resizeTimeoutRef.current) {
+          clearTimeout(resizeTimeoutRef.current);
+        }
         if (unlistenPtyOutput) { unlistenPtyOutput(); unlistenPtyOutput = null; }
 
         const terminalManager = getTerminalManager();
@@ -254,6 +266,7 @@ export const AgentPlayground: React.FC<AgentPlaygroundProps> = ({
 
   return (
     <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', backgroundColor: '#0d1117' }}>
+      {headerVisible && (
       <div style={{
         padding: '6px 14px',
         backgroundColor: '#161b22',
@@ -318,6 +331,7 @@ export const AgentPlayground: React.FC<AgentPlaygroundProps> = ({
           </div>
         </div>
       </div>
+      )}
 
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         <div

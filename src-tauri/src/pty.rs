@@ -13,6 +13,7 @@ pub struct PTYConfig {
     pub cwd: Option<String>,
     pub env: Option<HashMap<String, String>>,
     pub shell: Option<String>,
+    pub args: Option<Vec<String>>,
 }
 
 pub struct PTYProcess {
@@ -73,6 +74,10 @@ impl PTYProcess {
             for (key, value) in env_vars {
                 cmd.env(key, value);
             }
+        }
+
+        if let Some(ref args) = self.config.args {
+            cmd.args(args);
         }
 
         pair.slave.spawn_command(cmd)

@@ -1,3 +1,5 @@
+export type PlaygroundMode = 'normal' | 'sandbox';
+
 export enum PlaygroundType {
   TERMINAL = 'terminal',
   OPENCODE = 'opencode',
@@ -26,7 +28,7 @@ export interface PanelState {
 
 export interface ViewState {
   panel: PanelState;
-  expandedPlayground: string | null;
+
   savedSessions: SavedSession[];
 }
 

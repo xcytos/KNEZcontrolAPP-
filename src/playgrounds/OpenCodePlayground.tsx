@@ -29,6 +29,7 @@ export const OpenCodePlayground: React.FC<OpenCodePlaygroundProps> = ({
   const [status, setStatus] = useState<'connecting' | 'connected' | 'error' | 'disconnected' | 'spawning'>('connecting');
   const [sessionId, setSessionId] = useState<string>('');
   const handleResizeRef = useRef<(() => void) | null>(null);
+  const resizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (isActive && handleResizeRef.current) {
@@ -56,6 +57,7 @@ export const OpenCodePlayground: React.FC<OpenCodePlaygroundProps> = ({
 
       // Create xterm.js instance
       terminal = new Terminal({
+        smoothScrollDuration: 150,
         cursorBlink: true,
         cursorStyle: 'block',
         fontSize: 14,
@@ -110,22 +112,25 @@ export const OpenCodePlayground: React.FC<OpenCodePlaygroundProps> = ({
 
       // Handle terminal resize
       const handleResize = () => {
-        if (fitAddon && terminal && terminalRef.current && terminalRef.current.offsetHeight > 0) {
-          try {
-            fitAddon.fit();
-            
-            // Resize PTY if connected
-            if (ptyHandle && isConnected) {
-              ptyHandle.resize(terminal.cols, terminal.rows).catch((error: any) => {
-                console.warn('Failed to resize OpenCode PTY:', error);
-              });
-            }
-            // Force a refresh of the terminal renderer
-            terminal.refresh(0, terminal.rows - 1);
-          } catch (error) {
-            console.error('Failed to handle terminal resize:', error);
-          }
+        if (resizeTimeoutRef.current) {
+          clearTimeout(resizeTimeoutRef.current);
         }
+        resizeTimeoutRef.current = setTimeout(() => {
+          if (fitAddon && terminal && terminalRef.current && terminalRef.current.offsetHeight > 0) {
+            try {
+              fitAddon.fit();
+
+              if (ptyHandle && isConnected) {
+                ptyHandle.resize(terminal.cols, terminal.rows).catch((error: any) => {
+                  console.warn('Failed to resize OpenCode PTY:', error);
+                });
+              }
+              terminal.refresh(0, terminal.rows - 1);
+            } catch (error) {
+              console.error('Failed to handle terminal resize:', error);
+            }
+          }
+        }, 150);
       };
 
       // Exposed for manual refresh
@@ -234,6 +239,9 @@ export const OpenCodePlayground: React.FC<OpenCodePlaygroundProps> = ({
       cleanup = async () => {
         window.removeEventListener('resize', handleResize);
         if (resizeObserver) resizeObserver.disconnect();
+        if (resizeTimeoutRef.current) {
+          clearTimeout(resizeTimeoutRef.current);
+        }
         if (unlistenPtyOutput) { unlistenPtyOutput(); unlistenPtyOutput = null; }
 
         const terminalManager = getTerminalManager();

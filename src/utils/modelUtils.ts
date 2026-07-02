@@ -62,8 +62,67 @@ export function shouldShowModel(modelId: string): boolean {
     return false;
   }
   
+  // 9Router models use provider/model format
+  if (modelId.includes('/')) {
+    return true;
+  }
+  
   // Only show models that have display info defined
   return modelId in MODEL_INFO_MAP;
+}
+
+/**
+ * Get display name from a 9Router-style model ID (provider/model)
+ */
+export function getNineRouterModelName(modelId: string): string {
+  const parts = modelId.split('/');
+  if (parts.length === 2) {
+    const provider = parts[0];
+    const model = parts[1];
+    const providerName = getProviderDisplayName(provider);
+    const modelName = model
+      .replace(/-/g, ' ')
+      .replace(/\b\w/g, c => c.toUpperCase());
+    return `${providerName} ${modelName}`;
+  }
+  return modelId;
+}
+
+/**
+ * Get a human-readable provider name from a 9Router provider ID
+ */
+function getProviderDisplayName(providerId: string): string {
+  const names: Record<string, string> = {
+    'gc': 'Google',
+    'groq': 'Groq',
+    'anthropic': 'Anthropic',
+    'openai': 'OpenAI',
+    'mistral': 'Mistral',
+    'cohere': 'Cohere',
+    'deepseek': 'DeepSeek',
+    'kiro': 'Kiro AI',
+    'gemini': 'Gemini',
+    'nvidia': 'NVIDIA',
+    'fireworks': 'Fireworks',
+    'hyperbolic': 'Hyperbolic',
+    'nebius': 'Nebius',
+    'cerebras': 'Cerebras',
+    'minimax': 'MiniMax',
+    'blackbox': 'Blackbox',
+    'chutes': 'Chutes',
+    'alicode': 'Alibaba',
+    'azure': 'Azure',
+    'ollama': 'Ollama',
+    'openrouter': 'OpenRouter',
+    'mimo-free': 'MiMo',
+    'opencode': 'OpenCode',
+    'gemini-cli': 'Gemini CLI',
+    'qoder': 'Qoder',
+    'vertex': 'Vertex AI',
+    'cloudflare-ai': 'Cloudflare',
+    'byteplus': 'BytePlus',
+  };
+  return names[providerId] || providerId.charAt(0).toUpperCase() + providerId.slice(1);
 }
 
 /**

@@ -13,12 +13,14 @@ interface TerminalPlaygroundProps {
   sdk: PlaygroundSDK;
   config: PlaygroundConfig;
   isActive?: boolean;
+  headerVisible?: boolean;
 }
 
 export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({ 
   sdk: _sdk, 
   config: _config,
-  isActive
+  isActive,
+  headerVisible = true
 }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstanceRef = useRef<Terminal | null>(null);
@@ -29,6 +31,7 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
   const [status, setStatus] = useState<'idle' | 'spawning' | 'connected' | 'error'>('idle');
   const [sessionId, setSessionId] = useState<string>('');
   const handleResizeRef = useRef<(() => void) | null>(null);
+  const resizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (isActive && handleResizeRef.current) {
@@ -55,6 +58,7 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
 
       // Create xterm.js instance
       terminal = new Terminal({
+        smoothScrollDuration: 150,
         cursorBlink: true,
         cursorStyle: 'bar',
         fontSize: 14,
@@ -110,21 +114,25 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
 
       // Handle terminal resize
       const handleResize = () => {
-        if (fitAddon && terminal && terminalRef.current && terminalRef.current.offsetHeight > 0) {
-          try {
-            fitAddon.fit();
-            
-            // Resize PTY if connected
-            if (ptyHandle && isConnected) {
-              ptyHandle.resize(terminal.cols, terminal.rows).catch((error: any) => {
-                console.warn('Failed to resize PTY:', error);
-              });
-            }
-            terminal.refresh(0, terminal.rows - 1);
-          } catch (error) {
-            console.error('Failed to handle terminal resize:', error);
-          }
+        if (resizeTimeoutRef.current) {
+          clearTimeout(resizeTimeoutRef.current);
         }
+        resizeTimeoutRef.current = setTimeout(() => {
+          if (fitAddon && terminal && terminalRef.current && terminalRef.current.offsetHeight > 0) {
+            try {
+              fitAddon.fit();
+
+              if (ptyHandle && isConnected) {
+                ptyHandle.resize(terminal.cols, terminal.rows).catch((error: any) => {
+                  console.warn('Failed to resize PTY:', error);
+                });
+              }
+              terminal.refresh(0, terminal.rows - 1);
+            } catch (error) {
+              console.error('Failed to handle terminal resize:', error);
+            }
+          }
+        }, 150);
       };
 
       handleResizeRef.current = handleResize;
@@ -268,6 +276,9 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
       cleanup = async () => {
         window.removeEventListener('resize', handleResize);
         if (resizeObserver) resizeObserver.disconnect();
+        if (resizeTimeoutRef.current) {
+          clearTimeout(resizeTimeoutRef.current);
+        }
         if (unlistenPtyOutput) { unlistenPtyOutput(); unlistenPtyOutput = null; }
 
         // Clean up terminal via TerminalRuntimeManager
@@ -308,7 +319,7 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
 
   return (
     <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', backgroundColor: '#0d1117' }}>
-      {/* Header with status */}
+      {headerVisible && (
       <div style={{ 
         padding: '6px 14px', 
         backgroundColor: '#161b22', 
@@ -371,6 +382,7 @@ export const TerminalPlayground: React.FC<TerminalPlaygroundProps> = ({
           </div>
         </div>
       </div>
+      )}
 
       {/* Terminal */}
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>

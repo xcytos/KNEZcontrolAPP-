@@ -124,7 +124,35 @@ export class ModelSelectionService {
   }
 
   /**
-   * Test connection to backend
+   * Test a specific model's connectivity
+   */
+  static async testModel(modelId: string): Promise<TestConnectionResponse> {
+    try {
+      const response = await fetch(`${KNEZ_BASE_URL}/api/models/test/${encodeURIComponent(modelId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        return { success: false, message: error.detail || 'Test failed' };
+      }
+
+      const data = await response.json();
+      return {
+        success: data.success,
+        message: data.status === 'healthy'
+          ? `Healthy (${data.latency_ms}ms)`
+          : `Status: ${data.status}`,
+        response: `latency_ms=${data.latency_ms}, failure_rate=${data.failure_rate ?? 'N/A'}`
+      };
+    } catch (error) {
+      return { success: false, message: (error as Error).message };
+    }
+  }
+
+  /**
+   * Test connection to backend (generic)
    */
   static async testConnection(): Promise<TestConnectionResponse> {
     try {

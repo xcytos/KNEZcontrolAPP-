@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Monitor, Code, Plus, X, Maximize2, Minimize2, PanelBottom, PanelBottomClose, GripHorizontal, Bot } from 'lucide-react';
+import { Monitor, Code, Plus, X, GripHorizontal, Bot, Eye, EyeOff, RefreshCw } from 'lucide-react';
 import { PlaygroundSDK } from '../services/playground/PlaygroundSDK';
-import { PlaygroundType, PlaygroundConfig, PanelPosition, ViewState } from '../domain/PlaygroundTypes';
+import { PlaygroundType, PlaygroundConfig, PanelPosition, ViewState, PlaygroundMode } from '../domain/PlaygroundTypes';
 import { AgentDefinition } from '../domain/AgentTypes';
 import { getAgentById } from './AgentRegistry';
 import OpenCodePlayground from './OpenCodePlayground';
@@ -15,6 +15,7 @@ const MIN_PANEL_HEIGHT = 100;
 
 interface PlaygroundContainerProps {
   sdk: PlaygroundSDK;
+  mode?: PlaygroundMode;
 }
 
 interface TabInstance {
@@ -22,9 +23,10 @@ interface TabInstance {
   type: PlaygroundType;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
-  component: React.ComponentType<{ sdk: PlaygroundSDK }>;
+  component: React.ComponentType<{ sdk: PlaygroundSDK; headerVisible?: boolean }>;
   closable: boolean;
   agentId?: string;
+  agentSessionId?: string;
 }
 
 interface TabSerialized {
@@ -33,6 +35,7 @@ interface TabSerialized {
   label: string;
   closable: boolean;
   agentId?: string;
+  agentSessionId?: string;
 }
 
 const defaultTerminalConfig: PlaygroundConfig = {
@@ -62,8 +65,8 @@ const defaultOpenCodeConfig: PlaygroundConfig = {
 let nextAgentNum = 1;
 
 function makeTerminalTab(num: number): TabInstance {
-  const TerminalWrapper: React.FC<{ sdk: PlaygroundSDK }> = ({ sdk }) => (
-    <TerminalPlayground sdk={sdk} config={defaultTerminalConfig} isActive />
+  const TerminalWrapper: React.FC<{ sdk: PlaygroundSDK; headerVisible?: boolean }> = ({ sdk, headerVisible = true }) => (
+    <TerminalPlayground sdk={sdk} config={defaultTerminalConfig} isActive headerVisible={headerVisible} />
   );
   return {
     id: `terminal-${num}-${Date.now()}`,
@@ -76,7 +79,7 @@ function makeTerminalTab(num: number): TabInstance {
 }
 
 function makeOpenCodeTab(): TabInstance {
-  const OpenCodeWrapper: React.FC<{ sdk: PlaygroundSDK }> = ({ sdk }) => (
+  const OpenCodeWrapper: React.FC<{ sdk: PlaygroundSDK; headerVisible?: boolean }> = ({ sdk }) => (
     <OpenCodePlayground sdk={sdk} config={defaultOpenCodeConfig} isActive />
   );
   return {
@@ -90,7 +93,7 @@ function makeOpenCodeTab(): TabInstance {
 }
 
 function makeAgentManagerTab(): TabInstance {
-  const AgentManagerWrapper: React.FC<{ sdk: PlaygroundSDK }> = () => null;
+  const AgentManagerWrapper: React.FC<{ sdk: PlaygroundSDK; headerVisible?: boolean }> = () => null;
   return {
     id: 'agent-manager',
     type: PlaygroundType.AGENT_MANAGER,
@@ -101,12 +104,12 @@ function makeAgentManagerTab(): TabInstance {
   };
 }
 
-function makeAgentTab(agent: AgentDefinition): TabInstance {
+function makeAgentTab(agent: AgentDefinition, existingSessionId?: string): TabInstance {
   const agentLabel = `${agent.icon || ''} ${agent.name}`.trim();
   const num = nextAgentNum++;
-  const AgentWrapper: React.FC<{ sdk: PlaygroundSDK }> = ({ sdk }) => (
-    <AgentPlayground sdk={sdk} agent={agent} isActive />
-  );
+    const AgentWrapper: React.FC<{ sdk: PlaygroundSDK; headerVisible?: boolean }> = ({ sdk, headerVisible = true }) => (
+      <AgentPlayground sdk={sdk} agent={agent} isActive headerVisible={headerVisible} />
+    );
   return {
     id: `agent-${agent.id}-${num}-${Date.now()}`,
     type: PlaygroundType.AGENT,
@@ -115,6 +118,7 @@ function makeAgentTab(agent: AgentDefinition): TabInstance {
     component: AgentWrapper,
     closable: true,
     agentId: agent.id,
+    agentSessionId: existingSessionId,
   };
 }
 
@@ -131,7 +135,7 @@ function loadViewState(): ViewState {
       activeTabId: null,
       lastScrollPositions: {},
     },
-    expandedPlayground: null,
+
     savedSessions: [],
   };
 }
@@ -142,24 +146,27 @@ function saveViewState(state: ViewState) {
   } catch {}
 }
 
-function loadTabs(): TabInstance[] {
+function loadTabs(mode: PlaygroundMode): TabInstance[] {
   const saved = localStorage.getItem('knez_tabs');
   if (saved) {
     try {
       const parsed = JSON.parse(saved) as TabSerialized[];
       if (parsed.length > 0) {
         return parsed.map(t => {
+          if (mode === 'sandbox' && (t.type === PlaygroundType.OPENCODE || t.type === PlaygroundType.AGENT)) {
+            return null;
+          }
           if (t.type === PlaygroundType.OPENCODE) return makeOpenCodeTab();
           if (t.type === PlaygroundType.AGENT_MANAGER) return makeAgentManagerTab();
           if (t.type === PlaygroundType.AGENT && t.agentId) {
             const agent = getAgentById(t.agentId);
-            if (agent) return makeAgentTab(agent);
+            if (agent) return makeAgentTab(agent, t.agentSessionId);
           }
           const TerminalWrapper: React.FC<{ sdk: PlaygroundSDK }> = ({ sdk }) => (
             <TerminalPlayground sdk={sdk} config={defaultTerminalConfig} isActive />
           );
           return { ...t, icon: Monitor, component: TerminalWrapper };
-        });
+        }).filter(Boolean) as TabInstance[];
       }
     } catch {}
   }
@@ -173,16 +180,20 @@ function serializeTabs(tabs: TabInstance[]): TabSerialized[] {
     label: t.label,
     closable: t.closable,
     agentId: t.agentId,
+    agentSessionId: t.agentSessionId,
   }));
 }
 
-export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk }) => {
+export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk, mode = 'normal' }) => {
   const [viewState, setViewState] = useState<ViewState>(loadViewState);
   const [tabs, setTabs] = useState<TabInstance[]>(() => {
-    const loaded = loadTabs();
+    const loaded = loadTabs(mode);
     const hasManager = loaded.some(t => t.type === PlaygroundType.AGENT_MANAGER);
     if (!hasManager) {
       loaded.splice(1, 0, makeAgentManagerTab());
+    }
+    if (mode === 'sandbox') {
+      return loaded.filter(t => t.type === PlaygroundType.TERMINAL || t.type === PlaygroundType.AGENT_MANAGER);
     }
     return loaded;
   });
@@ -190,6 +201,10 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
     const saved = localStorage.getItem('knez_next_terminal_num');
     return saved ? parseInt(saved, 10) : 2;
   });
+  const [refreshKeys, setRefreshKeys] = useState<Record<string, number>>({});
+  const [showTerminalHeader, setShowTerminalHeader] = useState(true);
+  const [showSlidePanel, setShowSlidePanel] = useState(false);
+  const sandboxAutoInit = useRef(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
@@ -208,6 +223,21 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
   useEffect(() => {
     localStorage.setItem('knez_next_terminal_num', String(nextTerminalNum));
   }, [nextTerminalNum]);
+
+  useEffect(() => {
+    if (mode === 'sandbox' && !sandboxAutoInit.current && tabs.length > 0) {
+      sandboxAutoInit.current = true;
+      setViewState(prev => ({
+        ...prev,
+        panel: { ...prev.panel, activeTabId: tabs[0].id },
+      }));
+    }
+  }, [mode, tabs]);
+
+  const refreshTab = useCallback((tabId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRefreshKeys(prev => ({ ...prev, [tabId]: (prev[tabId] || 0) + 1 }));
+  }, []);
 
   useEffect(() => {
     if (viewState.panel.activeTabId) {
@@ -245,17 +275,8 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
     });
   }, []);
 
-  const togglePanel = useCallback(() => {
-    setViewState(prev => ({ ...prev, panel: { ...prev.panel, isVisible: !prev.panel.isVisible } }));
-  }, []);
-
   const selectTab = useCallback((tabId: string) => {
-    setViewState(prev => {
-      if (prev.panel.activeTabId === tabId && prev.panel.isVisible) {
-        return { ...prev, panel: { ...prev.panel, isVisible: false, activeTabId: null } };
-      }
-      return { ...prev, panel: { ...prev.panel, isVisible: true, activeTabId: tabId } };
-    });
+    setViewState(prev => ({ ...prev, panel: { ...prev.panel, activeTabId: tabId } }));
   }, []);
 
   const addTerminal = useCallback(() => {
@@ -264,18 +285,27 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
     setTabs(prev => [...prev, newTab]);
     setViewState(prev => ({
       ...prev,
-      panel: { ...prev.panel, isVisible: true, activeTabId: newTab.id },
+      panel: { ...prev.panel, activeTabId: newTab.id },
     }));
   }, [nextTerminalNum]);
 
   const launchAgent = useCallback((agent: AgentDefinition) => {
+    if (mode === 'sandbox') return;
+    const existingTab = tabs.find(t => t.agentId === agent.id && t.type === PlaygroundType.AGENT);
+    if (existingTab) {
+      setViewState(prev => ({
+        ...prev,
+        panel: { ...prev.panel, activeTabId: existingTab.id },
+      }));
+      return;
+    }
     const newTab = makeAgentTab(agent);
     setTabs(prev => [...prev, newTab]);
     setViewState(prev => ({
       ...prev,
-      panel: { ...prev.panel, isVisible: true, activeTabId: newTab.id },
+      panel: { ...prev.panel, activeTabId: newTab.id },
     }));
-  }, []);
+  }, [nextTerminalNum, tabs, mode]);
 
   const closeTab = useCallback((tabId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -292,7 +322,7 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
       if (prev.panel.activeTabId === tabId) {
         const remaining = tabs.filter(t => t.id !== tabId);
         const next = remaining.length > 0 ? remaining[remaining.length - 1].id : null;
-        return { ...prev, panel: { ...prev.panel, isVisible: next !== null, activeTabId: next } };
+        return { ...prev, panel: { ...prev.panel, activeTabId: next } };
       }
       return prev;
     });
@@ -322,13 +352,14 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
   }, [viewState.panel.height]);
 
   const activeTab = tabs.find(t => t.id === viewState.panel.activeTabId);
+
   return (
     <div className="flex flex-col h-full bg-gray-900">
       <div className="flex items-center justify-between bg-gray-800 border-b border-gray-700 select-none flex-shrink-0">
         <div className="flex items-center overflow-x-auto">
           {tabs.map(tab => {
             const Icon = tab.icon;
-            const isActive = viewState.panel.activeTabId === tab.id && viewState.panel.isVisible;
+            const isActive = viewState.panel.activeTabId === tab.id;
             return (
               <div
                 key={tab.id}
@@ -342,13 +373,24 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
                 <Icon className="w-3.5 h-3.5 flex-shrink-0" />
                 <span>{tab.label}</span>
                 {tab.closable && (
-                  <button
-                    onClick={(e) => closeTab(tab.id, e)}
-                    className="ml-1 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-700 transition-opacity"
-                    title="Close"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
+                  <>
+                    {tab.type === PlaygroundType.TERMINAL && (
+                      <button
+                        onClick={(e) => refreshTab(tab.id, e)}
+                        className="ml-1 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-700 transition-opacity"
+                        title="Restart Terminal"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                      </button>
+                    )}
+                    <button
+                      onClick={(e) => closeTab(tab.id, e)}
+                      className="ml-1 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-700 transition-opacity"
+                      title="Close"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </>
                 )}
               </div>
             );
@@ -363,100 +405,103 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
         </div>
         <div className="flex items-center gap-1 px-2 flex-shrink-0">
           <button
-            onClick={togglePanel}
+            onClick={() => setShowTerminalHeader(v => !v)}
             className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
-            title={viewState.panel.isVisible ? 'Close Panel' : 'Open Panel'}
+            title={showTerminalHeader ? 'Hide Terminal Header' : 'Show Terminal Header'}
           >
-            {viewState.panel.isVisible ? <PanelBottomClose className="w-3.5 h-3.5" /> : <PanelBottom className="w-3.5 h-3.5" />}
-          </button>
-          <button
-            onClick={() => setViewState(prev => ({
-              ...prev,
-              expandedPlayground: prev.expandedPlayground ? null : prev.panel.activeTabId,
-            }))}
-            className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
-            title={viewState.expandedPlayground ? 'Minimize' : 'Maximize'}
-          >
-            {viewState.expandedPlayground ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+            {showTerminalHeader ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
           </button>
         </div>
       </div>
 
-      {viewState.panel.isVisible ? (
-        <div
-          ref={panelRef}
-          className="flex flex-col overflow-hidden relative"
-          style={{ height: viewState.expandedPlayground ? '100%' : (viewState.panel.height ?? DEFAULT_PANEL_HEIGHT) }}
-        >
-          {!viewState.expandedPlayground && (
+      <div className="flex flex-1 overflow-hidden min-h-0">
+        <div className="flex flex-col overflow-hidden flex-1 min-h-0">
+          <div
+            ref={panelRef}
+            className="flex flex-col overflow-hidden flex-1 min-h-0"
+          >
             <div
               onMouseDown={handleMouseDown}
               className="flex-shrink-0 h-2 bg-gray-800 hover:bg-blue-600 cursor-row-resize flex items-center justify-center group transition-colors"
             >
               <GripHorizontal className="w-4 h-4 text-gray-600 group-hover:text-white transition-colors" />
             </div>
-          )}
 
-          <div className="flex-1 relative bg-gray-900">
-            {tabs.map(tab => {
-              const TabComponent = tab.component;
-              const isActive = viewState.panel.activeTabId === tab.id;
-              return (
-                <div
-                  key={tab.id}
-                  className="absolute inset-0 overflow-auto"
-                  style={{
-                    visibility: isActive ? 'visible' : 'hidden',
-                    pointerEvents: isActive ? 'auto' : 'none',
-                    zIndex: isActive ? 1 : 0,
-                  }}
-                  ref={isActive ? contentRef : undefined}
-                  onScroll={isActive ? saveCurrentScroll : undefined}
-                >
-                  {tab.type === PlaygroundType.AGENT_MANAGER ? (
-                    <AgentManagerPanel sdk={sdk} onLaunch={launchAgent} />
-                  ) : (
-                    <TabComponent sdk={sdk} />
-                  )}
-                </div>
-              );
-            })}
+            <div className="flex-1 relative bg-gray-900 min-h-0">
+              {tabs.map(tab => {
+                const TabComponent = tab.component;
+                const isActive = viewState.panel.activeTabId === tab.id;
+                const tabKey = `${tab.id}-${refreshKeys[tab.id] || 0}`;
+                return (
+                  <div
+                    key={tabKey}
+                    className="absolute inset-0 overflow-auto"
+                    style={{
+                      visibility: isActive ? 'visible' : 'hidden',
+                      pointerEvents: isActive ? 'auto' : 'none',
+                      zIndex: isActive ? 1 : 0,
+                    }}
+                    ref={isActive ? contentRef : undefined}
+                    onScroll={isActive ? saveCurrentScroll : undefined}
+                  >
+                    {tab.type === PlaygroundType.AGENT_MANAGER ? (
+                      <AgentManagerPanel sdk={sdk} onLaunch={launchAgent} />
+                    ) : (
+                      <TabComponent sdk={sdk} headerVisible={showTerminalHeader} />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
-      ) : (
-        <div className="flex-1 flex items-center justify-center bg-gray-900">
-          <div className="text-center text-gray-500">
-            <PanelBottom className="w-10 h-10 mx-auto mb-3 opacity-40" />
-            <p className="text-sm font-medium">Panel Hidden</p>
-            <p className="text-xs mt-1 text-gray-600">Click a tab above or the toggle button to show</p>
+
+        {showSlidePanel && (
+          <div className="w-64 border-l border-gray-700 bg-gray-900 flex-shrink-0 flex flex-col min-h-0">
+            <div className="p-3 text-xs text-gray-400 font-medium border-b border-gray-700">
+              Sessions
+            </div>
+            <div className="flex-1 overflow-y-auto p-2">
+              {tabs.map(tab => {
+                const Icon = tab.icon;
+                const isActive = viewState.panel.activeTabId === tab.id;
+                return (
+                  <div
+                    key={tab.id}
+                    onClick={() => selectTab(tab.id)}
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-pointer mb-0.5 ${
+                      isActive
+                        ? 'bg-gray-700 text-white'
+                        : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span className="truncate">{tab.label}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="flex items-center justify-between px-3 py-1 bg-gray-800 border-t border-gray-700 text-xs text-gray-400 flex-shrink-0">
         <div className="flex items-center gap-3">
-          <button
-            onClick={togglePanel}
-            className="flex items-center gap-1.5 hover:text-white transition-colors"
-          >
-            {viewState.panel.isVisible ? (
-              <PanelBottomClose className="w-3 h-3" />
-            ) : (
-              <PanelBottom className="w-3 h-3" />
-            )}
-            <span>{viewState.panel.isVisible ? 'Hide Panel' : 'Show Panel'}</span>
-          </button>
-          {activeTab && viewState.panel.isVisible && (
+          <span>{activeTab?.label || 'No tab'}</span>
+          {viewState.savedSessions.length > 0 && (
             <>
               <span className="text-gray-600">|</span>
-              <span className="text-gray-300">{activeTab.label}</span>
+              <span>{viewState.savedSessions.length} session{viewState.savedSessions.length !== 1 ? 's' : ''} saved</span>
             </>
           )}
         </div>
         <div className="flex items-center gap-2">
-          {viewState.savedSessions.length > 0 && (
-            <span>{viewState.savedSessions.length} session{viewState.savedSessions.length !== 1 ? 's' : ''} saved</span>
-          )}
+          <button
+            onClick={() => setShowSlidePanel(v => !v)}
+            className="hover:text-white transition-colors"
+          >
+            {showSlidePanel ? 'Hide Sessions' : 'Sessions'}
+          </button>
         </div>
       </div>
     </div>

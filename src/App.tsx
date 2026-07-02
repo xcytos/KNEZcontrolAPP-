@@ -23,9 +23,8 @@ import { SkillsView } from './features/skills/SkillsView';
 import { DataExplorer } from './features/data/DataExplorer';
 import { Dashboard } from './features/dashboard/Dashboard';
 import { RepoVisualizer } from './features/repo/RepoVisualizer';
+import { ModelsPage } from './features/models/ModelsPage';
 import { taqwinDataService } from './services/data/TaqwinDataService';
-// TerminalSandbox is kept for reference; PlaygroundContainer is used via TerminalSandboxView
-// import TerminalSandbox from './playgrounds/TerminalSandbox';
 import { PlaygroundContainer } from './playgrounds/PlaygroundContainer';
 import { PresenceState, McpRegistrySnapshot } from './domain/DataContracts';
 import { knezClient } from './services/knez/KnezClient';
@@ -52,6 +51,7 @@ import { features } from './config/features';
 import { initMcpBoot } from './mcp/mcpBoot';
 import { getStaticMemoryLoader } from './services/memory/StaticMemoryLoader';
 import { playgroundSDK } from './services/playground/PlaygroundSDK';
+import { Terminal } from 'lucide-react';
 
 // ...
 
@@ -64,6 +64,7 @@ function AppContent() {
   const [readOnly, setReadOnly] = useState(true);
   const [chatSending, setChatSending] = useState(false);
   const [tabErrors, setTabErrors] = useState<Partial<Record<View, boolean>>>({});
+  const [headerVisible, setHeaderVisible] = useState(true);
   
   const { online, isConnected, isModelReady, isDegraded, lastCheck, health, forceCheck } = useStatus();
 
@@ -273,6 +274,8 @@ function AppContent() {
         return <TestPanel />;
       case 'skills':
         return <SkillsView />;
+      case 'models':
+        return <ModelsPage />;
       case 'data':
         return <DataExplorer />;
       case 'dashboard':
@@ -284,9 +287,15 @@ function AppContent() {
           />
         );
       case 'terminal-sandbox':
-        // PlaygroundContainer is the canonical entry for all terminal/playground
-        // instances. TerminalSandbox remains for lightweight single-terminal use.
-        return <TerminalSandboxView />;
+        return (
+          <div className="h-full w-full flex items-center justify-center text-zinc-500">
+            <div className="text-center">
+              <Terminal className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">Terminal Sandbox</p>
+              <p className="text-xs text-zinc-600 mt-1">Terminals open below</p>
+            </div>
+          </div>
+        );
 
       default:
         return <ChatPane sessionId={sessionId} readOnly={readOnly} systemStatus={systemStatus} />;
@@ -338,6 +347,7 @@ function AppContent() {
       onViewChange={handleViewChange}
       presenceState={presenceState}
       tabErrors={tabErrors}
+      onHeaderToggle={() => setHeaderVisible(v => !v)}
       connectionStatus={{
         state:
           systemStatus === "starting"
@@ -354,6 +364,7 @@ function AppContent() {
         endpoint: knezClient.getProfile().endpoint,
         lastCheck: lastCheck
       }}
+      headerVisible={headerVisible}
       headerSubtitle={
         sessionId ? (
           <div className="text-xs text-zinc-500 font-mono">
@@ -383,6 +394,12 @@ function AppContent() {
             Settings
           </button>
         </div>
+      }
+      bottomPanel={
+        <PlaygroundContainer
+          sdk={playgroundSDK}
+          mode="normal"
+        />
       }
     >
       <CommandPalette 
@@ -432,11 +449,6 @@ const McpLoader = () => {
   return <McpRegistryView snapshot={snapshot} onRefresh={load} />;
 }
 
-/**
- * TerminalSandboxView — bridges the App 'terminal-sandbox' route to the
- * canonical PlaygroundContainer, sharing the global playgroundSDK instance.
- * Falls back to the lightweight TerminalSandbox if PlaygroundContainer fails.
- */
 const RepositoryView = ({ currentSessionId }: { currentSessionId?: string }) => {
   const [projects, setProjects] = useState<Array<{ project_id: string; project_name: string; project_path: string | null }>>([]);
   const [sessions, setSessions] = useState<Array<{ session_id: string; display_id: string; name: string; project_id?: string }>>([]);
@@ -475,14 +487,6 @@ const RepositoryView = ({ currentSessionId }: { currentSessionId?: string }) => 
     />
   );
 };
-
-const TerminalSandboxView = () => {
-  return (
-    <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-      <PlaygroundContainer sdk={playgroundSDK} />
-    </div>
-  );
-}
 
 function App() {
   // Track open session

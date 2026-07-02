@@ -1,4 +1,5 @@
 import React from 'react';
+import { ChevronUp, ChevronDown } from 'lucide-react';
 import { Sidebar, View } from './Sidebar';
 import { PresenceIndicator } from '../../features/presence/PresenceIndicator';
 import { PresenceState } from '../../domain/DataContracts';
@@ -13,6 +14,7 @@ interface MainLayoutProps {
   onViewChange: (view: View) => void;
   presenceState: PresenceState;
   children: React.ReactNode;
+  bottomPanel?: React.ReactNode;
   tabErrors?: Partial<Record<View, boolean>>;
   connectionStatus?: {
     state: "running" | "starting" | "degraded" | "error" | "down";
@@ -23,17 +25,24 @@ interface MainLayoutProps {
   };
   headerActions?: React.ReactNode;
   headerSubtitle?: React.ReactNode;
+  headerVisible?: boolean;
+  onHeaderToggle?: () => void;
 }
+
+const isSandbox = (v: View) => v === 'terminal-sandbox';
 
 export const MainLayout: React.FC<MainLayoutProps> = ({
   activeView,
   onViewChange,
   presenceState,
   children,
+  bottomPanel,
   tabErrors,
   connectionStatus,
   headerActions,
   headerSubtitle,
+  headerVisible = true,
+  onHeaderToggle,
 }) => {
   const tauriInset = isTauriRuntime();
   return (
@@ -42,8 +51,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
         <Sidebar activeView={activeView} onViewChange={onViewChange} tabErrors={tabErrors} />
         
-        <div className="flex-1 flex flex-col h-full min-h-0 min-w-0 overflow-hidden">
-          <header className="h-14 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900/50 backdrop-blur-sm">
+        <div className="flex-1 flex flex-col min-h-0 min-w-0 relative overflow-hidden">
+          <header
+            className="h-14 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900/50 backdrop-blur-sm shrink-0"
+            style={{ display: isSandbox(activeView) && !headerVisible ? 'none' : 'flex' }}
+          >
             <div className="flex items-center gap-4">
               <h1 className="text-sm font-semibold text-zinc-400 tracking-wide uppercase">
                 KNEZ Control <span className="text-zinc-600 mx-2">/</span> {activeView}
@@ -88,6 +100,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             </div>
             <div className="flex items-center gap-3">
               {headerActions}
+              {onHeaderToggle && (
+                <button
+                  onClick={onHeaderToggle}
+                  className="p-1 text-zinc-500 hover:text-zinc-300 transition-colors"
+                  title={headerVisible ? 'Collapse Header' : 'Show Header'}
+                >
+                  {headerVisible ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </button>
+              )}
               <PresenceIndicator state={presenceState} />
             </div>
           </header>
@@ -95,6 +116,20 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           <main className="flex-1 min-h-0 min-w-0 overflow-auto p-0 relative">
             {children}
           </main>
+
+          {bottomPanel && (
+            <div
+              className="flex-col"
+              style={{
+                display: isSandbox(activeView) ? 'flex' : 'none',
+                position: 'absolute',
+                inset: isSandbox(activeView) && headerVisible ? '56px 0 0 0' : 0,
+                zIndex: 40,
+              }}
+            >
+              {bottomPanel}
+            </div>
+          )}
         </div>
       </div>
     </div>

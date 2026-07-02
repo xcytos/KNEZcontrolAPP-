@@ -290,9 +290,8 @@ export class TerminalRuntimeManager {
       pty = await ptyService.createPTY({
         ...config,
         env,
-        command: shell,
+        shell,
         args,
-        shell: undefined,
       });
       console.log(`[TerminalRuntimeManager] Successfully spawned agent with PID: ${pty.processId}`);
     } catch (error) {

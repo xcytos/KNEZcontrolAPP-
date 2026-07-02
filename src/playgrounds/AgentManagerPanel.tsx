@@ -3,14 +3,13 @@ import {
   RefreshCw,
   Download,
   Play,
-  ExternalLink,
   CheckCircle,
   XCircle,
   AlertCircle,
-  Settings,
   ChevronDown,
   ChevronRight,
   Server,
+  Plus,
 } from 'lucide-react';
 import { AgentDefinition, AgentInstallProgress, AGENT_PRESET_COLORS } from '../domain/AgentTypes';
 import { getAllAgents } from './AgentRegistry';
@@ -31,20 +30,30 @@ export const AgentManagerPanel: React.FC<AgentManagerPanelProps> = ({ sdk: _sdk,
   const [installProgress, setInstallProgress] = useState<AgentInstallProgress | null>(null);
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   const [nineRouterHealth, setNineRouterHealth] = useState<boolean>(false);
-  const [showProviders, setShowProviders] = useState<string | null>(null);
-  const [availableProviders, setAvailableProviders] = useState<any[]>([]);
+  const [showAll, setShowAll] = useState(false);
+  const [detectError, setDetectError] = useState<string | null>(null);
 
   useEffect(() => {
+    console.log(`[AgentManagerPanel] mount: ${agents.length} agents in registry`);
     detectAll();
     checkNineRouter();
   }, []);
 
   const detectAll = async () => {
     setLoading(true);
+    setDetectError(null);
+    console.log(`[AgentManagerPanel] detectAll: starting scan`);
     try {
       const results = await agentInstallationService.detectAllAgents();
+      console.log(`[AgentManagerPanel] detectAll: results=`, Object.fromEntries(results));
       setStatusMap(results);
+      const anyDetected = Array.from(results.values()).some(v => v);
+      if (!anyDetected) {
+        setDetectError('No agents detected. Make sure the app is running in Tauri and agents are installed.');
+      }
     } catch (error) {
+      const msg = (error as Error).message || 'Detection failed';
+      setDetectError(msg);
       console.error('[AgentManagerPanel] Detection failed:', error);
     } finally {
       setLoading(false);
@@ -52,25 +61,27 @@ export const AgentManagerPanel: React.FC<AgentManagerPanelProps> = ({ sdk: _sdk,
   };
 
   const checkNineRouter = async () => {
+    console.log(`[AgentManagerPanel] checkNineRouter: pinging...`);
     try {
       const health = await nineRouterService.checkHealth();
+      console.log(`[AgentManagerPanel] checkNineRouter: health=`, health);
       setNineRouterHealth(health?.status === 'healthy');
-      if (health?.status === 'healthy') {
-        const providers = await nineRouterService.getProviders();
-        setAvailableProviders(providers);
-      }
-    } catch {
+    } catch (err) {
+      console.log(`[AgentManagerPanel] checkNineRouter: failed -`, err);
       setNineRouterHealth(false);
     }
   };
 
   const handleInstall = async (agent: AgentDefinition) => {
+    console.log(`[AgentManagerPanel] handleInstall: starting ${agent.id} (${agent.name})`);
     setInstalling(agent.id);
     setInstallProgress(null);
     try {
       const success = await agentInstallationService.installAgent(agent.id, (progress) => {
+        console.log(`[AgentManagerPanel] install progress: ${agent.id} phase=${progress.phase} ${progress.progress}% "${progress.message}"`);
         setInstallProgress(progress);
       });
+      console.log(`[AgentManagerPanel] handleInstall: ${agent.id} → success=${success}`);
       if (success) {
         setStatusMap(prev => new Map(prev).set(agent.id, true));
         agentInstallationService.invalidateAgent(agent.id);
@@ -84,21 +95,15 @@ export const AgentManagerPanel: React.FC<AgentManagerPanelProps> = ({ sdk: _sdk,
   };
 
   const handleLaunch = (agent: AgentDefinition) => {
+    console.log(`[AgentManagerPanel] handleLaunch: ${agent.id} (${agent.name})`);
     onLaunch?.(agent);
-  };
-
-  const openExternal = (url: string) => {
-    window.open(url, '_blank');
   };
 
   const toggleAgent = (agentId: string) => {
     setExpandedAgent(prev => prev === agentId ? null : agentId);
-    setShowProviders(null);
   };
 
-  const toggleProviders = (agentId: string) => {
-    setShowProviders(prev => prev === agentId ? null : agentId);
-  };
+  const displayedAgents = showAll ? agents : agents.filter(a => statusMap.get(a.id));
 
   const getAgentColor = (agent: AgentDefinition): string => {
     return AGENT_PRESET_COLORS[agent.id] || agent.color || '#6366f1';
@@ -125,27 +130,62 @@ export const AgentManagerPanel: React.FC<AgentManagerPanelProps> = ({ sdk: _sdk,
             Install and launch CLI AI coding agents in dedicated terminals
           </p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px', borderRadius: '4px',
-            backgroundColor: nineRouterHealth ? '#1a3a2a' : '#3a1a1a', fontSize: '11px', fontWeight: 500,
-            color: nineRouterHealth ? '#3fb950' : '#f85149', border: `1px solid ${nineRouterHealth ? '#2ea043' : '#f85149'}40`,
-          }}>
-            <Server size={12} />
-            NineRouter: {nineRouterHealth ? 'Connected' : 'Offline'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px', borderRadius: '4px',
+              backgroundColor: nineRouterHealth ? '#1a3a2a' : '#3a1a1a', fontSize: '11px', fontWeight: 500,
+              color: nineRouterHealth ? '#3fb950' : '#f85149', border: `1px solid ${nineRouterHealth ? '#2ea043' : '#f85149'}40`,
+            }}>
+              <Server size={12} />
+              NineRouter: {nineRouterHealth ? 'Connected' : 'Offline'}
+            </div>
+            <button
+              onClick={() => setShowAll(p => !p)}
+              style={{
+                padding: '6px 10px', fontSize: '12px', fontWeight: 500,
+                backgroundColor: showAll ? '#1f6feb' : '#21262d', color: '#ffffff',
+                border: `1px solid ${showAll ? '#1f6feb' : '#30363d'}`, borderRadius: '6px',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px',
+              }}
+            >
+              <Plus size={12} />
+              {showAll ? 'Show Installed' : 'Add Agents'}
+            </button>
+            <button
+              onClick={detectAll}
+              style={{
+                padding: '6px 10px', fontSize: '12px', backgroundColor: '#21262d', color: '#c9d1d9',
+                border: '1px solid #30363d', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px',
+              }}
+            >
+              <RefreshCw size={12} />
+              Rescan
+            </button>
           </div>
-          <button
-            onClick={detectAll}
-            style={{
-              padding: '6px 10px', fontSize: '12px', backgroundColor: '#21262d', color: '#c9d1d9',
-              border: '1px solid #30363d', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px',
-            }}
-          >
-            <RefreshCw size={12} />
-            Rescan
-          </button>
-        </div>
       </div>
+
+      {/* Detection Error */}
+      {!showAll && !loading && agents.filter(a => statusMap.get(a.id)).length === 0 && (
+        <div style={{
+          marginBottom: '16px', padding: '20px', borderRadius: '8px', textAlign: 'center',
+          backgroundColor: '#161b22', border: '1px solid #30363d',
+        }}>
+          <p style={{ fontSize: '14px', color: '#8b949e', margin: 0 }}>
+            No installed agents found. Click "Add Agents" to install CLI tools.
+          </p>
+        </div>
+      )}
+
+      {detectError && (
+        <div style={{
+          marginBottom: '16px', padding: '12px 16px', borderRadius: '8px',
+          backgroundColor: '#3a1a1a', border: '1px solid #f8514940',
+          display: 'flex', alignItems: 'center', gap: '8px',
+        }}>
+          <XCircle size={14} color="#f85149" />
+          <span style={{ fontSize: '13px', color: '#f85149' }}>{detectError}</span>
+        </div>
+      )}
 
       {/* Install Progress */}
       {installProgress && (
@@ -154,7 +194,9 @@ export const AgentManagerPanel: React.FC<AgentManagerPanelProps> = ({ sdk: _sdk,
           backgroundColor: '#161b22', border: '1px solid #30363d',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+            {installProgress.phase === 'downloading' && <RefreshCw className="animate-spin" size={14} />}
             {installProgress.phase === 'installing' && <RefreshCw className="animate-spin" size={14} />}
+            {installProgress.phase === 'verifying' && <RefreshCw className="animate-spin" size={14} />}
             {installProgress.phase === 'done' && <CheckCircle size={14} color="#3fb950" />}
             {installProgress.phase === 'error' && <XCircle size={14} color="#f85149" />}
             <span style={{ fontSize: '13px', color: '#c9d1d9' }}>{installProgress.message}</span>
@@ -171,12 +213,11 @@ export const AgentManagerPanel: React.FC<AgentManagerPanelProps> = ({ sdk: _sdk,
 
       {/* Agent Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '12px' }}>
-        {agents.map((agent) => {
+        {displayedAgents.map((agent) => {
           const isInstalled = statusMap.get(agent.id) ?? false;
           const isInstalling = installing === agent.id;
           const isExpanded = expandedAgent === agent.id;
           const color = getAgentColor(agent);
-          const showProviderPanel = showProviders === agent.id;
 
           return (
             <div
@@ -268,97 +309,7 @@ export const AgentManagerPanel: React.FC<AgentManagerPanelProps> = ({ sdk: _sdk,
                       </button>
                     )}
 
-                    <button
-                      onClick={() => openExternal(agent.homepage)}
-                      style={{
-                        padding: '8px 10px', fontSize: '12px', backgroundColor: '#21262d', color: '#c9d1d9',
-                        border: '1px solid #30363d', borderRadius: '6px', cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', gap: '4px',
-                      }}
-                    >
-                      <ExternalLink size={12} />
-                      Home
-                    </button>
                   </div>
-
-                  {/* Config / Provider Settings */}
-                  {agent.supportsProviderSelection && (
-                    <div>
-                      <button
-                        onClick={() => toggleProviders(agent.id)}
-                        style={{
-                          width: '100%', padding: '8px 10px', fontSize: '12px', backgroundColor: '#21262d',
-                          color: '#c9d1d9', border: '1px solid #30363d', borderRadius: '6px',
-                          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <Settings size={12} />
-                          <span>Provider Configuration</span>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{
-                            padding: '1px 5px', borderRadius: '3px', fontSize: '9px', fontWeight: 500,
-                            backgroundColor: nineRouterHealth ? '#1a3a2a' : '#3a1a1a',
-                            color: nineRouterHealth ? '#3fb950' : '#f85149',
-                          }}>
-                            {nineRouterHealth ? 'NineRouter' : 'Offline'}
-                          </span>
-                          {showProviderPanel ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                        </div>
-                      </button>
-
-                      {showProviderPanel && (
-                        <div style={{ marginTop: '8px', padding: '10px', backgroundColor: '#0d1117', borderRadius: '6px', border: '1px solid #30363d' }}>
-                          {!nineRouterHealth ? (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#f85149' }}>
-                              <AlertCircle size={14} />
-                              NineRouter is not running. Start it to configure providers.
-                            </div>
-                          ) : (
-                            <>
-                              <p style={{ fontSize: '11px', color: '#8b949e', marginBottom: '8px' }}>
-                                Select a provider from NineRouter for {agent.name}:
-                              </p>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '160px', overflowY: 'auto' }}>
-                                {availableProviders.slice(0, 10).map((provider) => (
-                                  <label
-                                    key={provider.id}
-                                    style={{
-                                      display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px',
-                                      borderRadius: '4px', cursor: 'pointer', fontSize: '12px', color: '#c9d1d9',
-                                      backgroundColor: 'transparent', transition: 'background-color 0.15s',
-                                    }}
-                                  >
-                                    <input type="radio" name={`provider-${agent.id}`} style={{ accentColor: color }} />
-                                    <span>{provider.icon || ''} {provider.name}</span>
-                                    <span style={{
-                                      marginLeft: 'auto', fontSize: '10px', padding: '1px 4px', borderRadius: '3px',
-                                      backgroundColor: provider.category === 'free' ? '#1a3a2a' : provider.category === 'oauth' ? '#1a2a3a' : '#2a1a2a',
-                                      color: provider.category === 'free' ? '#3fb950' : provider.category === 'oauth' ? '#58a6ff' : '#bc8cff',
-                                    }}>
-                                      {provider.category}
-                                    </span>
-                                  </label>
-                                ))}
-                              </div>
-                              <button
-                                onClick={() => nineRouterService.openDashboard()}
-                                style={{
-                                  marginTop: '8px', width: '100%', padding: '6px 8px', fontSize: '11px',
-                                  backgroundColor: '#21262d', color: '#58a6ff', border: '1px solid #30363d',
-                                  borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
-                                }}
-                              >
-                                <ExternalLink size={10} />
-                                Open NineRouter Dashboard
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
 
                   {/* Install Info for manual agents */}
                   {agent.installMethod === 'manual' && agent.installUrl && (

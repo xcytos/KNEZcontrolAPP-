@@ -86,6 +86,46 @@
           "args": true
         },
         {
+          "name": "npm",
+          "cmd": "npm",
+          "args": true
+        },
+        {
+          "name": "npm-cmd",
+          "cmd": "npm.cmd",
+          "args": true
+        },
+        {
+          "name": "node",
+          "cmd": "node",
+          "args": true
+        },
+        {
+          "name": "node-exe",
+          "cmd": "node.exe",
+          "args": true
+        },
+        {
+          "name": "pip",
+          "cmd": "pip",
+          "args": true
+        },
+        {
+          "name": "pip-exe",
+          "cmd": "pip.exe",
+          "args": true
+        },
+        {
+          "name": "where",
+          "cmd": "where",
+          "args": true
+        },
+        {
+          "name": "which",
+          "cmd": "which",
+          "args": true
+        },
+        {
           "name": "exec",
           "cmd": "taskkill",
           "args": true
@@ -163,6 +203,46 @@
         {
           "name": "python-exe",
           "cmd": "python.exe",
+          "args": true
+        },
+        {
+          "name": "npm",
+          "cmd": "npm",
+          "args": true
+        },
+        {
+          "name": "npm-cmd",
+          "cmd": "npm.cmd",
+          "args": true
+        },
+        {
+          "name": "node",
+          "cmd": "node",
+          "args": true
+        },
+        {
+          "name": "node-exe",
+          "cmd": "node.exe",
+          "args": true
+        },
+        {
+          "name": "pip",
+          "cmd": "pip",
+          "args": true
+        },
+        {
+          "name": "pip-exe",
+          "cmd": "pip.exe",
+          "args": true
+        },
+        {
+          "name": "where",
+          "cmd": "where",
+          "args": true
+        },
+        {
+          "name": "which",
+          "cmd": "which",
           "args": true
         },
         {

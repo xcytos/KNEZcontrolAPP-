@@ -321,7 +321,8 @@ export class PTYService {
             rows: config.rows,
             cwd: config.cwd || 'C:\\Users\\',
             env: config.env || {},
-            shell: config.shell || 'powershell.exe'
+            shell: config.shell || 'powershell.exe',
+            args: config.args || []
           }
         }) as string;
         
