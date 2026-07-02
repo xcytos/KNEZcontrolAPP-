@@ -100,18 +100,21 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             </div>
             <div className="flex items-center gap-3">
               {headerActions}
-              {onHeaderToggle && (
-                <button
-                  onClick={onHeaderToggle}
-                  className="p-1 text-zinc-500 hover:text-zinc-300 transition-colors"
-                  title={headerVisible ? 'Collapse Header' : 'Show Header'}
-                >
-                  {headerVisible ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                </button>
-              )}
               <PresenceIndicator state={presenceState} />
             </div>
           </header>
+
+          {onHeaderToggle && (
+            <div className="absolute z-50" style={{ top: headerVisible ? '' : '0', right: '1rem', bottom: '', transform: headerVisible ? 'translateY(0.75rem)' : 'translateY(0.5rem)' }}>
+              <button
+                onClick={onHeaderToggle}
+                className="p-1 text-zinc-500 hover:text-zinc-300 transition-colors bg-zinc-900/80 rounded"
+                title={headerVisible ? 'Collapse Header' : 'Show Header'}
+              >
+                {headerVisible ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+            </div>
+          )}
           
           <main className="flex-1 min-h-0 min-w-0 overflow-auto p-0 relative">
             {children}

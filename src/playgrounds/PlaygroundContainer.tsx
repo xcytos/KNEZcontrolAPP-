@@ -78,17 +78,17 @@ function makeTerminalTab(num: number): TabInstance {
   };
 }
 
-function makeOpenCodeTab(): TabInstance {
+function makeOpenCodeTab(num: number): TabInstance {
   const OpenCodeWrapper: React.FC<{ sdk: PlaygroundSDK; headerVisible?: boolean }> = ({ sdk }) => (
     <OpenCodePlayground sdk={sdk} config={defaultOpenCodeConfig} isActive />
   );
   return {
-    id: 'opencode',
+    id: `opencode-${num}-${Date.now()}`,
     type: PlaygroundType.OPENCODE,
-    label: 'OpenCode',
+    label: `OpenCode ${num}`,
     icon: Code,
     component: OpenCodeWrapper,
-    closable: false,
+    closable: true,
   };
 }
 
@@ -156,7 +156,11 @@ function loadTabs(mode: PlaygroundMode): TabInstance[] {
           if (mode === 'sandbox' && (t.type === PlaygroundType.OPENCODE || t.type === PlaygroundType.AGENT)) {
             return null;
           }
-          if (t.type === PlaygroundType.OPENCODE) return makeOpenCodeTab();
+          if (t.type === PlaygroundType.OPENCODE) {
+            const match = t.label.match(/\d+$/);
+            const num = match ? parseInt(match[0], 10) : 1;
+            return makeOpenCodeTab(num);
+          }
           if (t.type === PlaygroundType.AGENT_MANAGER) return makeAgentManagerTab();
           if (t.type === PlaygroundType.AGENT && t.agentId) {
             const agent = getAgentById(t.agentId);
@@ -192,6 +196,10 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk, m
     if (!hasManager) {
       loaded.splice(1, 0, makeAgentManagerTab());
     }
+    const hasOpenCode = loaded.some(t => t.type === PlaygroundType.OPENCODE);
+    if (!hasOpenCode && mode !== 'sandbox') {
+      loaded.splice(2, 0, makeOpenCodeTab(1));
+    }
     if (mode === 'sandbox') {
       return loaded.filter(t => t.type === PlaygroundType.TERMINAL || t.type === PlaygroundType.AGENT_MANAGER);
     }
@@ -200,6 +208,10 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk, m
   const [nextTerminalNum, setNextTerminalNum] = useState(() => {
     const saved = localStorage.getItem('knez_next_terminal_num');
     return saved ? parseInt(saved, 10) : 2;
+  });
+  const [nextOpenCodeNum, setNextOpenCodeNum] = useState(() => {
+    const saved = localStorage.getItem('knez_next_opencode_num');
+    return saved ? parseInt(saved, 10) : 1;
   });
   const [refreshKeys, setRefreshKeys] = useState<Record<string, number>>({});
   const [showTerminalHeader, setShowTerminalHeader] = useState(true);
@@ -223,6 +235,21 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk, m
   useEffect(() => {
     localStorage.setItem('knez_next_terminal_num', String(nextTerminalNum));
   }, [nextTerminalNum]);
+
+  useEffect(() => {
+    const maxNum = tabs.reduce((max, t) => {
+      if (t.type === PlaygroundType.OPENCODE) {
+        const m = t.label.match(/\d+$/);
+        return m ? Math.max(max, parseInt(m[0], 10)) : max;
+      }
+      return max;
+    }, 0);
+    setNextOpenCodeNum(prev => Math.max(prev, maxNum + 1));
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('knez_next_opencode_num', String(nextOpenCodeNum));
+  }, [nextOpenCodeNum]);
 
   useEffect(() => {
     if (mode === 'sandbox' && !sandboxAutoInit.current && tabs.length > 0) {
@@ -289,6 +316,16 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk, m
     }));
   }, [nextTerminalNum]);
 
+  const addOpenCode = useCallback(() => {
+    const newTab = makeOpenCodeTab(nextOpenCodeNum);
+    setNextOpenCodeNum(n => n + 1);
+    setTabs(prev => [...prev, newTab]);
+    setViewState(prev => ({
+      ...prev,
+      panel: { ...prev.panel, activeTabId: newTab.id },
+    }));
+  }, [nextOpenCodeNum]);
+
   const launchAgent = useCallback((agent: AgentDefinition) => {
     if (mode === 'sandbox') return;
     const existingTab = tabs.find(t => t.agentId === agent.id && t.type === PlaygroundType.AGENT);
@@ -305,7 +342,7 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk, m
       ...prev,
       panel: { ...prev.panel, activeTabId: newTab.id },
     }));
-  }, [nextTerminalNum, tabs, mode]);
+  }, [tabs, mode]);
 
   const closeTab = useCallback((tabId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -401,6 +438,13 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk, m
             title="New Terminal"
           >
             <Plus className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={addOpenCode}
+            className="flex items-center gap-1 px-2 py-2 text-xs text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
+            title="New OpenCode"
+          >
+            <Code className="w-3.5 h-3.5" />
           </button>
         </div>
         <div className="flex items-center gap-1 px-2 flex-shrink-0">
