@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Monitor, Code, Plus, X, Maximize2, Minimize2, PanelBottom, PanelBottomClose, GripHorizontal } from 'lucide-react';
+import { Monitor, Code, Plus, X, Maximize2, Minimize2, PanelBottom, PanelBottomClose, GripHorizontal, Bot } from 'lucide-react';
 import { PlaygroundSDK } from '../services/playground/PlaygroundSDK';
 import { PlaygroundType, PlaygroundConfig, PanelPosition, ViewState } from '../domain/PlaygroundTypes';
+import { AgentDefinition } from '../domain/AgentTypes';
+import { getAgentById } from './AgentRegistry';
 import OpenCodePlayground from './OpenCodePlayground';
 import { TerminalPlayground } from './TerminalPlayground';
+import AgentPlayground from './AgentPlayground';
+import AgentManagerPanel from './AgentManagerPanel';
 
 const STORAGE_KEY = 'knez_playground_viewstate';
 const DEFAULT_PANEL_HEIGHT = 300;
@@ -20,6 +24,15 @@ interface TabInstance {
   icon: React.ComponentType<{ className?: string }>;
   component: React.ComponentType<{ sdk: PlaygroundSDK }>;
   closable: boolean;
+  agentId?: string;
+}
+
+interface TabSerialized {
+  id: string;
+  type: PlaygroundType;
+  label: string;
+  closable: boolean;
+  agentId?: string;
 }
 
 const defaultTerminalConfig: PlaygroundConfig = {
@@ -45,6 +58,8 @@ const defaultOpenCodeConfig: PlaygroundConfig = {
   session: { type: PlaygroundType.OPENCODE, autoSave: true, persistence: true, sharing: false, isolation: 'shared_workspace' as const },
   features: { multiSession: true, backgroundAgents: true, sessionSharing: true, darkMode: true, compactMode: false, advancedMode: true, debugMode: true, experimentalFeatures: true, betaFeatures: true, hardwareAcceleration: true, virtualization: true, caching: true },
 };
+
+let nextAgentNum = 1;
 
 function makeTerminalTab(num: number): TabInstance {
   const TerminalWrapper: React.FC<{ sdk: PlaygroundSDK }> = ({ sdk }) => (
@@ -74,6 +89,35 @@ function makeOpenCodeTab(): TabInstance {
   };
 }
 
+function makeAgentManagerTab(): TabInstance {
+  const AgentManagerWrapper: React.FC<{ sdk: PlaygroundSDK }> = () => null;
+  return {
+    id: 'agent-manager',
+    type: PlaygroundType.AGENT_MANAGER,
+    label: 'Agents',
+    icon: Bot,
+    component: AgentManagerWrapper,
+    closable: false,
+  };
+}
+
+function makeAgentTab(agent: AgentDefinition): TabInstance {
+  const agentLabel = `${agent.icon || ''} ${agent.name}`.trim();
+  const num = nextAgentNum++;
+  const AgentWrapper: React.FC<{ sdk: PlaygroundSDK }> = ({ sdk }) => (
+    <AgentPlayground sdk={sdk} agent={agent} isActive />
+  );
+  return {
+    id: `agent-${agent.id}-${num}-${Date.now()}`,
+    type: PlaygroundType.AGENT,
+    label: agentLabel,
+    icon: Bot,
+    component: AgentWrapper,
+    closable: true,
+    agentId: agent.id,
+  };
+}
+
 function loadViewState(): ViewState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -98,25 +142,49 @@ function saveViewState(state: ViewState) {
   } catch {}
 }
 
+function loadTabs(): TabInstance[] {
+  const saved = localStorage.getItem('knez_tabs');
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved) as TabSerialized[];
+      if (parsed.length > 0) {
+        return parsed.map(t => {
+          if (t.type === PlaygroundType.OPENCODE) return makeOpenCodeTab();
+          if (t.type === PlaygroundType.AGENT_MANAGER) return makeAgentManagerTab();
+          if (t.type === PlaygroundType.AGENT && t.agentId) {
+            const agent = getAgentById(t.agentId);
+            if (agent) return makeAgentTab(agent);
+          }
+          const TerminalWrapper: React.FC<{ sdk: PlaygroundSDK }> = ({ sdk }) => (
+            <TerminalPlayground sdk={sdk} config={defaultTerminalConfig} isActive />
+          );
+          return { ...t, icon: Monitor, component: TerminalWrapper };
+        });
+      }
+    } catch {}
+  }
+  return [makeTerminalTab(1)];
+}
+
+function serializeTabs(tabs: TabInstance[]): TabSerialized[] {
+  return tabs.map(t => ({
+    id: t.id,
+    type: t.type,
+    label: t.label,
+    closable: t.closable,
+    agentId: t.agentId,
+  }));
+}
+
 export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk }) => {
   const [viewState, setViewState] = useState<ViewState>(loadViewState);
   const [tabs, setTabs] = useState<TabInstance[]>(() => {
-    const saved = localStorage.getItem('knez_tabs');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved) as { id: string; type: PlaygroundType; label: string; closable: boolean }[];
-        if (parsed.length > 0) {
-          return parsed.map(t => {
-            if (t.type === PlaygroundType.OPENCODE) return makeOpenCodeTab();
-            const TerminalWrapper: React.FC<{ sdk: PlaygroundSDK }> = ({ sdk }) => (
-              <TerminalPlayground sdk={sdk} config={defaultTerminalConfig} isActive />
-            );
-            return { ...t, icon: Monitor, component: TerminalWrapper };
-          });
-        }
-      } catch {}
+    const loaded = loadTabs();
+    const hasManager = loaded.some(t => t.type === PlaygroundType.AGENT_MANAGER);
+    if (!hasManager) {
+      loaded.splice(1, 0, makeAgentManagerTab());
     }
-    return [makeTerminalTab(1)];
+    return loaded;
   });
   const [nextTerminalNum, setNextTerminalNum] = useState(() => {
     const saved = localStorage.getItem('knez_next_terminal_num');
@@ -134,8 +202,7 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
   }, [viewState]);
 
   useEffect(() => {
-    const minimal = tabs.map(t => ({ id: t.id, type: t.type, label: t.label, closable: t.closable }));
-    localStorage.setItem('knez_tabs', JSON.stringify(minimal));
+    localStorage.setItem('knez_tabs', JSON.stringify(serializeTabs(tabs)));
   }, [tabs]);
 
   useEffect(() => {
@@ -201,6 +268,15 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
     }));
   }, [nextTerminalNum]);
 
+  const launchAgent = useCallback((agent: AgentDefinition) => {
+    const newTab = makeAgentTab(agent);
+    setTabs(prev => [...prev, newTab]);
+    setViewState(prev => ({
+      ...prev,
+      panel: { ...prev.panel, isVisible: true, activeTabId: newTab.id },
+    }));
+  }, []);
+
   const closeTab = useCallback((tabId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setTabs(prev => {
@@ -248,7 +324,6 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
   const activeTab = tabs.find(t => t.id === viewState.panel.activeTabId);
   return (
     <div className="flex flex-col h-full bg-gray-900">
-      {/* Tab Bar */}
       <div className="flex items-center justify-between bg-gray-800 border-b border-gray-700 select-none flex-shrink-0">
         <div className="flex items-center overflow-x-auto">
           {tabs.map(tab => {
@@ -270,7 +345,7 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
                   <button
                     onClick={(e) => closeTab(tab.id, e)}
                     className="ml-1 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-700 transition-opacity"
-                    title="Close terminal"
+                    title="Close"
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -307,7 +382,6 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
         </div>
       </div>
 
-      {/* Panel Content - Resizable */}
       {viewState.panel.isVisible ? (
         <div
           ref={panelRef}
@@ -339,7 +413,11 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
                   ref={isActive ? contentRef : undefined}
                   onScroll={isActive ? saveCurrentScroll : undefined}
                 >
-                  <TabComponent sdk={sdk} />
+                  {tab.type === PlaygroundType.AGENT_MANAGER ? (
+                    <AgentManagerPanel sdk={sdk} onLaunch={launchAgent} />
+                  ) : (
+                    <TabComponent sdk={sdk} />
+                  )}
                 </div>
               );
             })}
@@ -355,7 +433,6 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
         </div>
       )}
 
-      {/* Status Bar */}
       <div className="flex items-center justify-between px-3 py-1 bg-gray-800 border-t border-gray-700 text-xs text-gray-400 flex-shrink-0">
         <div className="flex items-center gap-3">
           <button

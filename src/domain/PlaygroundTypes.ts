@@ -1,6 +1,8 @@
 export enum PlaygroundType {
   TERMINAL = 'terminal',
   OPENCODE = 'opencode',
+  AGENT = 'agent',
+  AGENT_MANAGER = 'agent_manager',
   DASHBOARD = 'dashboard',
   REPOSITORY = 'repository',
   SESSION = 'session'

@@ -272,6 +272,60 @@ export class TerminalRuntimeManager {
     }
   }
 
+  async createAgentTerminal(sessionId: string, config: PTYConfig & { agentLaunchCommand: string[] }): Promise<TerminalSession> {
+    console.log(`[TerminalRuntimeManager] Creating agent terminal session: ${sessionId}`);
+
+    const ptyService = getPTYService();
+    const [shell, ...args] = config.agentLaunchCommand;
+    let pty: PTYHandle | null = null;
+    let lastError = null;
+
+    try {
+      const env = {
+        TERM: 'xterm-256color',
+        COLORTERM: 'truecolor',
+        ...(config.env || {})
+      };
+
+      pty = await ptyService.createPTY({
+        ...config,
+        env,
+        command: shell,
+        args,
+        shell: undefined,
+      });
+      console.log(`[TerminalRuntimeManager] Successfully spawned agent with PID: ${pty.processId}`);
+    } catch (error) {
+      lastError = error;
+      console.warn(`[TerminalRuntimeManager] Failed to spawn agent:`, error);
+    }
+
+    if (!pty) {
+      const errorMsg = `Failed to spawn agent. Last error: ${lastError}`;
+      console.error('[TerminalRuntimeManager]', errorMsg);
+      throw new Error(errorMsg);
+    }
+
+    const session: TerminalSession = {
+      id: sessionId,
+      ptyId: pty.id,
+      pid: pty.processId,
+      shell: config.agentLaunchCommand[0] || 'agent',
+      cwd: config.cwd || 'C:\\Users\\',
+      isActive: true,
+      createdAt: new Date(),
+      lastActivity: new Date()
+    };
+
+    this.sessions.set(sessionId, session);
+    this.ptyHandles.set(pty.id, pty);
+
+    this.emit('terminalCreated', { sessionId, session });
+
+    console.log(`[TerminalRuntimeManager] Agent session created: ${sessionId} (PID: ${pty.processId})`);
+    return session;
+  }
+
   // Cleanup
   async shutdown(): Promise<void> {
     console.log('[TerminalRuntimeManager] Shutting down all terminals');

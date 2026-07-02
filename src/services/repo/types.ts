@@ -34,6 +34,12 @@ export interface SessionFileMap {
   [filePath: string]: FileSessionInfo;
 }
 
+export interface FsEntry {
+  path: string;
+  is_dir: boolean;
+  size: number;
+}
+
 export interface ScanResult {
   repoType: 'git' | 'filesystem' | 'none';
   entries: GitTreeEntry[];
