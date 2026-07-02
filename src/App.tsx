@@ -21,7 +21,7 @@ import { ExtractionDashboard } from './features/extraction/ExtractionDashboard';
 import { TestPanel } from './features/diagnostics/TestPanel';
 import { SkillsView } from './features/skills/SkillsView';
 import { DataExplorer } from './features/data/DataExplorer';
-import { Dashboard } from './features/dashboard/Dashboard';
+import { FullViewer } from './features/fullviewer/FullViewer';
 import { RepoVisualizer } from './features/repo/RepoVisualizer';
 import { ModelsPage } from './features/models/ModelsPage';
 import { taqwinDataService } from './services/data/TaqwinDataService';
@@ -35,6 +35,7 @@ import { useSystemOrchestrator } from './features/system/useSystemOrchestrator';
 import { ToastProvider } from './components/ui/Toast';
 import { StatusProvider } from './contexts/StatusProvider';
 import { useStatus } from './contexts/useStatus';
+import { ModelProvider } from './contexts/ModelContext';
 import { setObserverState } from './utils/observer';
 import { tabErrorStore } from './services/infrastructure/error/TabErrorStore';
 import './App.css';
@@ -279,7 +280,16 @@ function AppContent() {
       case 'data':
         return <DataExplorer />;
       case 'dashboard':
-        return <Dashboard />;
+        return (
+          <FullViewer
+            connectionStatus={{
+              online,
+              isConnected,
+              isModelReady,
+              isDegraded,
+            }}
+          />
+        );
       case 'repository':
         return (
           <RepositoryView
@@ -504,7 +514,9 @@ function App() {
       <StatusProvider>
         <ToastProvider>
           <ErrorBoundary>
-             <AppContent />
+             <ModelProvider>
+               <AppContent />
+             </ModelProvider>
           </ErrorBoundary>
         </ToastProvider>
       </StatusProvider>

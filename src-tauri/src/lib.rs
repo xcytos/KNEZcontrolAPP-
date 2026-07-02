@@ -8,6 +8,7 @@ mod mcp_host;
 mod pty;
 mod database;
 mod data_commands;
+mod repo_commands;
 
 use data_commands::DatabaseState;
 
@@ -533,7 +534,12 @@ pub fn run() {
             data_commands::list_sqlite_checkpoints,
             data_commands::sqlite_get_session_hierarchy,
             data_commands::get_git_stats,
-            data_commands::git_push
+            data_commands::git_push,
+            repo_commands::fs_walk,
+            repo_commands::git_is_repo,
+            repo_commands::git_ls_tree,
+            repo_commands::git_status,
+            repo_commands::git_file_log
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

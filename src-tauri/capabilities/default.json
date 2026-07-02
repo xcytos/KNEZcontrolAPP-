@@ -6,6 +6,7 @@
     "core:default",
     "fs:default",
     "fs:allow-applocaldata-write",
+    "fs:allow-read",
     "http:default",
     "dialog:default",
     "dialog:allow-open",
@@ -129,6 +130,11 @@
           "name": "exec",
           "cmd": "taskkill",
           "args": true
+        },
+        {
+          "name": "git",
+          "cmd": "git",
+          "args": true
         }
       ]
     },
@@ -248,6 +254,11 @@
         {
           "name": "exec",
           "cmd": "taskkill",
+          "args": true
+        },
+        {
+          "name": "git",
+          "cmd": "git",
           "args": true
         }
       ]
