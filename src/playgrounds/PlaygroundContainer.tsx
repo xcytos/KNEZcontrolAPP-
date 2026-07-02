@@ -1,463 +1,306 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Monitor, Code, Settings, Plus, X } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Monitor, Code, Maximize2, Minimize2, PanelBottom, PanelBottomClose, GripHorizontal } from 'lucide-react';
 import { PlaygroundSDK } from '../services/playground/PlaygroundSDK';
-import { PlaygroundType, PlaygroundConfig } from '../domain/PlaygroundTypes';
+import { PlaygroundType, PlaygroundConfig, PanelPosition, ViewState } from '../domain/PlaygroundTypes';
 import OpenCodePlayground from './OpenCodePlayground';
 import { TerminalPlayground } from './TerminalPlayground';
-// Using native notifications for now - can be replaced with toast library later
 
-interface PlaygroundInstance {
-  id: string;
-  type: PlaygroundType;
-  name: string;
-  component: React.ComponentType<{ sdk: PlaygroundSDK; config: any; isActive?: boolean }>;
-  config: PlaygroundConfig;
-  status: 'loading' | 'active' | 'inactive' | 'error';
-  lastActivity: Date;
-}
+const STORAGE_KEY = 'knez_playground_viewstate';
+const DEFAULT_PANEL_HEIGHT = 300;
+const MIN_PANEL_HEIGHT = 100;
 
 interface PlaygroundContainerProps {
   sdk: PlaygroundSDK;
 }
 
-const PLAYGROUND_CONFIGS: Record<PlaygroundType, PlaygroundConfig> = {
-  [PlaygroundType.TERMINAL]: {
-    name: 'Terminal Playground',
-    description: 'Real PTY terminal with shell integration',
-    version: '1.0.0',
-    author: 'KNEZ Team',
-    capabilities: {
-      supportsMultiSession: true,
-      supportsBackgroundAgents: false,
-      supportsFileAccess: true,
-      supportsTerminalAccess: true,
-      supportsNetworkAccess: false,
-      supportsMCPTools: false
-    },
-    resourceRequirements: {
-      minMemory: 256,
-      maxMemory: 512,
-      minCpuCores: 1,
-      requiredPermissions: ['terminal', 'filesystem'],
-      optionalPermissions: ['network']
-    },
-    ui: {
-      theme: 'dark',
-      layout: 'terminal-focused',
-      compactMode: false,
-      advancedMode: false
-    },
-    session: {
-      type: PlaygroundType.TERMINAL,
-      autoSave: false,
-      persistence: false,
-      sharing: false,
-      isolation: 'session'
-    },
-    features: {
-      multiSession: true,
-      backgroundAgents: false,
-      sessionSharing: false,
-      darkMode: true,
-      compactMode: false,
-      advancedMode: false,
-      debugMode: true,
-      experimentalFeatures: false,
-      betaFeatures: false,
-      hardwareAcceleration: false,
-      virtualization: false,
-      caching: false
-    }
-  },
-  [PlaygroundType.OPENCODE]: {
-    name: 'OpenCode Playground',
-    description: 'Terminal-native AI coding agent',
-    version: '1.0.0',
-    author: 'KNEZ Team',
-    capabilities: {
-      supportsMultiSession: true,
-      supportsBackgroundAgents: true,
-      supportsFileAccess: true,
-      supportsTerminalAccess: true,
-      supportsNetworkAccess: true,
-      supportsMCPTools: true
-    },
-    resourceRequirements: {
-      minMemory: 512,
-      maxMemory: 2048,
-      minCpuCores: 2,
-      requiredPermissions: ['network', 'filesystem', 'terminal'],
-      optionalPermissions: ['camera', 'microphone', 'system']
-    },
-    ui: {
-      theme: 'dark',
-      layout: 'terminal-focused',
-      compactMode: false,
-      advancedMode: true
-    },
-    session: {
-      type: PlaygroundType.OPENCODE,
-      autoSave: true,
-      persistence: true,
-      sharing: false,
-      isolation: 'shared_workspace' as 'shared_workspace' | 'session' | 'shared_context' | 'full'
-    },
-    features: {
-      multiSession: true,
-      backgroundAgents: true,
-      sessionSharing: true,
-      darkMode: true,
-      compactMode: false,
-      advancedMode: true,
-      debugMode: true,
-      experimentalFeatures: true,
-      betaFeatures: true,
-      hardwareAcceleration: true,
-      virtualization: true,
-      caching: true
-    }
-  }
+interface TabConfig {
+  id: PlaygroundType;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  component: React.ComponentType<{ sdk: PlaygroundSDK }>;
+}
+
+const defaultTerminalConfig: PlaygroundConfig = {
+  name: 'Terminal Playground',
+  description: 'Real PTY terminal with shell integration',
+  version: '1.0.0',
+  author: 'KNEZ Team',
+  capabilities: { supportsMultiSession: true, supportsBackgroundAgents: false, supportsFileAccess: true, supportsTerminalAccess: true, supportsNetworkAccess: false, supportsMCPTools: false },
+  resourceRequirements: { minMemory: 256, maxMemory: 512, minCpuCores: 1, requiredPermissions: ['terminal', 'filesystem'], optionalPermissions: ['network'] },
+  ui: { theme: 'dark', layout: 'terminal-focused', compactMode: false, advancedMode: false },
+  session: { type: PlaygroundType.TERMINAL, autoSave: false, persistence: false, sharing: false, isolation: 'session' },
+  features: { multiSession: true, backgroundAgents: false, sessionSharing: false, darkMode: true, compactMode: false, advancedMode: false, debugMode: true, experimentalFeatures: false, betaFeatures: false, hardwareAcceleration: false, virtualization: false, caching: false },
 };
 
-const PLAYGROUND_COMPONENTS: any = {
-  [PlaygroundType.TERMINAL]: TerminalPlayground,
-  [PlaygroundType.OPENCODE]: OpenCodePlayground,
+const defaultOpenCodeConfig: PlaygroundConfig = {
+  name: 'OpenCode Playground',
+  description: 'Terminal-native AI coding agent',
+  version: '1.0.0',
+  author: 'KNEZ Team',
+  capabilities: { supportsMultiSession: true, supportsBackgroundAgents: true, supportsFileAccess: true, supportsTerminalAccess: true, supportsNetworkAccess: true, supportsMCPTools: true },
+  resourceRequirements: { minMemory: 512, maxMemory: 2048, minCpuCores: 2, requiredPermissions: ['network', 'filesystem', 'terminal'], optionalPermissions: ['camera', 'microphone', 'system'] },
+  ui: { theme: 'dark', layout: 'terminal-focused', compactMode: false, advancedMode: true },
+  session: { type: PlaygroundType.OPENCODE, autoSave: true, persistence: true, sharing: false, isolation: 'shared_workspace' as const },
+  features: { multiSession: true, backgroundAgents: true, sessionSharing: true, darkMode: true, compactMode: false, advancedMode: true, debugMode: true, experimentalFeatures: true, betaFeatures: true, hardwareAcceleration: true, virtualization: true, caching: true },
 };
 
-const PLAYGROUND_ICONS: any = {
-  [PlaygroundType.TERMINAL]: Monitor,
-  [PlaygroundType.OPENCODE]: Code,
-};
+// Wrappers that supply default config for components that need it
+const TerminalPlaygroundWrapper: React.FC<{ sdk: PlaygroundSDK }> = ({ sdk }) => (
+  <TerminalPlayground sdk={sdk} config={defaultTerminalConfig} isActive />
+);
+
+const OpenCodePlaygroundWrapper: React.FC<{ sdk: PlaygroundSDK }> = ({ sdk }) => (
+  <OpenCodePlayground sdk={sdk} config={defaultOpenCodeConfig} isActive />
+);
+
+const TABS: TabConfig[] = [
+  { id: PlaygroundType.TERMINAL, label: 'Terminal', icon: Monitor, component: TerminalPlaygroundWrapper },
+  { id: PlaygroundType.OPENCODE, label: 'OpenCode', icon: Code, component: OpenCodePlaygroundWrapper },
+];
+
+function loadViewState(): ViewState {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return {
+    panel: {
+      position: PanelPosition.BOTTOM,
+      isVisible: false,
+      height: DEFAULT_PANEL_HEIGHT,
+      activeTabId: null,
+      lastScrollPositions: {},
+    },
+    expandedPlayground: null,
+    savedSessions: [],
+  };
+}
+
+function saveViewState(state: ViewState) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {}
+}
 
 export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk }) => {
-  const [playgrounds, setPlaygrounds] = useState<PlaygroundInstance[]>(() => {
-    try {
-      const saved = localStorage.getItem('knez_opened_playgrounds');
-      if (saved) {
-        const types = JSON.parse(saved) as PlaygroundType[];
-        return types.map(type => ({
-          id: `${type}-${crypto.randomUUID()}`,
-          type,
-          name: PLAYGROUND_CONFIGS[type].name,
-          component: PLAYGROUND_COMPONENTS[type],
-          config: PLAYGROUND_CONFIGS[type],
-          status: 'active',
-          lastActivity: new Date()
-        }));
+  const [viewState, setViewState] = useState<ViewState>(loadViewState);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const isDragging = useRef(false);
+  const startY = useRef(0);
+  const startHeight = useRef(0);
+  const scrollPositions = useRef<Record<string, number>>(viewState.panel.lastScrollPositions);
+
+  useEffect(() => {
+    saveViewState(viewState);
+  }, [viewState]);
+
+  // Restore scroll when active tab changes
+  useEffect(() => {
+    if (viewState.panel.activeTabId) {
+      restoreScroll(viewState.panel.activeTabId);
+    }
+  }, [viewState.panel.activeTabId]);
+
+  // Sync scroll positions into viewState so they survive unmount
+  const syncScrollPositions = useCallback(() => {
+    setViewState(prev => ({
+      ...prev,
+      panel: { ...prev.panel, lastScrollPositions: { ...scrollPositions.current } },
+    }));
+  }, []);
+
+  // Sync on unmount
+  useEffect(() => {
+    return () => { syncScrollPositions(); };
+  }, [syncScrollPositions]);
+
+  // Save scroll position when switching tabs
+  const saveCurrentScroll = useCallback(() => {
+    if (contentRef.current) {
+      const activeId = viewState.panel.activeTabId;
+      if (activeId) {
+        scrollPositions.current[activeId] = contentRef.current.scrollTop;
+        syncScrollPositions();
       }
-    } catch (e) {
-      console.error('Failed to parse saved playgrounds', e);
     }
-    return [];
-  });
-  
-  const [activePlayground, setActivePlayground] = useState<string | null>(() => {
-    return localStorage.getItem('knez_active_playground') || null;
-  });
-  const [showSettings, setShowSettings] = useState(false);
+  }, [viewState.panel.activeTabId, syncScrollPositions]);
 
-  // Sync state to localStorage
-  useEffect(() => {
-    const types = playgrounds.map(p => p.type);
-    localStorage.setItem('knez_opened_playgrounds', JSON.stringify(types));
-  }, [playgrounds]);
+  // Restore scroll position when switching to a tab
+  const restoreScroll = useCallback((tabId: string) => {
+    requestAnimationFrame(() => {
+      if (contentRef.current) {
+        const pos = scrollPositions.current[tabId] ?? 0;
+        contentRef.current.scrollTop = pos;
+      }
+    });
+  }, []);
 
-  useEffect(() => {
-    if (activePlayground) {
-      localStorage.setItem('knez_active_playground', activePlayground);
-    } else {
-      localStorage.removeItem('knez_active_playground');
-    }
-  }, [activePlayground]);
+  const togglePanel = useCallback(() => {
+    setViewState(prev => {
+      const next = { ...prev, panel: { ...prev.panel, isVisible: !prev.panel.isVisible } };
+      return next;
+    });
+  }, []);
 
-  // Load a playground
-  const loadPlayground = useCallback(async (type: PlaygroundType) => {
-    // Check if already loaded
-    const existing = playgrounds.find(p => p.type === type);
-    if (existing) {
-      setActivePlayground(existing.id);
-      return;
-    }
+  const selectTab = useCallback((tabId: PlaygroundType) => {
+    setViewState(prev => {
+      if (prev.panel.activeTabId === tabId && prev.panel.isVisible) {
+        // Toggle off if clicking the same tab
+        return { ...prev, panel: { ...prev.panel, isVisible: false, activeTabId: null } };
+      }
+      // Show panel and switch tab
+      return { ...prev, panel: { ...prev.panel, isVisible: true, activeTabId: tabId } };
+    });
+  }, []);
 
-    const config = PLAYGROUND_CONFIGS[type];
-    const Component = PLAYGROUND_COMPONENTS[type];
+  // Resize handling
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    startY.current = e.clientY;
+    startHeight.current = viewState.panel.height ?? DEFAULT_PANEL_HEIGHT;
 
-    const newPlayground: PlaygroundInstance = {
-      id: `${type}-${crypto.randomUUID()}`,
-      type,
-      name: config.name,
-      component: Component,
-      config,
-      status: 'loading',
-      lastActivity: new Date()
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return;
+      const delta = startY.current - e.clientY;
+      const newHeight = Math.max(MIN_PANEL_HEIGHT, startHeight.current + delta);
+      setViewState(prev => ({ ...prev, panel: { ...prev.panel, height: newHeight } }));
     };
 
-    setPlaygrounds(prev => [...prev, newPlayground]);
-    setActivePlayground(newPlayground.id);
-
-    try {
-      // Initialize playground
-      // Component will handle its own initialization through SDK
-      setPlaygrounds(prev => prev.map(p => 
-        p.id === newPlayground.id 
-          ? { ...p, status: 'active' as const }
-          : p
-      ));
-
-      console.log(`Loaded ${config.name}`);
-    } catch (error) {
-      console.error(`Failed to load ${config.name}:`, error);
-      setPlaygrounds(prev => prev.map(p => 
-        p.id === newPlayground.id 
-          ? { ...p, status: 'error' as const }
-          : p
-      ));
-      console.error(`Failed to load ${config.name}`);
-    }
-  }, [playgrounds]);
-
-  // Unload a playground
-  const unloadPlayground = useCallback((playgroundId: string) => {
-    const playground = playgrounds.find(p => p.id === playgroundId);
-    if (!playground) return;
-
-    setPlaygrounds(prev => prev.filter(p => p.id !== playgroundId));
-    if (activePlayground === playgroundId) {
-      setActivePlayground(playgrounds.length > 1 ? playgrounds[0].id : null);
-    }
-
-    console.log(`Unloaded ${playground.name}`);
-  }, [activePlayground, playgrounds]);
-
-  // Initialize with Terminal playground
-  useEffect(() => {
-    const initializePlaygrounds = async () => {
-      // Prevent double initialization if already loading or loaded
-      if (playgrounds.length > 0) return;
-      
-      try {
-        // Start with Terminal playground as default
-        await loadPlayground(PlaygroundType.TERMINAL);
-        console.log('Playground container initialized');
-      } catch (error) {
-        console.error('Failed to initialize playground container:', error);
-      }
+    const handleMouseUp = () => {
+      isDragging.current = false;
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
     };
 
-    void initializePlaygrounds();
-  }, [sdk, loadPlayground, playgrounds.length]);
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [viewState.panel.height]);
 
-  // Get active playground component
-  const activePlaygroundInstance = playgrounds.find(p => p.id === activePlayground);
-
+  const activeTab = TABS.find(t => t.id === viewState.panel.activeTabId);
   return (
     <div className="flex flex-col h-full bg-gray-900">
-      {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-gray-700">
-        <div className="flex items-center space-x-4">
-          <h1 className="text-xl font-semibold text-white">Playground Runtime</h1>
-          
-          {/* Playground Tabs */}
-          <div className="flex space-x-1">
-            {playgrounds.map(p => ({
-    ...p,
-    Icon: PLAYGROUND_ICONS[p.type] || Settings,
-  })).map((playground) => {
-              const IconComponent = playground.Icon;
+      {/* Tab Bar */}
+      <div className="flex items-center justify-between bg-gray-800 border-b border-gray-700 select-none flex-shrink-0">
+        <div className="flex items-center overflow-x-auto">
+          {TABS.map(tab => {
+            const Icon = tab.icon;
+            const isActive = viewState.panel.activeTabId === tab.id && viewState.panel.isVisible;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => selectTab(tab.id)}
+                className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-r border-gray-700 transition-colors whitespace-nowrap ${
+                  isActive
+                    ? 'bg-gray-900 text-white shadow-inner'
+                    : 'bg-gray-800 text-gray-400 hover:text-gray-200 hover:bg-gray-750'
+                }`}
+                title={tab.label}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-1 px-2">
+          <button
+            onClick={togglePanel}
+            className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+            title={viewState.panel.isVisible ? 'Close Panel' : 'Open Panel'}
+          >
+            {viewState.panel.isVisible ? <PanelBottomClose className="w-3.5 h-3.5" /> : <PanelBottom className="w-3.5 h-3.5" />}
+          </button>
+          <button
+            onClick={() => setViewState(prev => ({
+              ...prev,
+              expandedPlayground: prev.expandedPlayground ? null : prev.panel.activeTabId,
+            }))}
+            className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+            title={viewState.expandedPlayground ? 'Minimize' : 'Maximize'}
+          >
+            {viewState.expandedPlayground ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+          </button>
+        </div>
+      </div>
+
+      {/* Panel Content - Resizable */}
+      {viewState.panel.isVisible ? (
+        <div
+          ref={panelRef}
+          className="flex flex-col overflow-hidden relative"
+          style={{ height: viewState.expandedPlayground ? '100%' : (viewState.panel.height ?? DEFAULT_PANEL_HEIGHT) }}
+        >
+          {/* Drag Handle */}
+          {!viewState.expandedPlayground && (
+            <div
+              onMouseDown={handleMouseDown}
+              className="flex-shrink-0 h-2 bg-gray-800 hover:bg-blue-600 cursor-row-resize flex items-center justify-center group transition-colors"
+            >
+              <GripHorizontal className="w-4 h-4 text-gray-600 group-hover:text-white transition-colors" />
+            </div>
+          )}
+
+          {/* All tabs rendered but only active one visible - preserves scroll/state per tab */}
+          <div className="flex-1 relative bg-gray-900">
+            {TABS.map(tab => {
+              const TabComponent = tab.component;
+              const isActive = viewState.panel.activeTabId === tab.id;
               return (
                 <div
-                  key={playground.id}
-                  className={`flex items-center space-x-2 px-3 py-2 rounded cursor-pointer transition-colors ${
-                    activePlayground === playground.id
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                  }`}
-                  onClick={() => setActivePlayground(playground.id)}
+                  key={tab.id}
+                  className="absolute inset-0 overflow-auto"
+                  style={{
+                    visibility: isActive ? 'visible' : 'hidden',
+                    pointerEvents: isActive ? 'auto' : 'none',
+                    zIndex: isActive ? 1 : 0,
+                  }}
+                  ref={isActive ? contentRef : undefined}
+                  onScroll={isActive ? saveCurrentScroll : undefined}
                 >
-                  <IconComponent className="w-4 h-4" />
-                  <span className="text-sm font-medium">{playground.name}</span>
-                  
-                  {/* Status indicator */}
-                  <div className={`w-2 h-2 rounded-full ${
-                    playground.status === 'active' ? 'bg-green-400' :
-                    playground.status === 'loading' ? 'bg-yellow-400 animate-pulse' :
-                    playground.status === 'error' ? 'bg-red-400' : 'bg-gray-400'
-                  }`} />
-                  
-                  {/* Close button */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      unloadPlayground(playground.id);
-                    }}
-                    className="ml-1 p-1 hover:bg-white/10 rounded"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
+                  <TabComponent sdk={sdk} />
                 </div>
               );
             })}
           </div>
         </div>
-
-        <div className="flex items-center space-x-2">
-          {/* Add Playground Button */}
-          <div className="relative">
-            <button
-              onClick={() => setShowSettings(!showSettings)}
-              className="flex items-center space-x-1 px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-sm"
-            >
-              <Plus className="w-4 h-4" />
-              Add Playground
-            </button>
-            
-            {/* Playground Selection Dropdown */}
-            {showSettings && (
-              <div className="absolute right-0 top-full mt-2 w-64 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
-                <div className="p-2">
-                  <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                    Available Playgrounds
-                  </div>
-                  
-                  {Object.values(PlaygroundType).map((type) => {
-                    const config = PLAYGROUND_CONFIGS[type];
-                    const Icon = PLAYGROUND_ICONS[type];
-                    const isLoaded = playgrounds.some(p => p.type === type);
-                    
-                    return (
-                      <button
-                        key={type}
-                        onClick={() => {
-                          loadPlayground(type);
-                          setShowSettings(false);
-                        }}
-                        disabled={isLoaded}
-                        className={`w-full flex items-center space-x-3 p-2 rounded text-left transition-colors ${
-                          isLoaded
-                            ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                            : 'hover:bg-gray-700 text-white'
-                        }`}
-                      >
-                        <Icon className="w-4 h-4 flex-shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium">{config.name}</div>
-                          <div className="text-xs text-gray-400 truncate">{config.description}</div>
-                        </div>
-                        {isLoaded && (
-                          <div className="text-xs text-green-400">Loaded</div>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+      ) : (
+        /* Collapsed state - no panel visible */
+        <div className="flex-1 flex items-center justify-center bg-gray-900">
+          <div className="text-center text-gray-500">
+            <PanelBottom className="w-10 h-10 mx-auto mb-3 opacity-40" />
+            <p className="text-sm font-medium">Panel Hidden</p>
+            <p className="text-xs mt-1 text-gray-600">Click a tab above or the toggle button to show</p>
           </div>
-
-          {/* Settings Button */}
-          <button
-            className="p-2 hover:bg-gray-800 rounded"
-            onClick={() => {
-              sdk.showDialog({
-                title: 'Playground Settings',
-                message: 'Configure playground runtime settings',
-                type: 'info',
-                buttons: [
-                  { label: 'Close', value: 'close', style: 'primary' }
-                ]
-              });
-            }}
-          >
-            <Settings className="w-4 h-4" />
-          </button>
         </div>
-      </div>
-
-      {/* Active Playground Content */}
-      <div className="flex-1 overflow-hidden relative">
-        {playgrounds.length > 0 ? (
-          playgrounds.map(playground => {
-            const Component = playground.component;
-            return (
-              <div 
-                key={playground.id}
-                style={{
-                  visibility: activePlayground === playground.id ? 'visible' : 'hidden',
-                  pointerEvents: activePlayground === playground.id ? 'auto' : 'none',
-                  height: '100%',
-                  width: '100%',
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  zIndex: activePlayground === playground.id ? 10 : 0
-                }}
-              >
-                <Component 
-                  sdk={sdk} 
-                  config={playground.config} 
-                  isActive={activePlayground === playground.id}
-                />
-              </div>
-            );
-          })
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full text-gray-400">
-            <div className="text-center mb-8">
-              <div className="w-16 h-16 mx-auto mb-4 bg-gray-800 rounded-full flex items-center justify-center">
-                <Monitor className="w-8 h-8" />
-              </div>
-              <h2 className="text-xl font-semibold mb-2">No Playground Active</h2>
-              <p className="text-gray-500 mb-6">Select a playground to get started</p>
-              
-              <button
-                onClick={() => loadPlayground(PlaygroundType.TERMINAL)}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg"
-              >
-                Load Terminal Playground
-              </button>
-            </div>
-            
-            {/* Quick Start Options */}
-            <div className="grid grid-cols-2 gap-4 mt-8 max-w-2xl">
-              {Object.entries(PLAYGROUND_CONFIGS).slice(0, 4).map(([type, config]) => {
-                const Icon = PLAYGROUND_ICONS[type as PlaygroundType];
-                return (
-                  <button
-                    key={type}
-                    onClick={() => loadPlayground(type as PlaygroundType)}
-                    className="flex flex-col items-center p-4 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
-                  >
-                    <Icon className="w-8 h-8 mb-2 text-blue-400" />
-                    <div className="text-sm font-medium text-white">{config.name}</div>
-                    <div className="text-xs text-gray-400 mt-1">{config.description}</div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Status Bar */}
-      <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-t border-gray-700 text-sm">
-        <div className="flex items-center space-x-4">
-          <div className="flex items-center space-x-2">
-            <div className="w-2 h-2 bg-green-400 rounded-full" />
-            <span className="text-gray-400">
-              {playgrounds.filter(p => p.status === 'active').length} Active
-            </span>
-          </div>
-          
-          {activePlaygroundInstance && (
-            <div className="flex items-center space-x-2">
-              <span className="text-gray-400">Current:</span>
-              <span className="text-white font-medium">{activePlaygroundInstance.name}</span>
-            </div>
+      <div className="flex items-center justify-between px-3 py-1 bg-gray-800 border-t border-gray-700 text-xs text-gray-400 flex-shrink-0">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={togglePanel}
+            className="flex items-center gap-1.5 hover:text-white transition-colors"
+          >
+            {viewState.panel.isVisible ? (
+              <PanelBottomClose className="w-3 h-3" />
+            ) : (
+              <PanelBottom className="w-3 h-3" />
+            )}
+            <span>{viewState.panel.isVisible ? 'Hide Panel' : 'Show Panel'}</span>
+          </button>
+          {activeTab && viewState.panel.isVisible && (
+            <>
+              <span className="text-gray-600">|</span>
+              <span className="text-gray-300">{activeTab.label}</span>
+            </>
           )}
         </div>
-        
-        <div className="text-gray-400">
-          Runtime v1.0.0 • {playgrounds.length} Playgrounds Loaded
+        <div className="flex items-center gap-2">
+          {viewState.savedSessions.length > 0 && (
+            <span>{viewState.savedSessions.length} session{viewState.savedSessions.length !== 1 ? 's' : ''} saved</span>
+          )}
         </div>
       </div>
     </div>

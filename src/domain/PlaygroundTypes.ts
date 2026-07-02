@@ -1,6 +1,40 @@
 export enum PlaygroundType {
   TERMINAL = 'terminal',
-  OPENCODE = 'opencode'
+  OPENCODE = 'opencode',
+  DASHBOARD = 'dashboard',
+  REPOSITORY = 'repository',
+  SESSION = 'session'
+}
+
+export enum PanelPosition {
+  BOTTOM = 'bottom',
+  LEFT = 'left',
+  RIGHT = 'right',
+  NONE = 'none'
+}
+
+export interface PanelState {
+  position: PanelPosition;
+  isVisible: boolean;
+  height?: number;
+  width?: number;
+  activeTabId: string | null;
+  lastScrollPositions: Record<string, number>;
+}
+
+export interface ViewState {
+  panel: PanelState;
+  expandedPlayground: string | null;
+  savedSessions: SavedSession[];
+}
+
+export interface SavedSession {
+  id: string;
+  type: PlaygroundType;
+  name: string;
+  lastActivity: number;
+  scrollPosition: number;
+  isPinned: boolean;
 }
 
 export interface PlaygroundConfig {

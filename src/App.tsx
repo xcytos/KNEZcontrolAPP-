@@ -22,6 +22,8 @@ import { TestPanel } from './features/diagnostics/TestPanel';
 import { SkillsView } from './features/skills/SkillsView';
 import { DataExplorer } from './features/data/DataExplorer';
 import { Dashboard } from './features/dashboard/Dashboard';
+import { RepoVisualizer } from './features/repo/RepoVisualizer';
+import { taqwinDataService } from './services/data/TaqwinDataService';
 // TerminalSandbox is kept for reference; PlaygroundContainer is used via TerminalSandboxView
 // import TerminalSandbox from './playgrounds/TerminalSandbox';
 import { PlaygroundContainer } from './playgrounds/PlaygroundContainer';
@@ -275,6 +277,12 @@ function AppContent() {
         return <DataExplorer />;
       case 'dashboard':
         return <Dashboard />;
+      case 'repository':
+        return (
+          <RepositoryView
+            currentSessionId={sessionId ?? undefined}
+          />
+        );
       case 'terminal-sandbox':
         // PlaygroundContainer is the canonical entry for all terminal/playground
         // instances. TerminalSandbox remains for lightweight single-terminal use.
@@ -429,6 +437,45 @@ const McpLoader = () => {
  * canonical PlaygroundContainer, sharing the global playgroundSDK instance.
  * Falls back to the lightweight TerminalSandbox if PlaygroundContainer fails.
  */
+const RepositoryView = ({ currentSessionId }: { currentSessionId?: string }) => {
+  const [projects, setProjects] = useState<Array<{ project_id: string; project_name: string; project_path: string | null }>>([]);
+  const [sessions, setSessions] = useState<Array<{ session_id: string; display_id: string; name: string; project_id?: string }>>([]);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [all, allProjects] = await Promise.all([
+          taqwinDataService.listSessions(200),
+          taqwinDataService.listProjects(),
+        ]);
+        setSessions(all.map(s => ({
+          session_id: s.session_id || s.id,
+          display_id: s.display_id || s.session_id?.slice(0, 8) || '',
+          name: s.name || 'Unnamed',
+          project_id: s.project_id,
+        })));
+        setProjects(allProjects.map(p => ({
+          project_id: p.project_id,
+          project_name: p.project_name,
+          project_path: p.project_path || null,
+        })));
+      } catch (e) {
+        console.error('[RepositoryView] Failed to load data:', e);
+      }
+    };
+    load();
+  }, []);
+
+  return (
+    <RepoVisualizer
+      projects={projects}
+      dbPath={taqwinDataService.getDatabasePath()}
+      allSessions={sessions}
+      currentSessionId={currentSessionId}
+    />
+  );
+};
+
 const TerminalSandboxView = () => {
   return (
     <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
