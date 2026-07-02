@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Monitor, Code, Maximize2, Minimize2, PanelBottom, PanelBottomClose, GripHorizontal } from 'lucide-react';
+import { Monitor, Code, Plus, X, Maximize2, Minimize2, PanelBottom, PanelBottomClose, GripHorizontal } from 'lucide-react';
 import { PlaygroundSDK } from '../services/playground/PlaygroundSDK';
 import { PlaygroundType, PlaygroundConfig, PanelPosition, ViewState } from '../domain/PlaygroundTypes';
 import OpenCodePlayground from './OpenCodePlayground';
@@ -13,11 +13,13 @@ interface PlaygroundContainerProps {
   sdk: PlaygroundSDK;
 }
 
-interface TabConfig {
-  id: PlaygroundType;
+interface TabInstance {
+  id: string;
+  type: PlaygroundType;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   component: React.ComponentType<{ sdk: PlaygroundSDK }>;
+  closable: boolean;
 }
 
 const defaultTerminalConfig: PlaygroundConfig = {
@@ -44,19 +46,33 @@ const defaultOpenCodeConfig: PlaygroundConfig = {
   features: { multiSession: true, backgroundAgents: true, sessionSharing: true, darkMode: true, compactMode: false, advancedMode: true, debugMode: true, experimentalFeatures: true, betaFeatures: true, hardwareAcceleration: true, virtualization: true, caching: true },
 };
 
-// Wrappers that supply default config for components that need it
-const TerminalPlaygroundWrapper: React.FC<{ sdk: PlaygroundSDK }> = ({ sdk }) => (
-  <TerminalPlayground sdk={sdk} config={defaultTerminalConfig} isActive />
-);
+function makeTerminalTab(num: number): TabInstance {
+  const TerminalWrapper: React.FC<{ sdk: PlaygroundSDK }> = ({ sdk }) => (
+    <TerminalPlayground sdk={sdk} config={defaultTerminalConfig} isActive />
+  );
+  return {
+    id: `terminal-${num}-${Date.now()}`,
+    type: PlaygroundType.TERMINAL,
+    label: `Terminal ${num}`,
+    icon: Monitor,
+    component: TerminalWrapper,
+    closable: true,
+  };
+}
 
-const OpenCodePlaygroundWrapper: React.FC<{ sdk: PlaygroundSDK }> = ({ sdk }) => (
-  <OpenCodePlayground sdk={sdk} config={defaultOpenCodeConfig} isActive />
-);
-
-const TABS: TabConfig[] = [
-  { id: PlaygroundType.TERMINAL, label: 'Terminal', icon: Monitor, component: TerminalPlaygroundWrapper },
-  { id: PlaygroundType.OPENCODE, label: 'OpenCode', icon: Code, component: OpenCodePlaygroundWrapper },
-];
+function makeOpenCodeTab(): TabInstance {
+  const OpenCodeWrapper: React.FC<{ sdk: PlaygroundSDK }> = ({ sdk }) => (
+    <OpenCodePlayground sdk={sdk} config={defaultOpenCodeConfig} isActive />
+  );
+  return {
+    id: 'opencode',
+    type: PlaygroundType.OPENCODE,
+    label: 'OpenCode',
+    icon: Code,
+    component: OpenCodeWrapper,
+    closable: false,
+  };
+}
 
 function loadViewState(): ViewState {
   try {
@@ -84,6 +100,28 @@ function saveViewState(state: ViewState) {
 
 export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk }) => {
   const [viewState, setViewState] = useState<ViewState>(loadViewState);
+  const [tabs, setTabs] = useState<TabInstance[]>(() => {
+    const saved = localStorage.getItem('knez_tabs');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved) as { id: string; type: PlaygroundType; label: string; closable: boolean }[];
+        if (parsed.length > 0) {
+          return parsed.map(t => {
+            if (t.type === PlaygroundType.OPENCODE) return makeOpenCodeTab();
+            const TerminalWrapper: React.FC<{ sdk: PlaygroundSDK }> = ({ sdk }) => (
+              <TerminalPlayground sdk={sdk} config={defaultTerminalConfig} isActive />
+            );
+            return { ...t, icon: Monitor, component: TerminalWrapper };
+          });
+        }
+      } catch {}
+    }
+    return [makeTerminalTab(1)];
+  });
+  const [nextTerminalNum, setNextTerminalNum] = useState(() => {
+    const saved = localStorage.getItem('knez_next_terminal_num');
+    return saved ? parseInt(saved, 10) : 2;
+  });
   const panelRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
@@ -95,14 +133,21 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
     saveViewState(viewState);
   }, [viewState]);
 
-  // Restore scroll when active tab changes
+  useEffect(() => {
+    const minimal = tabs.map(t => ({ id: t.id, type: t.type, label: t.label, closable: t.closable }));
+    localStorage.setItem('knez_tabs', JSON.stringify(minimal));
+  }, [tabs]);
+
+  useEffect(() => {
+    localStorage.setItem('knez_next_terminal_num', String(nextTerminalNum));
+  }, [nextTerminalNum]);
+
   useEffect(() => {
     if (viewState.panel.activeTabId) {
       restoreScroll(viewState.panel.activeTabId);
     }
   }, [viewState.panel.activeTabId]);
 
-  // Sync scroll positions into viewState so they survive unmount
   const syncScrollPositions = useCallback(() => {
     setViewState(prev => ({
       ...prev,
@@ -110,12 +155,10 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
     }));
   }, []);
 
-  // Sync on unmount
   useEffect(() => {
     return () => { syncScrollPositions(); };
   }, [syncScrollPositions]);
 
-  // Save scroll position when switching tabs
   const saveCurrentScroll = useCallback(() => {
     if (contentRef.current) {
       const activeId = viewState.panel.activeTabId;
@@ -126,7 +169,6 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
     }
   }, [viewState.panel.activeTabId, syncScrollPositions]);
 
-  // Restore scroll position when switching to a tab
   const restoreScroll = useCallback((tabId: string) => {
     requestAnimationFrame(() => {
       if (contentRef.current) {
@@ -137,24 +179,49 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
   }, []);
 
   const togglePanel = useCallback(() => {
-    setViewState(prev => {
-      const next = { ...prev, panel: { ...prev.panel, isVisible: !prev.panel.isVisible } };
-      return next;
-    });
+    setViewState(prev => ({ ...prev, panel: { ...prev.panel, isVisible: !prev.panel.isVisible } }));
   }, []);
 
-  const selectTab = useCallback((tabId: PlaygroundType) => {
+  const selectTab = useCallback((tabId: string) => {
     setViewState(prev => {
       if (prev.panel.activeTabId === tabId && prev.panel.isVisible) {
-        // Toggle off if clicking the same tab
         return { ...prev, panel: { ...prev.panel, isVisible: false, activeTabId: null } };
       }
-      // Show panel and switch tab
       return { ...prev, panel: { ...prev.panel, isVisible: true, activeTabId: tabId } };
     });
   }, []);
 
-  // Resize handling
+  const addTerminal = useCallback(() => {
+    const newTab = makeTerminalTab(nextTerminalNum);
+    setNextTerminalNum(n => n + 1);
+    setTabs(prev => [...prev, newTab]);
+    setViewState(prev => ({
+      ...prev,
+      panel: { ...prev.panel, isVisible: true, activeTabId: newTab.id },
+    }));
+  }, [nextTerminalNum]);
+
+  const closeTab = useCallback((tabId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setTabs(prev => {
+      const filtered = prev.filter(t => t.id !== tabId);
+      if (filtered.length === 0) {
+        const fallback = makeTerminalTab(1);
+        setNextTerminalNum(n => Math.max(n, 2));
+        return [fallback];
+      }
+      return filtered;
+    });
+    setViewState(prev => {
+      if (prev.panel.activeTabId === tabId) {
+        const remaining = tabs.filter(t => t.id !== tabId);
+        const next = remaining.length > 0 ? remaining[remaining.length - 1].id : null;
+        return { ...prev, panel: { ...prev.panel, isVisible: next !== null, activeTabId: next } };
+      }
+      return prev;
+    });
+  }, [tabs]);
+
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     isDragging.current = true;
@@ -178,33 +245,48 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
     document.addEventListener('mouseup', handleMouseUp);
   }, [viewState.panel.height]);
 
-  const activeTab = TABS.find(t => t.id === viewState.panel.activeTabId);
+  const activeTab = tabs.find(t => t.id === viewState.panel.activeTabId);
   return (
     <div className="flex flex-col h-full bg-gray-900">
       {/* Tab Bar */}
       <div className="flex items-center justify-between bg-gray-800 border-b border-gray-700 select-none flex-shrink-0">
         <div className="flex items-center overflow-x-auto">
-          {TABS.map(tab => {
+          {tabs.map(tab => {
             const Icon = tab.icon;
             const isActive = viewState.panel.activeTabId === tab.id && viewState.panel.isVisible;
             return (
-              <button
+              <div
                 key={tab.id}
-                onClick={() => selectTab(tab.id)}
-                className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-r border-gray-700 transition-colors whitespace-nowrap ${
+                className={`group flex items-center gap-1 px-2.5 py-2 text-xs font-medium border-r border-gray-700 cursor-pointer transition-colors whitespace-nowrap ${
                   isActive
-                    ? 'bg-gray-900 text-white shadow-inner'
-                    : 'bg-gray-800 text-gray-400 hover:text-gray-200 hover:bg-gray-750'
+                    ? 'bg-gray-900 text-white'
+                    : 'bg-gray-800 text-gray-400 hover:text-gray-200 hover:bg-gray-700'
                 }`}
-                title={tab.label}
+                onClick={() => selectTab(tab.id)}
               >
-                <Icon className="w-3.5 h-3.5" />
+                <Icon className="w-3.5 h-3.5 flex-shrink-0" />
                 <span>{tab.label}</span>
-              </button>
+                {tab.closable && (
+                  <button
+                    onClick={(e) => closeTab(tab.id, e)}
+                    className="ml-1 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-700 transition-opacity"
+                    title="Close terminal"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
             );
           })}
+          <button
+            onClick={addTerminal}
+            className="flex items-center gap-1 px-2 py-2 text-xs text-gray-400 hover:text-white hover:bg-gray-700 transition-colors border-r border-gray-700"
+            title="New Terminal"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
         </div>
-        <div className="flex items-center gap-1 px-2">
+        <div className="flex items-center gap-1 px-2 flex-shrink-0">
           <button
             onClick={togglePanel}
             className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
@@ -232,7 +314,6 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
           className="flex flex-col overflow-hidden relative"
           style={{ height: viewState.expandedPlayground ? '100%' : (viewState.panel.height ?? DEFAULT_PANEL_HEIGHT) }}
         >
-          {/* Drag Handle */}
           {!viewState.expandedPlayground && (
             <div
               onMouseDown={handleMouseDown}
@@ -242,9 +323,8 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
             </div>
           )}
 
-          {/* All tabs rendered but only active one visible - preserves scroll/state per tab */}
           <div className="flex-1 relative bg-gray-900">
-            {TABS.map(tab => {
+            {tabs.map(tab => {
               const TabComponent = tab.component;
               const isActive = viewState.panel.activeTabId === tab.id;
               return (
@@ -266,7 +346,6 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
           </div>
         </div>
       ) : (
-        /* Collapsed state - no panel visible */
         <div className="flex-1 flex items-center justify-center bg-gray-900">
           <div className="text-center text-gray-500">
             <PanelBottom className="w-10 h-10 mx-auto mb-3 opacity-40" />

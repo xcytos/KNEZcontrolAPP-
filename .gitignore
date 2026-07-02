@@ -16,6 +16,26 @@ dist-ssr
 # Test artifacts
 test-results/
 playwright-report/
+tests/screenshots/
+tests/e2e/screenshots/
+
+# Debug tooling
+.debug-tools/
+
+# Backups
+taqwin_backup_purification/
+
+# Large binaries / disk images
+modes/
+*.exe
+*.dd
+*.iso
+*.img
+
+# Generated output files
+output.txt
+*-output.txt
+src-tauri/output.txt
 
 # Editor directories and files
 .vscode/*
