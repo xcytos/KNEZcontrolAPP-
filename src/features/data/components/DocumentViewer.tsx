@@ -77,13 +77,25 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
             )}
           </div>
         </div>
-        <button
-          onClick={onClose}
-          className="p-2 hover:bg-zinc-800 rounded-lg transition-colors flex-shrink-0"
-          title="Close"
-        >
-          <X className="w-5 h-5 text-zinc-400" />
-        </button>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button
+            onClick={() => {
+              const text = document.content || '';
+              navigator.clipboard.writeText(text);
+            }}
+            className="p-2 hover:bg-zinc-800 rounded-lg transition-colors"
+            title="Copy full content"
+          >
+            <Copy className="w-4 h-4 text-zinc-400" />
+          </button>
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-zinc-800 rounded-lg transition-colors"
+            title="Close"
+          >
+            <X className="w-5 h-5 text-zinc-400" />
+          </button>
+        </div>
       </div>
 
       {/* Metadata Toggle Button */}
