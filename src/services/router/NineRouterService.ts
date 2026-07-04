@@ -275,6 +275,101 @@ class NineRouterService {
   }
 
   /**
+   * Stream chat completions via 9Router (OpenAI-compatible)
+   */
+  async *chatCompletionsStream(
+    messages: Array<{ role: string; content: string }>,
+    _sessionId: string,
+    options?: { signal?: AbortSignal; onMeta?: (meta: { model?: string; totalTokens?: number }) => void; model?: string }
+  ): AsyncGenerator<string, void, void> {
+    const url = `${this.baseUrl}/chat/completions`;
+    const payload = {
+      messages,
+      stream: true,
+      model: options?.model,
+    };
+
+    const externalSignal = options?.signal;
+    if (externalSignal?.aborted) {
+      throw new DOMException("Request cancelled", "AbortError");
+    }
+
+    const controller = new AbortController();
+    if (externalSignal) {
+      externalSignal.addEventListener("abort", () => controller.abort(), { once: true });
+    }
+
+    const connectTimeoutId = window.setTimeout(() => controller.abort(), 12000);
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    window.clearTimeout(connectTimeoutId);
+
+    if (!resp.ok) {
+      throw new Error(`9Router completions failed: ${resp.status}`);
+    }
+    if (!resp.body) throw new Error("No response body");
+
+    const hdrModel =
+      resp.headers.get("x-model-id") ??
+      resp.headers.get("openai-model") ??
+      resp.headers.get("x-openai-model");
+    if (hdrModel && options?.onMeta) {
+      try { options.onMeta({ model: hdrModel }); } catch {}
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    let inactivityTimeoutId = window.setTimeout(() => controller.abort(), 25000);
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      window.clearTimeout(inactivityTimeoutId);
+      inactivityTimeoutId = window.setTimeout(() => controller.abort(), 25000);
+      buffer += decoder.decode(value, { stream: true });
+
+      while (true) {
+        const lineEnd = buffer.indexOf("\n");
+        if (lineEnd === -1) break;
+        const line = buffer.slice(0, lineEnd).trim();
+        buffer = buffer.slice(lineEnd + 1);
+
+        if (!line || line.startsWith(":")) continue;
+
+        if (line.startsWith("data: ")) {
+          const data = line.slice(6);
+          if (data === "[DONE]") break;
+
+          try {
+            const parsed = JSON.parse(data);
+            const delta = parsed.choices?.[0]?.delta;
+            const content = delta?.content;
+            if (content) {
+              yield content;
+            }
+            const usage = parsed.usage;
+            if (usage && options?.onMeta) {
+              try { options.onMeta({ totalTokens: usage.total_tokens }); } catch {}
+            }
+          } catch {
+            // skip parse errors
+          }
+        }
+      }
+    }
+
+    window.clearTimeout(inactivityTimeoutId);
+  }
+
+  /**
    * Get usage statistics
    */
   async getUsage(): Promise<RouterUsage> {

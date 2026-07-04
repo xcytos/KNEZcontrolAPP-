@@ -48,7 +48,19 @@ export const FullViewer: React.FC<{
       case 'dashboard': return <DashboardLens sessionContext={sessionContext} onSessionContextChange={handleSessionContextChange} />;
       case 'evolution': return <EvolutionLens sessionContext={sessionContext} />;
       case 'explorer': return <ExplorerLens />;
-      case 'graph': return <GraphLens />;
+      case 'graph': return (
+        <GraphLens
+          onClose={() => setActiveLens('dashboard')}
+          onNavigateToSession={(sessionId, projectId) => {
+            setSessionContext(prev => ({ ...prev, sessionId, projectId }));
+            setActiveLens('evolution');
+          }}
+          onNavigateToProject={(projectId) => {
+            setSessionContext(prev => ({ ...prev, projectId }));
+            setActiveLens('dashboard');
+          }}
+        />
+      );
       case 'repository': return <RepositoryLens sessionContext={sessionContext} />;
       case 'terminal': return <TerminalLens />;
       case 'chat': return <ChatLens sessionContext={sessionContext} />;

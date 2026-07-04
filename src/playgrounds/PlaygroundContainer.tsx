@@ -328,21 +328,13 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk, m
 
   const launchAgent = useCallback((agent: AgentDefinition) => {
     if (mode === 'sandbox') return;
-    const existingTab = tabs.find(t => t.agentId === agent.id && t.type === PlaygroundType.AGENT);
-    if (existingTab) {
-      setViewState(prev => ({
-        ...prev,
-        panel: { ...prev.panel, activeTabId: existingTab.id },
-      }));
-      return;
-    }
     const newTab = makeAgentTab(agent);
     setTabs(prev => [...prev, newTab]);
     setViewState(prev => ({
       ...prev,
       panel: { ...prev.panel, activeTabId: newTab.id },
     }));
-  }, [tabs, mode]);
+  }, [mode]);
 
   const closeTab = useCallback((tabId: string, e: React.MouseEvent) => {
     e.stopPropagation();

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Loader, X, Sparkles, Brain, AlertCircle } from 'lucide-react';
+import { Send, Loader, X, Sparkles, Brain, AlertCircle, Square } from 'lucide-react';
 import { knezClient } from '../../services/knez/KnezClient';
 
 interface Message {
@@ -25,9 +25,9 @@ export const TaqwinAgentPanel: React.FC<TaqwinAgentPanelProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    // Add welcome message
     setMessages([{
       id: 'welcome',
       role: 'assistant',
@@ -37,9 +37,15 @@ export const TaqwinAgentPanel: React.FC<TaqwinAgentPanelProps> = ({
   }, []);
 
   useEffect(() => {
-    // Auto-scroll to bottom on new messages
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  const handleStop = () => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+  };
 
   const handleSend = async () => {
     if (!input.trim()) return;
@@ -56,21 +62,18 @@ export const TaqwinAgentPanel: React.FC<TaqwinAgentPanelProps> = ({
     setIsLoading(true);
     setError(null);
     
-    // Create assistant message placeholder
     const assistantId = (Date.now() + 1).toString();
-    const assistantMessage: Message = {
+    setMessages(prev => [...prev, {
       id: assistantId,
       role: 'assistant',
       content: '',
       timestamp: new Date(),
-    };
-    setMessages(prev => [...prev, assistantMessage]);
+    }]);
+    
+    const controller = new AbortController();
+    abortRef.current = controller;
     
     try {
-      // Get KNEZ endpoint from profile
-      const profile = knezClient.getProfile();
-      
-      // Build system prompt with TAQWIN context
       const systemPrompt = `You are TAQWIN Agent, an AI assistant specializing in TAQWIN memory system analysis.
 
 CAPABILITIES:
@@ -88,81 +91,40 @@ TONE:
 - Reference specific session IDs, checkpoint IDs when relevant
 - Use data-driven insights`;
 
-      // Call KNEZ chat completions API
-      const response = await fetch(`${profile.endpoint}/api/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userMessage.content }
-          ],
-          stream: true,
-          session_id: sessionId || 'dashboard-agent',
-        }),
-      });
+      const messagesForStream = [
+        { role: 'system' as const, content: systemPrompt },
+        { role: 'user' as const, content: userMessage.content },
+      ];
       
-      if (!response.ok) {
-        throw new Error(`KNEZ API error: ${response.status} ${response.statusText}`);
-      }
-      
-      // Parse SSE stream
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('No response stream available');
-      }
-      
-      const decoder = new TextDecoder();
       let accumulatedContent = '';
       
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6).trim();
-            if (data === '[DONE]') continue;
-            if (!data) continue;
-            
-            try {
-              const parsed = JSON.parse(data);
-              const delta = parsed.choices?.[0]?.delta?.content || '';
-              
-              if (delta) {
-                accumulatedContent += delta;
-                
-                // Update message in real-time
-                setMessages(prev => 
-                  prev.map(m => 
-                    m.id === assistantId 
-                      ? { ...m, content: accumulatedContent } 
-                      : m
-                  )
-                );
-              }
-            } catch (parseErr) {
-              console.error('[TaqwinAgent] Failed to parse SSE data:', parseErr, data);
-            }
-          }
-        }
+      const stream = knezClient.chatCompletionsStream(
+        messagesForStream,
+        sessionId || 'dashboard-agent',
+        { signal: controller.signal }
+      );
+      
+      for await (const chunk of stream) {
+        if (controller.signal.aborted) break;
+        accumulatedContent += chunk;
+        setMessages(prev => 
+          prev.map(m => 
+            m.id === assistantId 
+              ? { ...m, content: accumulatedContent } 
+              : m
+          )
+        );
       }
       
-      // If no content was received, show error
-      if (!accumulatedContent) {
+      if (!accumulatedContent && !controller.signal.aborted) {
         throw new Error('No response received from KNEZ backend');
       }
       
     } catch (err: any) {
+      if (err?.name === 'AbortError') return;
       const errorMsg = err?.message || String(err);
       setError(errorMsg);
       
-      // Update or add error message
       setMessages(prev => {
         const hasAssistant = prev.some(m => m.id === assistantId);
         if (hasAssistant) {
@@ -182,13 +144,18 @@ TONE:
       });
     } finally {
       setIsLoading(false);
+      abortRef.current = null;
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      if (isLoading) {
+        handleStop();
+      } else {
+        handleSend();
+      }
     }
   };
 
@@ -273,7 +240,7 @@ TONE:
         </div>
       )}
 
-      {/* Input (always available) */}
+      {/* Input */}
       <div className="p-4 border-t border-zinc-800">
         <div className="flex gap-2">
           <input
@@ -285,17 +252,26 @@ TONE:
             disabled={isLoading}
             className="flex-1 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 disabled:opacity-50"
           />
-          <button
-            onClick={handleSend}
-            disabled={!input.trim() || isLoading}
-            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-zinc-700 disabled:text-zinc-500 text-white rounded-lg text-sm transition-colors"
-          >
-            <Send className="w-4 h-4" />
-          </button>
+          {isLoading ? (
+            <button
+              onClick={handleStop}
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm transition-colors"
+            >
+              <Square className="w-4 h-4" />
+            </button>
+          ) : (
+            <button
+              onClick={handleSend}
+              disabled={!input.trim()}
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-zinc-700 disabled:text-zinc-500 text-white rounded-lg text-sm transition-colors"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          )}
         </div>
         <div className="mt-2 text-[10px] text-zinc-500 flex items-center gap-1">
           <Sparkles className="w-3 h-3" />
-          Powered by KNEZ + Ollama (qwen2.5:7b)
+          Powered by KNEZ + Ollama
         </div>
       </div>
     </div>

@@ -3,7 +3,13 @@ import { Loader, AlertCircle } from 'lucide-react';
 import { RelationshipGraph } from '../../data/components/RelationshipGraph';
 import { taqwinDataService } from '../../../services/data/TaqwinDataService';
 
-export const GraphLens: React.FC = () => {
+interface GraphLensProps {
+  onClose?: () => void;
+  onNavigateToSession?: (sessionId: string, projectId: string) => void;
+  onNavigateToProject?: (projectId: string) => void;
+}
+
+export const GraphLens: React.FC<GraphLensProps> = ({ onClose, onNavigateToSession, onNavigateToProject }) => {
   const [projects, setProjects] = useState<any[]>([]);
   const [sessions, setSessions] = useState<any[]>([]);
   const [documents, setDocuments] = useState<any[]>([]);
@@ -67,7 +73,9 @@ export const GraphLens: React.FC = () => {
         projects={projects}
         allSessions={sessions}
         allDocuments={documents}
-        onClose={() => {}}
+        onClose={onClose || (() => {})}
+        onNavigateToSession={onNavigateToSession}
+        onNavigateToProject={onNavigateToProject}
       />
     </div>
   );

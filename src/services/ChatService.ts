@@ -36,6 +36,7 @@ import { ChatConfig } from "./chat/config/ChatConfig";
 import { MessageIdGenerator, newMessageId } from "./chat/utils/MessageIdGenerator";
 import { getConnectionManager } from "./connection/ConnectionManager";
 import { streamingExecutionEngine } from './execution/StreamingExecutionEngine';
+import { nineRouterService } from './router/NineRouterService';
 import type { SSEEvent } from './streaming/UnifiedEventSchema';
 // StreamStartEventData import removed - WebSocket stream handlers removed (STEP 4)
 // STEP 3: Import EventBus and NodeRegistry for packet event emission
@@ -121,6 +122,9 @@ export class ChatService {
 
   // ADD 2: Stream Controller
   private streamController = new StreamController();
+
+  // 9Router model routing - set by ChatPane before sending
+  public currentModelId: string | null = null;
 
   // Handle stream chunks from StreamController (authoritative source)
   private handleStreamChunk(assistantId: string, chunk: string): void {
@@ -2876,7 +2880,11 @@ export class ChatService {
       let toolCallBuffer = ""; // Preserve tool call JSON for finalization
       let firstTokenReceived = false;
 
-      for await (const chunk of knezClient.chatCompletionsStream(injectedMessages as any, sessionId, { signal: controller.signal, onMeta })) {
+      const useRouter = this.currentModelId !== null && this.currentModelId.includes('/');
+      const stream = useRouter
+        ? nineRouterService.chatCompletionsStream(injectedMessages as any, sessionId, { signal: controller.signal, onMeta, model: this.currentModelId! })
+        : knezClient.chatCompletionsStream(injectedMessages as any, sessionId, { signal: controller.signal, onMeta });
+      for await (const chunk of stream) {
         // FIX: Trigger FIRST_TOKEN on first chunk to transition to streaming phase
         if (!firstTokenReceived && chunk.trim()) {
           firstTokenReceived = true;

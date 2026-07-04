@@ -2,6 +2,7 @@ import React, { createContext, useEffect, useRef, useState } from 'react';
 import { knezClient } from '../services/knez/KnezClient';
 import { KnezHealthResponse, CognitiveState } from '../domain/DataContracts';
 import { isOverallHealthyStatus } from '../utils/health';
+import { nineRouterService } from '../services/router/NineRouterService';
 
 interface StatusContextValue {
   online: boolean;
@@ -13,6 +14,8 @@ interface StatusContextValue {
   healthFresh: boolean;
   cognitiveState: CognitiveState | null;
   forceCheck: () => Promise<void>;
+  currentModelId: string | null;
+  routerHealthy: boolean;
 }
 
 export const StatusContext = createContext<StatusContextValue | null>(null);
@@ -23,11 +26,13 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [online, setOnline] = useState(false);
   const [cognitiveState, setCognitiveState] = useState<CognitiveState | null>(null);
   const [lastCheck, setLastCheck] = useState<number | null>(null);
+  const [routerHealthy, setRouterHealthy] = useState(false);
   
   // Derived state
   const isConnected = online && !!health && isOverallHealthyStatus(health.status);
   const isModelReady = online && !!health && health.model_loaded === true;
   const isDegraded = online && !!health && !isOverallHealthyStatus(health.status);
+  const currentModelId = health?.active_model || null;
 
   const timeoutRef = useRef<number | null>(null);
   const inFlightRef = useRef(false);
@@ -40,10 +45,12 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const now = Date.now();
 
     try {
-      const [h, c] = await Promise.allSettled([
+      const [h, c, r] = await Promise.allSettled([
         knezClient.health(),
-        knezClient.getCognitiveState()
+        knezClient.getCognitiveState(),
+        nineRouterService.checkHealth(),
       ]);
+      setRouterHealthy(r.status === "fulfilled" && r.value?.status === "healthy");
 
       if (h.status === "fulfilled") {
         setHealth(h.value);
@@ -108,7 +115,9 @@ export const StatusProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       health, 
       healthFresh,
       cognitiveState,
-      forceCheck: performCheck 
+      forceCheck: performCheck,
+      currentModelId,
+      routerHealthy,
     }}>
       {children}
     </StatusContext.Provider>

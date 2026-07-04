@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { X, FileText, Calendar, Tag, ExternalLink, Copy, ChevronDown, ChevronUp } from 'lucide-react';
+import { X, FileText, Calendar, Tag, ExternalLink, Copy, ChevronDown, ChevronUp, CheckCircle2, Circle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Document } from './DocumentList';
 
 interface DocumentViewerProps {
@@ -247,20 +248,52 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         {document.content ? (
           <div className="prose prose-sm prose-invert max-w-none text-zinc-300 text-sm leading-relaxed">
             <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
               components={{
                 h1: ({node, ...props}) => <h1 className="text-2xl font-bold text-zinc-100 mt-6 mb-4" {...props} />,
                 h2: ({node, ...props}) => <h2 className="text-xl font-bold text-zinc-100 mt-5 mb-3" {...props} />,
                 h3: ({node, ...props}) => <h3 className="text-lg font-semibold text-zinc-200 mt-4 mb-2" {...props} />,
-                p: ({node, ...props}) => <p className="mb-4 text-zinc-300" {...props} />,
-                ul: ({node, ...props}) => <ul className="list-disc list-inside mb-4 text-zinc-300 space-y-1" {...props} />,
-                ol: ({node, ...props}) => <ol className="list-decimal list-inside mb-4 text-zinc-300 space-y-1" {...props} />,
-                li: ({node, ...props}) => <li className="text-zinc-300" {...props} />,
-                code: ({node, inline, ...props}: any) =>
-                  inline ? (
-                    <code className="px-1.5 py-0.5 bg-zinc-800 text-pink-300 rounded text-xs font-mono" {...props} />
-                  ) : (
-                    <code className="block p-3 bg-zinc-800 rounded text-xs font-mono overflow-x-auto" {...props} />
-                  ),
+                h4: ({node, ...props}) => <h4 className="text-base font-semibold text-zinc-200 mt-3 mb-2" {...props} />,
+                h5: ({node, ...props}) => <h5 className="text-sm font-semibold text-zinc-300 mt-2 mb-1" {...props} />,
+                h6: ({node, ...props}) => <h6 className="text-xs font-semibold text-zinc-400 mt-2 mb-1" {...props} />,
+                p: ({node, ...props}) => <p className="mb-4 text-zinc-300 leading-relaxed" {...props} />,
+                ul: ({node, ...props}) => <ul className="mb-4 text-zinc-300 space-y-1.5" {...props} />,
+                ol: ({node, ...props}) => <ol className="list-decimal list-inside mb-4 text-zinc-300 space-y-1.5" {...props} />,
+                li: ({node, ...props}) => {
+                  const checked = (node as any)?.properties?.['data-checked'];
+                  if (checked !== undefined) {
+                    return (
+                      <li className="flex items-start gap-2 text-zinc-300 mb-1" {...props}>
+                        {checked === true ? (
+                          <CheckCircle2 className="w-4 h-4 text-green-400 mt-0.5 flex-shrink-0" />
+                        ) : checked === false ? (
+                          <Circle className="w-4 h-4 text-zinc-500 mt-0.5 flex-shrink-0" />
+                        ) : null}
+                      </li>
+                    );
+                  }
+                  return <li className="text-zinc-300 mb-1 leading-relaxed" {...props} />;
+                },
+                strong: ({node, ...props}) => <strong className="font-bold text-zinc-100" {...props} />,
+                em: ({node, ...props}) => <em className="italic text-zinc-200" {...props} />,
+                hr: ({node, ...props}) => <hr className="border-zinc-700 my-6" {...props} />,
+                del: ({node, ...props}) => <del className="line-through text-zinc-500" {...props} />,
+                code: ({node, className, inline, children, ...props}: any) => {
+                  const language = className?.replace('language-', '') || '';
+                  if (inline) {
+                    return <code className="px-1.5 py-0.5 bg-zinc-800 text-pink-300 rounded text-xs font-mono" {...props}>{children}</code>;
+                  }
+                  return (
+                    <div className="relative mb-4">
+                      {language && (
+                        <div className="absolute top-0 right-0 px-2 py-0.5 bg-zinc-700 text-zinc-400 text-[10px] uppercase rounded-bl rounded-tr font-mono">
+                          {language}
+                        </div>
+                      )}
+                      <code className="block p-3 bg-zinc-800 rounded text-xs font-mono overflow-x-auto pt-6" {...props}>{children}</code>
+                    </div>
+                  );
+                },
                 pre: ({node, ...props}) => <pre className="bg-zinc-800 rounded p-3 overflow-x-auto mb-4" {...props} />,
                 blockquote: ({node, ...props}) => (
                   <blockquote className="border-l-4 border-zinc-700 pl-4 italic text-zinc-400 my-4" {...props} />
@@ -270,11 +303,11 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                 ),
                 table: ({node, ...props}) => (
                   <div className="overflow-x-auto mb-4">
-                    <table className="min-w-full border border-zinc-700" {...props} />
+                    <table className="min-w-full border border-zinc-700 text-xs" {...props} />
                   </div>
                 ),
-                th: ({node, ...props}) => <th className="border border-zinc-700 px-3 py-2 bg-zinc-800 text-left" {...props} />,
-                td: ({node, ...props}) => <td className="border border-zinc-700 px-3 py-2" {...props} />,
+                th: ({node, ...props}) => <th className="border border-zinc-700 px-2 py-1.5 bg-zinc-800 text-left font-semibold text-zinc-200 whitespace-nowrap" {...props} />,
+                td: ({node, ...props}) => <td className="border border-zinc-700 px-2 py-1.5 align-top text-zinc-300 break-words whitespace-pre-wrap" {...props} />,
               }}
             >
               {document.content}

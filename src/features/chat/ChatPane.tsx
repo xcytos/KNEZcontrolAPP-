@@ -37,7 +37,8 @@ import { getConnectionManager } from "../../services/connection/ConnectionManage
 // import { ToolApprovalModal } from "./ToolApprovalModal";
 import { ModelSelectionDropdown } from './components/ModelSelectionDropdown';
 import { ModelConfigModal } from './components/ModelConfigModal';
-import { ModelSelectionService, ModelInfo } from '../../services/models/ModelSelectionService';
+import { ModelSelectionService } from '../../services/models/ModelSelectionService';
+import { useModel } from '../../contexts/ModelContext';
 type Props = {
   sessionId: string | null;
   readOnly: boolean;
@@ -86,13 +87,20 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
   const [showRetryWebSocket, setShowRetryWebSocket] = useState(false);
   const [lastFailedAssistantId, setLastFailedAssistantId] = useState<string | null>(null);
 
-  // Model Selection State
-  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
-  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  // Model Selection State (from shared ModelContext)
+  const { availableModels, selectedModelId, loading: loadingModels, selectModel, setSelectedModelId, clearSelection, routerModels } = useModel();
+  // Merge KNEZ models + 9Router models for the dropdown
+  const allModels = useMemo(() => {
+    const routerAsModelInfo = routerModels.map(r => ({
+      model_id: r.id,
+      provider: r.provider || r.owned_by || 'unknown',
+      status: r.id === selectedModelId ? 'healthy' as const : 'healthy' as const,
+    }));
+    return [...availableModels, ...routerAsModelInfo];
+  }, [availableModels, routerModels]);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [modelConfigModalOpen, setModelConfigModalOpen] = useState(false);
   const [configModelId, setConfigModelId] = useState<string>('');
-  const [loadingModels, setLoadingModels] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -270,6 +278,9 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
       logger.warn("chat_pane", "send_blocked_already_sending", { message: "Message send blocked - already sending" });
       return;
     }
+
+    // Pass current model selection to ChatService for routing
+    chatService.currentModelId = selectedModelId;
 
     // Clear any pending debounce
     if (sendDebounceRef.current !== null) {
@@ -745,46 +756,28 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     return () => window.removeEventListener("knez-terminal-run", onRun);
   }, [runTerminal]);
 
-  // Load available models and poll health
-  useEffect(() => {
-    const fetchModelsAndSelection = async () => {
-      try {
-        setLoadingModels(true);
-        const data = await ModelSelectionService.getAvailableModels();
-        setAvailableModels(data.models || []);
-        setSelectedModelId(data.preferred_model_id || null);
-      } catch (error) {
-        console.error('[ChatPane] Failed to fetch models:', error);
-      } finally {
-        setLoadingModels(false);
-      }
-    };
-
-    fetchModelsAndSelection();
-    const interval = setInterval(fetchModelsAndSelection, 10000); // Poll every 10 seconds
-    return () => clearInterval(interval);
-  }, []);
-
-  // Model selection handlers
+  // Model selection handlers (using shared ModelContext)
   const handleSelectModel = async (modelId: string) => {
     try {
-      const data = await ModelSelectionService.selectModel(modelId);
-      setSelectedModelId(modelId);
-      showToast(data.message || `Switched to ${modelId}`, 'success');
+      if (modelId.includes('/')) {
+        // 9Router model — just store as selected, no KNEZ registration needed
+        setSelectedModelId(modelId);
+        showToast(`Selected ${modelId}`, 'success');
+      } else {
+        const data = await selectModel(modelId);
+        showToast(data?.message || `Switched to ${modelId}`, 'success');
+      }
     } catch (error) {
       showToast((error as Error).message, 'error');
-      console.error('[ChatPane] Model selection error:', error);
     }
   };
 
   const handleClearSelection = async () => {
     try {
-      const data = await ModelSelectionService.clearSelection();
-      setSelectedModelId(null);
-      showToast(data.message || 'Cleared selection (automatic mode)', 'success');
+      const data = await clearSelection();
+      showToast(data?.message || 'Cleared selection (automatic mode)', 'success');
     } catch (error) {
       showToast((error as Error).message, 'error');
-      console.error('[ChatPane] Clear selection error:', error);
     }
   };
 
@@ -865,7 +858,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
             <ModelSelectionDropdown
               isOpen={modelDropdownOpen}
               onToggle={() => setModelDropdownOpen(!modelDropdownOpen)}
-              models={availableModels}
+              models={allModels}
               selectedModelId={selectedModelId}
               onSelectModel={handleSelectModel}
               onConfigureModel={handleConfigureModel}

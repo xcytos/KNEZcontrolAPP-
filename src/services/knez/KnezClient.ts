@@ -57,6 +57,7 @@ type ChatCompletionsRequest = {
   messages: CompletionMessage[];
   stream: boolean;
   session_id: string;
+  model?: string;
   temperature?: number;
   max_tokens?: number;
   top_p?: number;
@@ -1150,7 +1151,7 @@ export class KnezClient {
   async *chatCompletionsStream(
     messages: CompletionMessage[],
     sessionId: string,
-    options?: { signal?: AbortSignal; onMeta?: (meta: { model?: string; totalTokens?: number }) => void }
+    options?: { signal?: AbortSignal; onMeta?: (meta: { model?: string; totalTokens?: number }) => void; model?: string }
   ): AsyncGenerator<string, void, void> {
     console.log('[KnezClient] chatCompletionsStream called', { sessionId, messageCount: messages.length });
     if (sessionId.startsWith("test-session-")) {
@@ -1170,6 +1171,7 @@ export class KnezClient {
       messages,
       stream: true,
       session_id: sessionId,
+      model: options?.model,
     };
 
     // CP3-C: Retry Logic
