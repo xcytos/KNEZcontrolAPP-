@@ -125,9 +125,9 @@ const FullViewerInner: React.FC<{
         )}
 
         <div className="flex-1 flex overflow-hidden">
-          <div className={`${mainContentClass} relative`}>
+          <div className={`${mainContentClass}`}>
             {Object.entries(lensContent).map(([lens, content]) => (
-              <div key={lens} className="absolute inset-0" style={{ display: activeLens === lens ? 'flex' : 'none' }}>
+              <div key={lens} className="flex-1 flex flex-col overflow-hidden" style={{ display: activeLens === lens ? 'flex' : 'none' }}>
                 {content}
               </div>
             ))}

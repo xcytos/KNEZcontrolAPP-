@@ -113,8 +113,8 @@ export const DashboardLens: React.FC = () => {
         })}
       </div>
 
-      <div className="flex-1 overflow-hidden">
-        {navigation.activeSubTab === 'hierarchy' && (
+      <div className="flex-1 relative overflow-hidden">
+        <div className="absolute inset-0" style={{ display: navigation.activeSubTab === 'hierarchy' ? 'flex' : 'none' }}>
           <TaqwinHierarchicalView
             onNavigateToSqlite={() => {}}
             onActivityContextChange={handleActivityContextChange}
@@ -127,44 +127,42 @@ export const DashboardLens: React.FC = () => {
               onSelectedSessionIdChange: setSelectedSessionId,
             }}
           />
-        )}
-        {navigation.activeSubTab === 'evolution' && (
-          <div className="h-full overflow-y-auto">
-            {!sessionContext.sessionId ? (
-              <div className="h-full flex items-center justify-center text-zinc-500">
-                <div className="text-center">
-                  <BarChart3 className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                  <p className="text-sm">No session selected</p>
-                  <p className="text-xs text-zinc-600 mt-1">Select a session from the Hierarchy tab</p>
-                </div>
+        </div>
+        <div className="absolute inset-0 overflow-y-auto" style={{ display: navigation.activeSubTab === 'evolution' ? 'flex' : 'none' }}>
+          {!sessionContext.sessionId ? (
+            <div className="h-full flex items-center justify-center text-zinc-500">
+              <div className="text-center">
+                <BarChart3 className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                <p className="text-sm">No session selected</p>
+                <p className="text-xs text-zinc-600 mt-1">Select a session from the Hierarchy tab</p>
               </div>
-            ) : evolutionLoading ? (
-              <div className="h-full flex items-center justify-center">
-                <Loader className="w-6 h-6 animate-spin text-blue-400" />
-              </div>
-            ) : evolutionError ? (
-              <div className="h-full flex items-center justify-center text-red-400">
-                <AlertCircle className="w-5 h-5 mr-2" />
-                {evolutionError}
-              </div>
-            ) : evolutionData ? (
-              <div className="p-4">
-                <SessionEvolutionChart
-                  timeline={evolutionData.timeline}
-                  sessionStart={evolutionData.sessionStart}
-                  sessionEnd={evolutionData.sessionEnd}
-                  sessionId={sessionContext.sessionId}
-                />
-              </div>
-            ) : null}
-          </div>
-        )}
-        {navigation.activeSubTab === 'sessions' && (
+            </div>
+          ) : evolutionLoading ? (
+            <div className="h-full flex items-center justify-center">
+              <Loader className="w-6 h-6 animate-spin text-blue-400" />
+            </div>
+          ) : evolutionError ? (
+            <div className="h-full flex items-center justify-center text-red-400">
+              <AlertCircle className="w-5 h-5 mr-2" />
+              {evolutionError}
+            </div>
+          ) : evolutionData ? (
+            <div className="p-4">
+              <SessionEvolutionChart
+                timeline={evolutionData.timeline}
+                sessionStart={evolutionData.sessionStart}
+                sessionEnd={evolutionData.sessionEnd}
+                sessionId={sessionContext.sessionId}
+              />
+            </div>
+          ) : null}
+        </div>
+        <div className="absolute inset-0" style={{ display: navigation.activeSubTab === 'sessions' ? 'flex' : 'none' }}>
           <ActiveSessionsPanel
             currentSessionId={sessionContext.sessionId}
             currentProjectId={sessionContext.projectId}
           />
-        )}
+        </div>
       </div>
     </div>
   );
