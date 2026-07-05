@@ -18,7 +18,7 @@ export interface SessionContext {
   projectName?: string;
 }
 
-export type DashboardSubTab = 'hierarchy' | 'evolution' | 'sessions';
+export type DashboardSubTab = 'hierarchy' | 'sessions';
 export type ViewLevel = 'projects' | 'sessions' | 'session-detail';
 
 export interface NavigationState {

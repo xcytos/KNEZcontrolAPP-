@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Monitor, Code, Plus, X, GripHorizontal, Bot, Eye, EyeOff, RefreshCw } from 'lucide-react';
+import { Monitor, Code, Plus, X, GripHorizontal, Bot, Eye, EyeOff, RefreshCw, ChevronUp, ChevronDown } from 'lucide-react';
 import { PlaygroundSDK } from '../services/playground/PlaygroundSDK';
 import { PlaygroundType, PlaygroundConfig, PanelPosition, ViewState, PlaygroundMode } from '../domain/PlaygroundTypes';
 import { AgentDefinition } from '../domain/AgentTypes';
@@ -216,6 +216,8 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk, m
   const [refreshKeys, setRefreshKeys] = useState<Record<string, number>>({});
   const [showTerminalHeader, setShowTerminalHeader] = useState(true);
   const [showSlidePanel, setShowSlidePanel] = useState(false);
+  const [panelCollapsed, setPanelCollapsed] = useState(false);
+  const panelHeightRef = useRef(viewState.panel.height ?? DEFAULT_PANEL_HEIGHT);
   const sandboxAutoInit = useRef(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -383,7 +385,7 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk, m
   const activeTab = tabs.find(t => t.id === viewState.panel.activeTabId);
 
   return (
-    <div className="flex flex-col h-full bg-gray-900">
+    <div className="flex flex-col flex-1 min-h-0 bg-gray-900">
       <div className="flex items-center justify-between bg-gray-800 border-b border-gray-700 select-none flex-shrink-0">
         <div className="flex items-center overflow-x-auto">
           {tabs.map(tab => {
@@ -455,6 +457,7 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk, m
           <div
             ref={panelRef}
             className="flex flex-col overflow-hidden flex-1 min-h-0"
+            style={{ display: panelCollapsed ? 'none' : 'flex' }}
           >
             <div
               onMouseDown={handleMouseDown}
@@ -523,6 +526,18 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk, m
 
       <div className="flex items-center justify-between px-3 py-1 bg-gray-800 border-t border-gray-700 text-xs text-gray-400 flex-shrink-0">
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => {
+              if (!panelCollapsed) {
+                panelHeightRef.current = viewState.panel.height ?? DEFAULT_PANEL_HEIGHT;
+              }
+              setPanelCollapsed(v => !v);
+            }}
+            className="hover:text-white transition-colors p-0.5"
+            title={panelCollapsed ? 'Expand Panel' : 'Collapse Panel'}
+          >
+            {panelCollapsed ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
           <span>{activeTab?.label || 'No tab'}</span>
           {viewState.savedSessions.length > 0 && (
             <>

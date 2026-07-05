@@ -29,7 +29,8 @@ interface MainLayoutProps {
   onHeaderToggle?: () => void;
 }
 
-const isSandbox = (_v: View) => false;
+const SANDBOX_VIEWS = new Set(['terminal-sandbox']);
+const isSandbox = (v: string) => SANDBOX_VIEWS.has(v);
 
 export const MainLayout: React.FC<MainLayoutProps> = ({
   activeView,

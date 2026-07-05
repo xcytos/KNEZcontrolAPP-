@@ -3,11 +3,9 @@ import { HardDrive, Server, Search, GitBranch } from 'lucide-react';
 import { ControlAppDataView } from './ControlAppDataView';
 import { PostgresDataView } from './PostgresDataView';
 import { GenericSqliteView } from './GenericSqliteView';
-import { TaqwinHierarchicalView } from './TaqwinHierarchicalView';
 import { GitStatisticsView } from './GitStatisticsView';
-import { LiveActivityNotifier } from './components/LiveActivityNotifier';
 
-type DataSource = 'control-app' | 'postgres' | 'sqlite-browser' | 'taqwin-hierarchy' | 'git-stats';
+type DataSource = 'control-app' | 'postgres' | 'sqlite-browser' | 'git-stats';
 
 interface SqliteBrowserState {
   tableName?: string;
@@ -15,39 +13,11 @@ interface SqliteBrowserState {
   issueType?: string;
 }
 
-interface LiveActivityContext {
-  sessionId?: string;
-  sessionName?: string;
-  projectId?: string;
-}
-
 export const DataExplorer: React.FC = () => {
-  const [activeSource, setActiveSource] = useState<DataSource>('taqwin-hierarchy');
+  const [activeSource, setActiveSource] = useState<DataSource>('control-app');
   const [sqliteBrowserState, setSqliteBrowserState] = useState<SqliteBrowserState>({});
-  const [liveActivityContext, setLiveActivityContext] = useState<LiveActivityContext>({});
 
   const sources = [
-    { 
-      id: 'taqwin-hierarchy' as DataSource, 
-      label: 'TAQWIN Hierarchy', 
-      icon: GitBranch,
-      description: 'Session hierarchy • Timeline • Relationships',
-      color: 'indigo'
-    },
-    { 
-      id: 'git-stats' as DataSource, 
-      label: 'Git Statistics', 
-      icon: GitBranch,
-      description: 'Commits • File changes • Push to remote',
-      color: 'purple'
-    },
-    { 
-      id: 'sqlite-browser' as DataSource, 
-      label: 'SQLite Browser', 
-      icon: Search,
-      description: 'Generic SQLite viewer • Browse any .db file',
-      color: 'orange'
-    },
     { 
       id: 'control-app' as DataSource, 
       label: 'Control App', 
@@ -61,6 +31,20 @@ export const DataExplorer: React.FC = () => {
       icon: Server,
       description: 'Documents • File changes • Tech stack • MCP',
       color: 'emerald'
+    },
+    { 
+      id: 'sqlite-browser' as DataSource, 
+      label: 'SQLite Browser', 
+      icon: Search,
+      description: 'Generic SQLite viewer • Browse any .db file',
+      color: 'orange'
+    },
+    { 
+      id: 'git-stats' as DataSource, 
+      label: 'Git Statistics', 
+      icon: GitBranch,
+      description: 'Commits • File changes • Push to remote',
+      color: 'purple'
     },
   ];
 
@@ -114,31 +98,11 @@ export const DataExplorer: React.FC = () => {
             })}
           </div>
 
-          {/* Live Activity Notifier - Below Data Sources */}
-          {activeSource === 'taqwin-hierarchy' && (liveActivityContext.sessionId || liveActivityContext.projectId) && (
-            <div className="mt-3">
-              <LiveActivityNotifier
-                sessionId={liveActivityContext.sessionId}
-                sessionName={liveActivityContext.sessionName}
-                projectId={liveActivityContext.projectId}
-                pollingInterval={5000}
-              />
-            </div>
-          )}
         </div>
       </div>
 
       {/* Main Content Area - Maximized */}
       <div className="flex-1 overflow-hidden">
-        {activeSource === 'taqwin-hierarchy' && (
-          <TaqwinHierarchicalView 
-            onNavigateToSqlite={(tableName, filter, issueType) => {
-              setSqliteBrowserState({ tableName, filter, issueType });
-              setActiveSource('sqlite-browser');
-            }}
-            onActivityContextChange={setLiveActivityContext}
-          />
-        )}
         {activeSource === 'git-stats' && <GitStatisticsView />}
         {activeSource === 'control-app' && <ControlAppDataView />}
         {activeSource === 'postgres' && <PostgresDataView />}
