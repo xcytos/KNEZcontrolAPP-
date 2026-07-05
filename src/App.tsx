@@ -22,6 +22,7 @@ import { TestPanel } from './features/diagnostics/TestPanel';
 import { SkillsView } from './features/skills/SkillsView';
 import { DataExplorer } from './features/data/DataExplorer';
 import { FullViewer } from './features/fullviewer/FullViewer';
+import { FullViewerProvider } from './features/fullviewer/FullViewerContext';
 import { RepoVisualizer } from './features/repo/RepoVisualizer';
 import { ModelsPage } from './features/models/ModelsPage';
 import { taqwinDataService } from './services/data/TaqwinDataService';
@@ -280,16 +281,8 @@ function AppContent() {
       case 'data':
         return <DataExplorer />;
       case 'dashboard':
-        return (
-          <FullViewer
-            connectionStatus={{
-              online,
-              isConnected,
-              isModelReady,
-              isDegraded,
-            }}
-          />
-        );
+        // FullViewer is rendered persistently below to preserve state across tab switches
+        return <div className="hidden" />;
       case 'repository':
         return (
           <RepositoryView
@@ -426,17 +419,31 @@ function AppContent() {
       {features.floatingConsole ? <FloatingConsole /> : null}
       <E2EBanner />
       
-      <div className="h-full min-h-0 min-w-0 relative">
-        {renderContent()}
-        {lastCheck === null && (
-          <div className="absolute inset-0 bg-zinc-950 flex items-center justify-center pointer-events-none">
-            <div className="flex items-center gap-3 text-zinc-300">
-              <div className="w-4 h-4 rounded-full border-2 border-zinc-700 border-t-zinc-200 animate-spin" />
-              <div className="text-sm">Starting…</div>
-            </div>
+      <FullViewerProvider initialState={{ activeLens: 'dashboard' }}>
+        <div className="h-full min-h-0 min-w-0 relative">
+          <div className={activeView === 'dashboard' ? 'block h-full' : 'hidden h-full'}>
+            <FullViewer
+              connectionStatus={{
+                online,
+                isConnected,
+                isModelReady,
+                isDegraded,
+              }}
+            />
           </div>
-        )}
-      </div>
+          <div className={activeView === 'dashboard' ? 'hidden h-full' : 'block h-full'}>
+            {renderContent()}
+          </div>
+          {lastCheck === null && (
+            <div className="absolute inset-0 bg-zinc-950 flex items-center justify-center pointer-events-none">
+              <div className="flex items-center gap-3 text-zinc-300">
+                <div className="w-4 h-4 rounded-full border-2 border-zinc-700 border-t-zinc-200 animate-spin" />
+                <div className="text-sm">Starting…</div>
+              </div>
+            </div>
+          )}
+        </div>
+      </FullViewerProvider>
       
        {showSettings && <SettingsModal 
          onClose={() => {

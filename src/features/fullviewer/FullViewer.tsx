@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React from 'react';
 import { ActivityBar } from './ActivityBar';
 import { StatusBar } from './StatusBar';
 import { Toolbar } from './Toolbar';
@@ -11,37 +11,24 @@ import { TerminalLens } from './lenses/TerminalLens';
 import { ChatLens } from './lenses/ChatLens';
 import { SessionContextPanel } from './panels/SessionContextPanel';
 import { AgentChatPanel } from './panels/AgentChatPanel';
-import type { LensType, LayoutMode, RightPanelContent, SessionContext } from './types';
+import { FileDetailPanel } from './panels/FileDetailPanel';
+import { useFullViewer, FullViewerProvider } from './FullViewerContext';
+import { useFullViewerStats } from './hooks/useFullViewerStats';
+import type { LensType, SessionContext } from './types';
 
-export const FullViewer: React.FC<{
-  initialLens?: LensType;
-  connectionStatus: {
-    online: boolean;
-    isConnected: boolean;
-    isModelReady: boolean;
-    isDegraded: boolean;
-  };
-}> = ({ initialLens = 'dashboard', connectionStatus }) => {
-  const [activeLens, setActiveLens] = useState<LensType>(initialLens);
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>('full');
-  const [showActivityBar, setShowActivityBar] = useState(true);
-  const [rightPanel, setRightPanel] = useState<RightPanelContent>('agent');
-  const [sessionContext, setSessionContext] = useState<SessionContext>({});
-  const [stats] = useState<{ checkpoints: number; events: number; memories: number; decisions: number; files: number; documents: number } | undefined>();
+const FullViewerInner: React.FC<{
+  connectionStatus: { online: boolean; isConnected: boolean; isModelReady: boolean; isDegraded: boolean };
+}> = ({ connectionStatus }) => {
+  const {
+    activeLens, setActiveLens, layoutMode,
+    showActivityBar, toggleActivityBar, rightPanel, setRightPanel,
+    sessionContext, setSessionContext, cycleLayoutMode,
+    secondaryLens, setSecondaryLens,
+  } = useFullViewer();
 
-  const handleSessionContextChange = useCallback((ctx: SessionContext) => {
-    setSessionContext(ctx);
-  }, []);
+  const { sessionMetrics: stats, statusBarMetrics: statusBarStats } = useFullViewerStats(sessionContext.sessionId);
 
-  const cycleLayoutMode = useCallback(() => {
-    const modes: LayoutMode[] = ['full', 'compact', 'split', 'focus'];
-    const idx = modes.indexOf(layoutMode);
-    setLayoutMode(modes[(idx + 1) % modes.length]);
-  }, [layoutMode]);
-
-  const toggleRightPanel = useCallback(() => {
-    setRightPanel(prev => prev === 'none' ? 'agent' : 'none');
-  }, []);
+  const handleSessionContextChange = (ctx: SessionContext) => setSessionContext(ctx);
 
   const renderLens = () => {
     switch (activeLens) {
@@ -52,11 +39,11 @@ export const FullViewer: React.FC<{
         <GraphLens
           onClose={() => setActiveLens('dashboard')}
           onNavigateToSession={(sessionId, projectId) => {
-            setSessionContext(prev => ({ ...prev, sessionId, projectId }));
+            setSessionContext({ ...sessionContext, sessionId, projectId });
             setActiveLens('evolution');
           }}
           onNavigateToProject={(projectId) => {
-            setSessionContext(prev => ({ ...prev, projectId }));
+            setSessionContext({ ...sessionContext, projectId });
             setActiveLens('dashboard');
           }}
         />
@@ -66,6 +53,39 @@ export const FullViewer: React.FC<{
       case 'chat': return <ChatLens sessionContext={sessionContext} />;
       default: return <DashboardLens sessionContext={sessionContext} onSessionContextChange={handleSessionContextChange} />;
     }
+  };
+
+  const renderSecondaryLens = () => {
+    if (!secondaryLens) return null;
+
+    const lensComponents: Record<string, React.ReactNode> = {
+      dashboard: <DashboardLens sessionContext={sessionContext} onSessionContextChange={handleSessionContextChange} />,
+      evolution: <EvolutionLens sessionContext={sessionContext} />,
+      explorer: <ExplorerLens />,
+      graph: <GraphLens onClose={() => setSecondaryLens(undefined)} />,
+      repository: <RepositoryLens sessionContext={sessionContext} />,
+      terminal: <TerminalLens />,
+      chat: <ChatLens sessionContext={sessionContext} />,
+    };
+
+    return (
+      <div className="w-1/2 border-l border-zinc-800 bg-zinc-900/50 flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-zinc-800 bg-zinc-900/80">
+          <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
+            {secondaryLens}
+          </span>
+          <button
+            onClick={() => setSecondaryLens(undefined)}
+            className="text-zinc-500 hover:text-zinc-300 text-xs"
+          >
+            Close
+          </button>
+        </div>
+        <div className="flex-1 overflow-hidden">
+          {lensComponents[secondaryLens] || lensComponents.dashboard}
+        </div>
+      </div>
+    );
   };
 
   const renderRightPanel = () => {
@@ -85,6 +105,12 @@ export const FullViewer: React.FC<{
             <SessionContextPanel sessionContext={sessionContext} stats={stats} onClose={() => setRightPanel('none')} />
           </div>
         );
+      case 'filedetail':
+        return (
+          <div className="w-80 border-l border-zinc-800 bg-zinc-900/30 flex flex-col overflow-hidden">
+            <FileDetailPanel onClose={() => setRightPanel('none')} />
+          </div>
+        );
       default:
         return null;
     }
@@ -98,7 +124,7 @@ export const FullViewer: React.FC<{
         activeLens={activeLens}
         onLensChange={setActiveLens}
         showActivityBar={showActivityBar}
-        onToggle={() => setShowActivityBar(v => !v)}
+        onToggle={toggleActivityBar}
       />
 
       <div className="flex-1 flex flex-col overflow-hidden">
@@ -108,23 +134,36 @@ export const FullViewer: React.FC<{
             layoutMode={layoutMode}
             rightPanel={rightPanel}
             onCycleLayout={cycleLayoutMode}
-            onToggleRightPanel={toggleRightPanel}
+            onToggleRightPanel={() => setRightPanel(rightPanel === 'none' ? 'agent' : 'none')}
             sessionContextName={sessionContext.sessionName}
           />
         )}
 
         <div className="flex-1 flex overflow-hidden">
-          <div className={`${mainContentClass} ${layoutMode === 'full' && rightPanel !== 'none' ? '' : ''}`}>
+          <div className={`${mainContentClass}`}>
             {renderLens()}
           </div>
+          {renderSecondaryLens()}
           {renderRightPanel()}
         </div>
 
         <StatusBar
           sessionContext={sessionContext}
           connectionStatus={connectionStatus}
+          stats={statusBarStats}
         />
       </div>
     </div>
+  );
+};
+
+export const FullViewer: React.FC<{
+  initialLens?: LensType;
+  connectionStatus: { online: boolean; isConnected: boolean; isModelReady: boolean; isDegraded: boolean };
+}> = ({ initialLens = 'dashboard', connectionStatus }) => {
+  return (
+    <FullViewerProvider initialState={{ activeLens: initialLens }}>
+      <FullViewerInner connectionStatus={connectionStatus} />
+    </FullViewerProvider>
   );
 };

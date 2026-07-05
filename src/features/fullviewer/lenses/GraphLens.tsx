@@ -21,11 +21,12 @@ export const GraphLens: React.FC<GraphLensProps> = ({ onClose, onNavigateToSessi
       setLoading(true);
       setError(null);
       try {
-        const [allSessions, allProjects] = await Promise.all([
+        const [allSessions, allProjects, allDocsResult] = await Promise.all([
           taqwinDataService.listSessions(200),
           taqwinDataService.listProjects(),
+          taqwinDataService.getSessionDocuments('').catch(() => [] as any[]),
         ]);
-        const allDocs: any[] = [];
+        const allDocs: any[] = allDocsResult;
         setSessions(allSessions.map((s: any) => ({
           session_id: s.session_id || s.id,
           display_id: s.display_id || '',

@@ -5,6 +5,7 @@
 
 export { default as MemoryLoaderBridge } from './MemoryLoaderBridge';
 export { default as ToolRegistryBridge } from './ToolRegistryBridge';
+export { default as TicketRegistry } from './TicketRegistry';
 export { default as MonitoringBridge } from './MonitoringBridge';
 export { default as CrossSystemSync } from './CrossSystemSync';
 export { default as TaqwinKnezIntegration } from './TaqwinKnezIntegration';
@@ -13,7 +14,6 @@ export { default as TaqwinKnezIntegration } from './TaqwinKnezIntegration';
 export type {
   TaqwinMemoryData,
   TaqwinMistake,
-  TaqwinTicket,
   TaqwinLogEntry
 } from './MemoryLoaderBridge';
 
@@ -22,6 +22,12 @@ export type {
   TaqwinToolParameter,
   ToolExecution
 } from './ToolRegistryBridge';
+
+export type {
+  TaqwinTicket,
+  TicketComment,
+  TicketFilters
+} from './TicketRegistry';
 
 export type {
   MCPMetrics,
