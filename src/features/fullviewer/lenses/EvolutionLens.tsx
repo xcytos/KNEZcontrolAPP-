@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Loader, AlertCircle } from 'lucide-react';
+import { Loader, AlertCircle, FileText } from 'lucide-react';
 import { SessionEvolutionChart } from '../../data/components/SessionEvolutionChart';
 import { SessionMetadataSidebar } from '../../data/components/SessionMetadataSidebar';
 import { taqwinDataService } from '../../../services/data/TaqwinDataService';
@@ -11,6 +11,7 @@ interface EvolutionLensProps {
 
 export const EvolutionLens: React.FC<EvolutionLensProps> = ({ sessionContext }) => {
   const [sessionData, setSessionData] = useState<any>(null);
+  const [documents, setDocuments] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -20,6 +21,7 @@ export const EvolutionLens: React.FC<EvolutionLensProps> = ({ sessionContext }) 
     setError(null);
     try {
       const hierarchy = await taqwinDataService.getSessionHierarchy(sessionContext.sessionId);
+      const docs = await taqwinDataService.getSessionDocuments(sessionContext.sessionId);
       if (hierarchy && hierarchy.session) {
         const timeline = buildTimeline(hierarchy);
         const stats = {
@@ -28,15 +30,16 @@ export const EvolutionLens: React.FC<EvolutionLensProps> = ({ sessionContext }) 
           memories: hierarchy.memories?.length || 0,
           decisions: hierarchy.decisions?.length || 0,
           files: hierarchy.files?.length || 0,
-          documents: 0,
+          documents: docs?.length || 0,
         };
         setSessionData({
           session: hierarchy.session,
           checkpoints: hierarchy.checkpoints || [],
-          documents: [],
+          documents: docs || [],
           timeline,
           stats,
         });
+        setDocuments(docs || []);
       }
     } catch (e) {
       setError(String(e));
@@ -83,13 +86,34 @@ export const EvolutionLens: React.FC<EvolutionLensProps> = ({ sessionContext }) 
   return (
     <div className="flex h-full">
       <div className="flex-1 overflow-y-auto">
-        <div className="p-4">
+        <div className="p-4 space-y-6">
           <SessionEvolutionChart
             timeline={sessionData.timeline}
             sessionStart={sessionData.session?.created_at || ''}
             sessionEnd={sessionData.session?.updated_at || ''}
             sessionId={sessionContext.sessionId}
           />
+          <div className="border-t border-zinc-800 pt-4">
+            <h3 className="text-sm font-medium text-zinc-300 mb-3 flex items-center gap-2">
+              <FileText className="w-4 h-4" />
+              Documents ({documents.length})
+            </h3>
+            {documents.length === 0 ? (
+              <p className="text-xs text-zinc-500">No documents found for this session</p>
+            ) : (
+              <div className="space-y-2">
+                {documents.slice(0, 10).map((doc: any, idx: number) => (
+                  <div key={doc.id || idx} className="bg-zinc-900/50 p-3 rounded-lg border border-zinc-800">
+                    <div className="font-medium text-sm text-zinc-200 truncate">{doc.title || doc.name || 'Untitled'}</div>
+                    <div className="text-xs text-zinc-500 mt-1">{doc.type || 'document'}</div>
+                  </div>
+                ))}
+                {documents.length > 10 && (
+                  <p className="text-xs text-zinc-500">+{documents.length - 10} more documents</p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
       <div className="w-80 border-l border-zinc-800 bg-zinc-900/20 overflow-y-auto">
