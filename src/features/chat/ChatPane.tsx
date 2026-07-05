@@ -39,6 +39,7 @@ import { ModelSelectionDropdown } from './components/ModelSelectionDropdown';
 import { ModelConfigModal } from './components/ModelConfigModal';
 import { ModelSelectionService } from '../../services/models/ModelSelectionService';
 import { useModel } from '../../contexts/ModelContext';
+import { getKeepAliveEnabled } from '../../services/infrastructure/config/Preferences';
 type Props = {
   sessionId: string | null;
   readOnly: boolean;
@@ -291,7 +292,10 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
     setIsSending(true);
 
     // T4+T8: Gate send on KNEZ online status
-    if (!online) {
+    // Only block if keepAlive is enabled (user wants auto-start)
+    // If keepAlive is disabled, user explicitly chose manual mode - allow sending without backend
+    const autoStartEnabled = getKeepAliveEnabled();
+    if (!online && autoStartEnabled) {
       showToast("KNEZ not ready. Please wait for connection.", "warning");
       setIsSending(false);
       return;

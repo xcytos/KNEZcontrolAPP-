@@ -33,6 +33,7 @@ import { webSocketClient } from "./websocket/WebSocketClient";
 import { ToolExecutionBridge } from "./chat/tools/ToolExecutionBridge";
 import { ToolExecutionService } from "./chat/tools/ToolExecutionService";
 import { ChatConfig } from "./chat/config/ChatConfig";
+import { getKeepAliveEnabled } from "./infrastructure/config/Preferences";
 import { MessageIdGenerator, newMessageId } from "./chat/utils/MessageIdGenerator";
 import { getConnectionManager } from "./connection/ConnectionManager";
 import { streamingExecutionEngine } from './execution/StreamingExecutionEngine';
@@ -2459,12 +2460,43 @@ export class ChatService {
 
     const responseStart = Date.now();
 
-    try {
-      // T4: Pre-flight health check — block if KNEZ is not ready
-      // TICKET-2: Increase timeout to 5000ms and use cached result if fresh
-      const health = await this.checkHealthCached();
-      if (!health || health.status !== "ok") {
-        logger.warn("chat", "pre_flight_health_check_failed", { sessionId: item.sessionId, health });
+    // T4: Pre-flight health check — block if KNEZ is not ready
+    // Only block if keepAlive is enabled (user wants auto-start)
+    // If keepAlive is disabled, user explicitly chose manual mode - allow sending without backend
+    const autoStartEnabled = getKeepAliveEnabled();
+    if (autoStartEnabled) {
+      try {
+        // TICKET-2: Increase timeout to 5000ms and use cached result if fresh
+        const health = await this.checkHealthCached();
+        if (!health || health.status !== "ok") {
+          logger.warn("chat", "pre_flight_health_check_failed", { sessionId: item.sessionId, health });
+          const errorMsg = "KNEZ not ready. Please wait for connection.";
+          await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered", deliveryError: undefined });
+          await sessionDatabase.updateMessage(`${id}-assistant`, {
+            deliveryStatus: "failed",
+            deliveryError: errorMsg,
+            isPartial: false,
+            text: "⚠️ KNEZ not ready. Please wait for connection.",
+            refusal: true
+          });
+          await sessionDatabase.removeOutgoing(id);
+          if (this.sessionId === item.sessionId) {
+            this.state.messages = this.state.messages.map((m) => {
+              if (m.id === id) return { ...m, deliveryStatus: "delivered", deliveryError: undefined };
+              if (m.id === `${id}-assistant`) {
+                return { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: "⚠️ KNEZ not ready. Please wait for connection.", refusal: true };
+              }
+              return m;
+            });
+            logger.error("chat_service", "health_check_failed", { id, sessionId: item.sessionId });
+          }
+          // PATCH 3: Use controlled cleanup instead of finalizeRequest duplicate
+          this.activeRequestId = null;
+          this.activeStream = null;
+          return;
+        }
+      } catch (healthErr) {
+        logger.error("chat", "pre_flight_health_check_exception", { sessionId: item.sessionId, error: String(healthErr) });
         const errorMsg = "KNEZ not ready. Please wait for connection.";
         await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered", deliveryError: undefined });
         await sessionDatabase.updateMessage(`${id}-assistant`, {
@@ -2474,7 +2506,6 @@ export class ChatService {
           text: "⚠️ KNEZ not ready. Please wait for connection.",
           refusal: true
         });
-        await sessionDatabase.removeOutgoing(id);
         if (this.sessionId === item.sessionId) {
           this.state.messages = this.state.messages.map((m) => {
             if (m.id === id) return { ...m, deliveryStatus: "delivered", deliveryError: undefined };
@@ -2483,38 +2514,13 @@ export class ChatService {
             }
             return m;
           });
-          logger.error("chat_service", "health_check_failed", { id, sessionId: item.sessionId });
+          logger.error("chat_service", "health_check_exception", { id, sessionId: item.sessionId, error: String(healthErr) });
         }
         // PATCH 3: Use controlled cleanup instead of finalizeRequest duplicate
         this.activeRequestId = null;
         this.activeStream = null;
         return;
       }
-    } catch (healthErr) {
-      logger.error("chat", "pre_flight_health_check_exception", { sessionId: item.sessionId, error: String(healthErr) });
-      const errorMsg = "KNEZ not ready. Please wait for connection.";
-      await sessionDatabase.updateMessage(id, { deliveryStatus: "delivered", deliveryError: undefined });
-      await sessionDatabase.updateMessage(`${id}-assistant`, {
-        deliveryStatus: "failed",
-        deliveryError: errorMsg,
-        isPartial: false,
-        text: "⚠️ KNEZ not ready. Please wait for connection.",
-        refusal: true
-      });
-      if (this.sessionId === item.sessionId) {
-        this.state.messages = this.state.messages.map((m) => {
-          if (m.id === id) return { ...m, deliveryStatus: "delivered", deliveryError: undefined };
-          if (m.id === `${id}-assistant`) {
-            return { ...m, deliveryStatus: "failed", deliveryError: errorMsg, isPartial: false, text: "⚠️ KNEZ not ready. Please wait for connection.", refusal: true };
-          }
-          return m;
-        });
-        logger.error("chat_service", "health_check_exception", { id, sessionId: item.sessionId, error: String(healthErr) });
-      }
-      // PATCH 3: Use controlled cleanup instead of finalizeRequest duplicate
-      this.activeRequestId = null;
-      this.activeStream = null;
-      return;
     }
 
     const ageMs = Date.now() - Date.parse(item.createdAt);

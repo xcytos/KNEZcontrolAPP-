@@ -125,16 +125,22 @@ function AppContent() {
   }, []);
 
   // Sync StatusProvider state to App logic
+  // Check keepAlive preference - if disabled, don't enforce readOnly from offline status
+  const keepAliveEnabled = getKeepAliveEnabled();
   useEffect(() => {
     if (online) {
       setReadOnly(false);
       if (!sessionId) sessionController.ensureLocalSession();
       knezClient.tryGetMcpRegistry(); // Background fetch
     } else {
-      setReadOnly(true);
+      // Only set readOnly=true if keepAlive is enabled (user wants auto-start)
+      // If keepAlive is disabled, user explicitly chose manual mode - allow chat without backend
+      if (keepAliveEnabled) {
+        setReadOnly(true);
+      }
       if (!sessionId) sessionController.ensureLocalSession();
     }
-  }, [online]);
+  }, [online, keepAliveEnabled]);
 
   // Orchestrator
   const { status: systemStatus, output: systemOutput, healthProbe: systemHealthProbe, launchAndConnect, stopKnez } = useSystemOrchestrator(() => {
