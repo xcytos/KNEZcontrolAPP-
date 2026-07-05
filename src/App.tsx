@@ -1,32 +1,8 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, lazy, Suspense } from 'react';
 import { MainLayout } from './components/layout/MainLayout';
 import { View } from './components/layout/Sidebar';
-import { ChatPane } from './features/chat/ChatPane';
-import { LineagePanel } from './features/chat/LineagePanel';
-import { MemoryExplorer } from './features/memory/MemoryExplorer';
-import { SessionTimeline } from './features/timeline/SessionTimeline';
-import { ReflectionPane } from './features/reflection/ReflectionPane';
-import { MistakeLedger } from './features/mistakes/MistakeLedger';
-import { DriftVisualizer } from './features/drift/DriftVisualizer';
-import { SettingsModal } from './features/settings/SettingsModal';
-import { KnezEventsPanel } from './features/events/KnezEventsPanel';
-import { InfrastructurePanel } from './features/infrastructure/InfrastructurePanel';
-import { McpRegistryView } from './features/mcp/McpRegistryView';
-import { AgentPane } from './features/agent/AgentPane';
-import { CognitivePanel } from './features/cognitive/CognitivePanel';
-import { GovernancePanel } from './features/governance/GovernancePanel';
-import { LogsPanel } from './features/logs/LogsPanel';
-import { UpdatesPanel } from './features/updates/UpdatesPanel';
-import { ExtractionDashboard } from './features/extraction/ExtractionDashboard';
-import { TestPanel } from './features/diagnostics/TestPanel';
-import { SkillsView } from './features/skills/SkillsView';
-import { DataExplorer } from './features/data/DataExplorer';
 import { FullViewer } from './features/fullviewer/FullViewer';
 import { FullViewerProvider } from './features/fullviewer/FullViewerContext';
-import { RepoVisualizer } from './features/repo/RepoVisualizer';
-import { ModelsPage } from './features/models/ModelsPage';
-import { taqwinDataService } from './services/data/TaqwinDataService';
-import { PlaygroundContainer } from './playgrounds/PlaygroundContainer';
 import { PresenceState, McpRegistrySnapshot } from './domain/DataContracts';
 import { knezClient } from './services/knez/KnezClient';
 import { chatService } from './services/ChatService';
@@ -53,7 +29,35 @@ import { features } from './config/features';
 import { initMcpBoot } from './mcp/mcpBoot';
 import { getStaticMemoryLoader } from './services/memory/StaticMemoryLoader';
 import { playgroundSDK } from './services/playground/PlaygroundSDK';
-import { Terminal } from 'lucide-react';
+
+const LoaderFallback = () => (
+  <div className="flex items-center justify-center h-full bg-zinc-950">
+    <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+  </div>
+);
+
+const L = <T extends React.ComponentType<any>>(loader: () => Promise<{ default: T }>) => lazy(loader);
+const ChatPane = L(() => import('./features/chat/ChatPane').then(m => ({ default: m.ChatPane })));
+const LineagePanel = L(() => import('./features/chat/LineagePanel').then(m => ({ default: m.LineagePanel })));
+const AgentPane = L(() => import('./features/agent/AgentPane').then(m => ({ default: m.AgentPane })));
+const MemoryExplorer = L(() => import('./features/memory/MemoryExplorer').then(m => ({ default: m.MemoryExplorer })));
+const CognitivePanel = L(() => import('./features/cognitive/CognitivePanel').then(m => ({ default: m.CognitivePanel })));
+const DriftVisualizer = L(() => import('./features/drift/DriftVisualizer').then(m => ({ default: m.DriftVisualizer })));
+const MistakeLedger = L(() => import('./features/mistakes/MistakeLedger').then(m => ({ default: m.MistakeLedger })));
+const KnezEventsPanel = L(() => import('./features/events/KnezEventsPanel').then(m => ({ default: m.KnezEventsPanel })));
+const SessionTimeline = L(() => import('./features/timeline/SessionTimeline').then(m => ({ default: m.SessionTimeline })));
+const ReflectionPane = L(() => import('./features/reflection/ReflectionPane').then(m => ({ default: m.ReflectionPane })));
+const GovernancePanel = L(() => import('./features/governance/GovernancePanel').then(m => ({ default: m.GovernancePanel })));
+const InfrastructurePanel = L(() => import('./features/infrastructure/InfrastructurePanel').then(m => ({ default: m.InfrastructurePanel })));
+const McpRegistryView = L(() => import('./features/mcp/McpRegistryView').then(m => ({ default: m.McpRegistryView })));
+const LogsPanel = L(() => import('./features/logs/LogsPanel').then(m => ({ default: m.LogsPanel })));
+const UpdatesPanel = L(() => import('./features/updates/UpdatesPanel').then(m => ({ default: m.UpdatesPanel })));
+const ExtractionDashboard = L(() => import('./features/extraction/ExtractionDashboard').then(m => ({ default: m.ExtractionDashboard })));
+const TestPanel = L(() => import('./features/diagnostics/TestPanel').then(m => ({ default: m.TestPanel })));
+const SkillsView = L(() => import('./features/skills/SkillsView').then(m => ({ default: m.SkillsView })));
+const ModelsPage = L(() => import('./features/models/ModelsPage').then(m => ({ default: m.ModelsPage })));
+const PlaygroundContainer = L(() => import('./playgrounds/PlaygroundContainer').then(m => ({ default: m.PlaygroundContainer })));
+const SettingsModal = L(() => import('./features/settings/SettingsModal').then(m => ({ default: m.SettingsModal })));
 
 // ...
 
@@ -278,28 +282,9 @@ function AppContent() {
         return <SkillsView />;
       case 'models':
         return <ModelsPage />;
-      case 'data':
-        return <DataExplorer />;
       case 'dashboard':
         // FullViewer is rendered persistently below to preserve state across tab switches
         return <div className="hidden" />;
-      case 'repository':
-        return (
-          <RepositoryView
-            currentSessionId={sessionId ?? undefined}
-          />
-        );
-      case 'terminal-sandbox':
-        return (
-          <div className="h-full w-full flex items-center justify-center text-zinc-500">
-            <div className="text-center">
-              <Terminal className="w-8 h-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">Terminal Sandbox</p>
-              <p className="text-xs text-zinc-600 mt-1">Terminals open below</p>
-            </div>
-          </div>
-        );
-
       default:
         return <ChatPane sessionId={sessionId} readOnly={readOnly} systemStatus={systemStatus} />;
     }
@@ -432,7 +417,9 @@ function AppContent() {
             />
           </div>
           <div className={activeView === 'dashboard' ? 'hidden h-full' : 'block h-full'}>
-            {renderContent()}
+            <Suspense fallback={<LoaderFallback />}>
+              {renderContent()}
+            </Suspense>
           </div>
           {lastCheck === null && (
             <div className="absolute inset-0 bg-zinc-950 flex items-center justify-center pointer-events-none">
@@ -465,45 +452,6 @@ const McpLoader = () => {
   useEffect(() => { load(); }, []);
   return <McpRegistryView snapshot={snapshot} onRefresh={load} />;
 }
-
-const RepositoryView = ({ currentSessionId }: { currentSessionId?: string }) => {
-  const [projects, setProjects] = useState<Array<{ project_id: string; project_name: string; project_path: string | null }>>([]);
-  const [sessions, setSessions] = useState<Array<{ session_id: string; display_id: string; name: string; project_id?: string }>>([]);
-
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const [all, allProjects] = await Promise.all([
-          taqwinDataService.listSessions(200),
-          taqwinDataService.listProjects(),
-        ]);
-        setSessions(all.map(s => ({
-          session_id: s.session_id || s.id,
-          display_id: s.display_id || s.session_id?.slice(0, 8) || '',
-          name: s.name || 'Unnamed',
-          project_id: s.project_id,
-        })));
-        setProjects(allProjects.map(p => ({
-          project_id: p.project_id,
-          project_name: p.project_name,
-          project_path: p.project_path || null,
-        })));
-      } catch (e) {
-        console.error('[RepositoryView] Failed to load data:', e);
-      }
-    };
-    load();
-  }, []);
-
-  return (
-    <RepoVisualizer
-      projects={projects}
-      dbPath={taqwinDataService.getDatabasePath()}
-      allSessions={sessions}
-      currentSessionId={currentSessionId}
-    />
-  );
-};
 
 function App() {
   // Track open session

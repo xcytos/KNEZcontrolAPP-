@@ -28,43 +28,30 @@ const FullViewerInner: React.FC<{
 
   const { sessionMetrics: stats, statusBarMetrics: statusBarStats } = useFullViewerStats(sessionContext.sessionId);
 
-  const renderLens = () => {
-    switch (activeLens) {
-      case 'dashboard': return <DashboardLens />;
-      case 'evolution': return <EvolutionLens sessionContext={sessionContext} />;
-      case 'explorer': return <ExplorerLens />;
-      case 'graph': return (
-        <GraphLens
-          onClose={() => setActiveLens('dashboard')}
-          onNavigateToSession={(sessionId, projectId) => {
-            setSessionContext({ sessionId, projectId });
-            setActiveLens('evolution');
-          }}
-          onNavigateToProject={(projectId) => {
-            setSessionContext({ projectId });
-            setActiveLens('dashboard');
-          }}
-        />
-      );
-      case 'repository': return <RepositoryLens sessionContext={sessionContext} />;
-      case 'terminal': return <TerminalLens />;
-      case 'chat': return <ChatLens sessionContext={sessionContext} />;
-      default: return <DashboardLens />;
-    }
+  const lensContent: Record<string, React.ReactNode> = {
+    dashboard: <DashboardLens />,
+    evolution: <EvolutionLens sessionContext={sessionContext} />,
+    explorer: <ExplorerLens />,
+    graph: (
+      <GraphLens
+        onClose={() => setActiveLens('dashboard')}
+        onNavigateToSession={(sessionId, projectId) => {
+          setSessionContext({ sessionId, projectId });
+          setActiveLens('evolution');
+        }}
+        onNavigateToProject={(projectId) => {
+          setSessionContext({ projectId });
+          setActiveLens('dashboard');
+        }}
+      />
+    ),
+    repository: <RepositoryLens sessionContext={sessionContext} />,
+    terminal: <TerminalLens />,
+    chat: <ChatLens sessionContext={sessionContext} />,
   };
 
   const renderSecondaryLens = () => {
     if (!secondaryLens) return null;
-
-    const lensComponents: Record<string, React.ReactNode> = {
-      dashboard: <DashboardLens />,
-      evolution: <EvolutionLens sessionContext={sessionContext} />,
-      explorer: <ExplorerLens />,
-      graph: <GraphLens onClose={() => setSecondaryLens(undefined)} />,
-      repository: <RepositoryLens sessionContext={sessionContext} />,
-      terminal: <TerminalLens />,
-      chat: <ChatLens sessionContext={sessionContext} />,
-    };
 
     return (
       <div className="w-1/2 border-l border-zinc-800 bg-zinc-900/50 flex flex-col overflow-hidden">
@@ -80,7 +67,7 @@ const FullViewerInner: React.FC<{
           </button>
         </div>
         <div className="flex-1 overflow-hidden">
-          {lensComponents[secondaryLens] || lensComponents.dashboard}
+          {lensContent[secondaryLens] || lensContent.dashboard}
         </div>
       </div>
     );
@@ -138,8 +125,12 @@ const FullViewerInner: React.FC<{
         )}
 
         <div className="flex-1 flex overflow-hidden">
-          <div className={`${mainContentClass}`}>
-            {renderLens()}
+          <div className={`${mainContentClass} relative`}>
+            {Object.entries(lensContent).map(([lens, content]) => (
+              <div key={lens} className="absolute inset-0" style={{ display: activeLens === lens ? 'flex' : 'none' }}>
+                {content}
+              </div>
+            ))}
           </div>
           {renderSecondaryLens()}
           {renderRightPanel()}

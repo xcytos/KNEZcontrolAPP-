@@ -16,15 +16,13 @@ import {
   Zap,
   ChevronDown,
   ChevronRight,
-  HardDrive,
-  LayoutDashboard,
-  GitBranch
+  LayoutDashboard
 } from 'lucide-react';
 import { tabErrorStore } from '../../services/infrastructure/error/TabErrorStore';
 import { features } from '../../config/features';
 import { Badge } from '../ui/core/Badge';
 
-export type View = 'chat' | 'memory' | 'timeline' | 'reflection' | 'infrastructure' | 'mcp' | 'governance' | 'agent' | 'logs' | 'replay' | 'updates' | 'extraction' | 'diagnostics' | 'skills' | 'terminal-sandbox' | 'data' | 'dashboard' | 'repository' | 'models';
+export type View = 'chat' | 'memory' | 'timeline' | 'reflection' | 'infrastructure' | 'mcp' | 'governance' | 'agent' | 'logs' | 'replay' | 'updates' | 'extraction' | 'diagnostics' | 'skills' | 'dashboard' | 'models';
 
 export type PlaygroundView = 'playground';
 
@@ -74,7 +72,6 @@ export const Sidebar: FC<SidebarProps> = ({ activeView, onViewChange, tabErrors 
         { id: 'agent', label: 'Agent Loop', icon: Activity },
         { id: 'models', label: 'Models', icon: Cpu },
         { id: 'memory', label: 'Memory', icon: Brain },
-        { id: 'terminal-sandbox', label: 'Terminal Sandbox', icon: TerminalSquare },
       ]
     },
     {
@@ -83,9 +80,7 @@ export const Sidebar: FC<SidebarProps> = ({ activeView, onViewChange, tabErrors 
       icon: Wrench,
       items: [
         { id: 'skills', label: 'Skills', icon: Wrench },
-        { id: 'repository', label: 'Repository', icon: GitBranch },
         ...(features.mcpViews ? [{ id: 'mcp' as const, label: 'MCP Registry', icon: Puzzle }] : []),
-        { id: 'data', label: 'Data Explorer', icon: HardDrive },
         { id: 'diagnostics', label: 'Diagnostics', icon: Cpu },
       ]
     },

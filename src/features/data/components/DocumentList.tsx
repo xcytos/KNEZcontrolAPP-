@@ -76,7 +76,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
   }
 
   return (
-    <div className="overflow-y-auto max-h-full">
+    <div className="overflow-y-auto max-h-full flex-1">
       <div className={`space-y-${compact ? '2' : '3'}`}>
       {documents.map((doc) => (
         <div

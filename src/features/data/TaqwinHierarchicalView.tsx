@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -101,6 +101,9 @@ export const TaqwinHierarchicalView: React.FC<{
     project_path: '',
     description: '',
   });
+
+  // Cache previously loaded session hierarchies to avoid re-fetching
+  const hierarchyCache = useRef<Map<string, any>>(new Map());
 
   // Load projects on mount
   useEffect(() => {
@@ -295,6 +298,16 @@ export const TaqwinHierarchicalView: React.FC<{
   };
 
   const loadSessionHierarchy = async (sessionId: string) => {
+    const cached = hierarchyCache.current.get(sessionId);
+    if (cached) {
+      setHierarchy(cached.data);
+      setTimeline(cached.timeline);
+      setSessionDocuments(cached.documents || []);
+      setViewLevel('session-detail');
+      setExpandedSections({ checkpoints: true, events: true, decisions: true, documents: true });
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
@@ -305,21 +318,22 @@ export const TaqwinHierarchicalView: React.FC<{
       console.log('[TaqwinHierarchicalView] Hierarchy loaded:', data);
       setHierarchy(data);
       
-      // Build timeline
       console.log('[TaqwinHierarchicalView] Loading timeline...');
       const timelineData = await taqwinDataService.getSessionTimeline(sessionId);
       console.log('[TaqwinHierarchicalView] Timeline loaded:', timelineData.length, 'items');
       setTimeline(timelineData);
       
-      // Load session documents
+      let docs: any[] = [];
       try {
-        const docs = await taqwinDataService.getSessionDocuments(sessionId);
+        docs = await taqwinDataService.getSessionDocuments(sessionId) || [];
         console.log('[TaqwinHierarchicalView] Session documents loaded:', docs);
-        setSessionDocuments(docs || []);
+        setSessionDocuments(docs);
       } catch (docErr) {
         console.warn('[TaqwinHierarchicalView] Could not load session documents:', docErr);
         setSessionDocuments([]);
       }
+      
+      hierarchyCache.current.set(sessionId, { data, timeline: timelineData, documents: docs });
       
       console.log('[TaqwinHierarchicalView] Setting view level to session-detail');
       setViewLevel('session-detail');
@@ -704,7 +718,7 @@ export const TaqwinHierarchicalView: React.FC<{
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto min-h-0">
             {loading && viewLevel === 'projects' ? (
               <div className="flex items-center justify-center p-4 text-zinc-400">
                 <Loader className="w-4 h-4 animate-spin mr-2" />
@@ -815,7 +829,7 @@ export const TaqwinHierarchicalView: React.FC<{
               )
             ) : viewLevel === 'session-detail' ? (
               /* Session Detail Sidebar - Show session info and documents */
-              <div className="p-2 space-y-2">
+              <div className="p-2 space-y-2 overflow-y-auto">
                 {selectedSessionId && hierarchy && (
                   <>
                     <div className="bg-blue-900/40 border-l-4 border-blue-600 p-3 rounded-lg mb-3">
@@ -1033,9 +1047,9 @@ export const TaqwinHierarchicalView: React.FC<{
               </div>
             </div>
           ) : viewLevel === 'sessions' ? (
-            <div className="flex-1 flex gap-4">
+            <div className="flex-1 flex gap-4 min-h-0">
               {/* Left: Project Documents */}
-              <div className="w-80 flex flex-col border-r border-zinc-800 bg-zinc-900/30 overflow-hidden">
+              <div className="flex-1 flex flex-col border-r border-zinc-800 bg-zinc-900/30 overflow-hidden min-h-0">
                 <div className="p-4 border-b border-zinc-800">
                   <h4 className="text-sm font-semibold text-zinc-300 flex items-center gap-2">
                     <FileText className="w-4 h-4 text-pink-400" />
@@ -1060,8 +1074,8 @@ export const TaqwinHierarchicalView: React.FC<{
                 </div>
               </div>
 
-              {/* Right: Git Stats and Session Summary */}
-              <div className="flex-1 flex flex-col overflow-hidden">
+              {/* Right: Git Stats and Session Summary (narrow) */}
+              <div className="w-1/4 flex flex-col overflow-hidden">
                 {/* Header */}
                 <div className="p-4 border-b border-zinc-800">
                   <h3 className="text-base font-semibold text-zinc-200">Project Details</h3>
