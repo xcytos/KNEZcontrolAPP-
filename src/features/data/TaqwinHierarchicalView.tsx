@@ -29,6 +29,7 @@ import {
 import { SessionEvolutionChart } from './components/SessionEvolutionChart';
 import { SessionEvolutionFullView } from './components/SessionEvolutionFullView';
 import { genericSqliteService } from '../../services/data/GenericSqliteService';
+import { sortDocuments } from '../../utils/sort';
 import { DocumentList, Document } from './components/DocumentList';
 import { DocumentDetailPanel } from './components/DocumentDetailPanel';
 import { ensurePostgresConnection } from '../../services/data/PostgresConnectionManager';
@@ -838,14 +839,12 @@ export const TaqwinHierarchicalView: React.FC<{
                             Documents ({sessionDocuments.length})
                           </h4>
                         </div>
-                        <DocumentList
-                          documents={sessionDocuments.sort((a, b) =>
-                            new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-                          )}
-                          onDocumentClick={(doc) => setSelectedDocument(doc)}
-                          compact={true}
-                          showSessionInfo={false}
-                        />
+    <DocumentList
+      documents={sortDocuments(sessionDocuments)}
+      onDocumentClick={(doc) => setSelectedDocument(doc)}
+      compact={true}
+      showSessionInfo={false}
+    />
                       </div>
                     )}
                   </>
@@ -1046,14 +1045,12 @@ export const TaqwinHierarchicalView: React.FC<{
                 </div>
                 <div className="flex-1 overflow-y-auto p-3">
                   {projectDocuments.length > 0 ? (
-                    <DocumentList
-                      documents={projectDocuments.sort((a, b) =>
-                        new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-                      )}
-                      onDocumentClick={(doc) => setSelectedDocument(doc)}
-                      compact={true}
-                      showSessionInfo={true}
-                    />
+              <DocumentList
+                documents={sortDocuments(projectDocuments)}
+                onDocumentClick={(doc) => setSelectedDocument(doc)}
+                compact={true}
+                showSessionInfo={true}
+              />
                   ) : (
                     <div className="text-center py-8 text-zinc-500">
                       <FileText className="w-10 h-10 mx-auto mb-2 opacity-50" />
@@ -1388,7 +1385,7 @@ export const TaqwinHierarchicalView: React.FC<{
                         {expandedSections.documents && (
                           <div className="p-3">
                             <DocumentList
-                              documents={sessionDocuments}
+                              documents={sortDocuments(sessionDocuments)}
                               onDocumentClick={(doc) => setSelectedDocument(doc)}
                               compact={true}
                               showSessionInfo={false}

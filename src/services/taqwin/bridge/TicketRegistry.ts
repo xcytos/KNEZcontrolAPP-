@@ -1,4 +1,5 @@
 import { getUnifiedMemoryAPI } from '../../memory/shared/UnifiedMemoryAPI';
+import { byRecentDesc } from '../../../utils/sort';
 
 export interface TaqwinTicket {
   id: string;
@@ -46,7 +47,7 @@ export class TicketRegistry {
   getAll(filters?: TicketFilters): TaqwinTicket[] {
     let results = Array.from(this.tickets.values());
 
-    if (!filters) return results.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+    if (!filters) return results.sort(byRecentDesc('updated_at'));
 
     if (filters.status) {
       const statuses = Array.isArray(filters.status) ? filters.status : [filters.status];
@@ -77,7 +78,7 @@ export class TicketRegistry {
       );
     }
 
-    return results.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+    return results.sort(byRecentDesc('updated_at'));
   }
 
   getById(id: string): TaqwinTicket | undefined {

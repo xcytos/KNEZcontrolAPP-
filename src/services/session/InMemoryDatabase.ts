@@ -1,5 +1,6 @@
 import { ChatMessage } from '../../domain/DataContracts';
 import { Session, StoredMessage } from './SessionDatabase';
+import { sortSessions } from '../../utils/sort';
 
 /**
  * In-memory fallback database for when IndexedDB/Dexie fails
@@ -57,9 +58,7 @@ export class InMemoryDatabase {
   }
 
   async getSessions(): Promise<Session[]> {
-    return Array.from(this.sessions.values()).sort((a, b) => 
-      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-    );
+    return sortSessions(Array.from(this.sessions.values()));
   }
 
   async getSession(id: string): Promise<Session | undefined> {

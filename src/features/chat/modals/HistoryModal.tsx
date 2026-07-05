@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Modal } from '../../../components/ui/core/Modal';
 import { Input } from '../../../components/ui/core/Input';
+import { sortSessions } from '../../../utils/sort';
 import { Button } from '../../../components/ui/core/Button';
 import { History, Trash2 } from 'lucide-react';
 import { useToast } from '../../../components/ui/Toast';
@@ -33,8 +34,7 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
       setLoading(true);
       sessionDatabase.getSessions()
         .then(list => {
-          const sorted = list.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-          const filtered = sorted.filter(s => !s.id.startsWith("test-session-"));
+          const filtered = sortSessions(list).filter(s => !s.id.startsWith("test-session-"));
           if (!cancelled) setSessions(filtered);
         })
         .finally(() => { if (!cancelled) setLoading(false); });

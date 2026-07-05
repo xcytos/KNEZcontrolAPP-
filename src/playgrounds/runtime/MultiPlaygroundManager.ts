@@ -17,6 +17,8 @@ export interface PlaygroundSessionConfig {
   enablePersistence: boolean;
 }
 
+import { sortByOldest } from '../../utils/sort';
+
 export class MultiPlaygroundManager {
   private sessions: Map<string, PlaygroundSession> = new Map();
   private config: PlaygroundSessionConfig;
@@ -234,10 +236,7 @@ export class MultiPlaygroundManager {
     const sessions = Array.from(this.sessions.values());
     
     if (sessions.length > this.config.maxSessions) {
-      // Sort by last activity and remove oldest
-      const sortedSessions = sessions.sort((a, b) => 
-        a.lastActivity.getTime() - b.lastActivity.getTime()
-      );
+      const sortedSessions = sortByOldest(sessions, 'lastActivity');
       
       const sessionsToRemove = sortedSessions.slice(0, sessions.length - this.config.maxSessions);
       

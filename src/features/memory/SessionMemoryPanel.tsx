@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { sessionDatabase } from '../../services/session/SessionDatabase';
 import { getSimpleMemoryStorage, SimpleMemoryState } from '../../services/memory/storage/SimpleMemoryStorage';
 import { SessionSyncButton } from './SessionSyncButton';
+import { sortSessions } from '../../utils/sort';
 
 interface SessionInfo {
   id: string;
@@ -76,12 +77,7 @@ export const SessionMemoryPanel: React.FC<SessionMemoryPanelProps> = ({
         })
       );
       
-      // Sort by last activity (most recent first)
-      sessionInfos.sort((a, b) => 
-        new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime()
-      );
-      
-      setSessions(sessionInfos);
+      setSessions(sortSessions(sessionInfos));
     } catch (error) {
       console.error('Failed to load sessions:', error);
     } finally {
