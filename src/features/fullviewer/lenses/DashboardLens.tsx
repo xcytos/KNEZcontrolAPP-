@@ -113,8 +113,8 @@ export const DashboardLens: React.FC = () => {
         })}
       </div>
 
-      <div className="flex-1 relative overflow-hidden">
-        <div className="absolute inset-0" style={{ display: navigation.activeSubTab === 'hierarchy' ? 'flex' : 'none' }}>
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden" style={{ display: navigation.activeSubTab === 'hierarchy' ? 'flex' : 'none' }}>
           <TaqwinHierarchicalView
             onNavigateToSqlite={() => {}}
             onActivityContextChange={handleActivityContextChange}
@@ -128,7 +128,7 @@ export const DashboardLens: React.FC = () => {
             }}
           />
         </div>
-        <div className="absolute inset-0 overflow-y-auto" style={{ display: navigation.activeSubTab === 'evolution' ? 'flex' : 'none' }}>
+        <div className="flex-1 overflow-y-auto" style={{ display: navigation.activeSubTab === 'evolution' ? 'block' : 'none' }}>
           {!sessionContext.sessionId ? (
             <div className="h-full flex items-center justify-center text-zinc-500">
               <div className="text-center">
@@ -157,7 +157,7 @@ export const DashboardLens: React.FC = () => {
             </div>
           ) : null}
         </div>
-        <div className="absolute inset-0" style={{ display: navigation.activeSubTab === 'sessions' ? 'flex' : 'none' }}>
+        <div className="flex-1 flex flex-col overflow-hidden" style={{ display: navigation.activeSubTab === 'sessions' ? 'flex' : 'none' }}>
           <ActiveSessionsPanel
             currentSessionId={sessionContext.sessionId}
             currentProjectId={sessionContext.projectId}
