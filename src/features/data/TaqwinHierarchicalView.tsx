@@ -49,8 +49,9 @@ export interface ControlledNavigationProps {
 export const TaqwinHierarchicalView: React.FC<{
   onNavigateToSqlite?: (tableName: string, filter?: string, issueType?: string) => void;
   onActivityContextChange?: (context: { sessionId?: string; sessionName?: string; projectId?: string }) => void;
+  onNavigateToFullView?: () => void;
   controlledNavigation?: ControlledNavigationProps;
-}> = ({ onNavigateToSqlite, onActivityContextChange, controlledNavigation }) => {
+}> = ({ onNavigateToSqlite, onActivityContextChange, onNavigateToFullView, controlledNavigation }) => {
   const controlled = controlledNavigation;
 
   // Navigation state — either controlled from parent or local
@@ -665,6 +666,14 @@ export const TaqwinHierarchicalView: React.FC<{
                   <>
                     <FileText className="w-4 h-4" />
                     Details
+                    {onNavigateToFullView && (
+                      <button
+                        onClick={onNavigateToFullView}
+                        className="ml-2 px-2 py-0.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
+                      >
+                        Full View
+                      </button>
+                    )}
                   </>
                 )}
               </h2>
