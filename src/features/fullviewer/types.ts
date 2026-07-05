@@ -18,6 +18,18 @@ export interface SessionContext {
   projectName?: string;
 }
 
+export type DashboardSubTab = 'hierarchy' | 'evolution' | 'sessions';
+export type ViewLevel = 'projects' | 'sessions' | 'session-detail';
+
+export interface NavigationState {
+  activeSubTab: DashboardSubTab;
+  viewLevel: ViewLevel;
+  selectedProjectId: string | null;
+  selectedSessionId: string | null;
+  searchTerm: string;
+  viewMode: 'timeline' | 'sections';
+}
+
 export interface FullViewerState {
   activeLens: LensType;
   layoutMode: LayoutMode;
@@ -25,6 +37,7 @@ export interface FullViewerState {
   rightPanel: RightPanelContent;
   sessionContext: SessionContext;
   showActivityBar: boolean;
+  navigation: NavigationState;
 }
 
 export interface LensDefinition {

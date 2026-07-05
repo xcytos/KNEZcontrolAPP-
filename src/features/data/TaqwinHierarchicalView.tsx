@@ -36,21 +36,47 @@ import { RelationshipGraph } from './components/RelationshipGraph';
 
 type ViewLevel = 'projects' | 'sessions' | 'session-detail';
 
+export interface ControlledNavigationProps {
+  viewLevel: ViewLevel;
+  selectedProjectId: string | null;
+  selectedSessionId: string | null;
+  onViewLevelChange: (level: ViewLevel) => void;
+  onSelectedProjectIdChange: (id: string | null) => void;
+  onSelectedSessionIdChange: (id: string | null) => void;
+}
+
 export const TaqwinHierarchicalView: React.FC<{
   onNavigateToSqlite?: (tableName: string, filter?: string, issueType?: string) => void;
   onActivityContextChange?: (context: { sessionId?: string; sessionName?: string; projectId?: string }) => void;
-}> = ({ onNavigateToSqlite, onActivityContextChange }) => {
-  // View state
-  const [viewLevel, setViewLevel] = useState<ViewLevel>('projects');
+  controlledNavigation?: ControlledNavigationProps;
+}> = ({ onNavigateToSqlite, onActivityContextChange, controlledNavigation }) => {
+  const controlled = controlledNavigation;
+
+  // Navigation state — either controlled from parent or local
+  const [localViewLevel, localSetViewLevel] = useState<ViewLevel>('projects');
+  const [localSelectedProjectId, localSetSelectedProjectId] = useState<string | null>(null);
+  const [localSelectedSessionId, localSetSelectedSessionId] = useState<string | null>(null);
+  const [localSearchTerm, localSetSearchTerm] = useState('');
+  const [localViewMode, localSetViewMode] = useState<'timeline' | 'sections'>('timeline');
+
+  const viewLevel = controlled?.viewLevel ?? localViewLevel;
+  const selectedProjectId = controlled?.selectedProjectId ?? localSelectedProjectId;
+  const selectedSessionId = controlled?.selectedSessionId ?? localSelectedSessionId;
+  const searchTerm = localSearchTerm; // searchTerm stays local (typing transient)
+  const viewMode = localViewMode; // viewMode stays local (transient UI)
+
+  const setViewLevel = controlled?.onViewLevelChange ?? localSetViewLevel;
+  const setSelectedProjectId = controlled?.onSelectedProjectIdChange ?? localSetSelectedProjectId;
+  const setSelectedSessionId = controlled?.onSelectedSessionIdChange ?? localSetSelectedSessionId;
+  const setSearchTerm = localSetSearchTerm;
+  const setViewMode = localSetViewMode;
+
+  // Data state (always local)
   const [projects, setProjects] = useState<Project[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const [projectBreadcrumb, setProjectBreadcrumb] = useState<Project[]>([]); // Navigation breadcrumb trail
-  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set()); // Track which parent projects are expanded
-  
-  // Data state
+  const [projectBreadcrumb, setProjectBreadcrumb] = useState<Project[]>([]);
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
-  const [allSessions, setAllSessions] = useState<SessionListItem[]>([]); // For session_id search
+  const [allSessions, setAllSessions] = useState<SessionListItem[]>([]);
   const [hierarchy, setHierarchy] = useState<SessionHierarchy | null>(null);
   const [timeline, setTimeline] = useState<any[]>([]);
   const [integrityIssues, setIntegrityIssues] = useState<DataIntegrityIssues | null>(null);
@@ -58,14 +84,12 @@ export const TaqwinHierarchicalView: React.FC<{
   const [sessionDocuments, setSessionDocuments] = useState<Document[]>([]);
   const [projectDocuments, setProjectDocuments] = useState<Document[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
-  const [allDocuments, setAllDocuments] = useState<Document[]>([]); // For Level 1 counts
+  const [allDocuments, setAllDocuments] = useState<Document[]>([]);
   
   // UI state
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [viewMode, setViewMode] = useState<'timeline' | 'sections'>('timeline');
   const [showIssues, setShowIssues] = useState(false);
   const [showAddProjectModal, setShowAddProjectModal] = useState(false);
   const [showRelationshipGraph, setShowRelationshipGraph] = useState(false);

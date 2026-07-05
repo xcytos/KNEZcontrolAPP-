@@ -1,17 +1,11 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import { LayoutDashboard, BarChart3, Activity, Loader, AlertCircle } from 'lucide-react';
 import { TaqwinHierarchicalView } from '../../data/TaqwinHierarchicalView';
 import { ActiveSessionsPanel } from '../../dashboard/ActiveSessionsPanel';
 import { SessionEvolutionChart } from '../../data/components/SessionEvolutionChart';
 import { taqwinDataService } from '../../../services/data/TaqwinDataService';
-import type { SessionContext } from '../types';
-
-interface DashboardLensProps {
-  sessionContext: SessionContext;
-  onSessionContextChange: (ctx: SessionContext) => void;
-}
-
-type DashboardTab = 'hierarchy' | 'evolution' | 'sessions';
+import { useFullViewer } from '../FullViewerContext';
+import type { DashboardSubTab, SessionContext } from '../types';
 
 function buildTimeline(hierarchy: any): any[] {
   const events: any[] = [];
@@ -38,15 +32,26 @@ function buildTimeline(hierarchy: any): any[] {
   return events;
 }
 
-export const DashboardLens: React.FC<DashboardLensProps> = ({ sessionContext, onSessionContextChange }) => {
-  const [activeTab, setActiveTab] = useState<DashboardTab>('hierarchy');
-  const [evolutionData, setEvolutionData] = useState<any>(null);
-  const [evolutionLoading, setEvolutionLoading] = useState(false);
-  const [evolutionError, setEvolutionError] = useState<string | null>(null);
+export const DashboardLens: React.FC = () => {
+  const {
+    sessionContext, setSessionContext,
+    navigation, setActiveSubTab,
+    setSelectedSessionId, setSelectedProjectId, setViewLevel,
+  } = useFullViewer();
+  const { selectedSessionId, selectedProjectId, viewLevel } = navigation;
+
+  const [evolutionData, setEvolutionData] = React.useState<any>(null);
+  const [evolutionLoading, setEvolutionLoading] = React.useState(false);
+  const [evolutionError, setEvolutionError] = React.useState<string | null>(null);
 
   const handleActivityContextChange = useCallback((ctx: SessionContext) => {
-    onSessionContextChange(ctx);
-  }, [onSessionContextChange]);
+    setSessionContext(ctx);
+    if (ctx.sessionId) setSelectedSessionId(ctx.sessionId);
+    if (ctx.projectId) setSelectedProjectId(ctx.projectId);
+    if (ctx.sessionId && ctx.projectId) setViewLevel('session-detail');
+    else if (ctx.projectId) setViewLevel('sessions');
+    else setViewLevel('projects');
+  }, [setSessionContext, setSelectedSessionId, setSelectedProjectId, setViewLevel]);
 
   useEffect(() => {
     const sid = sessionContext.sessionId;
@@ -81,23 +86,22 @@ export const DashboardLens: React.FC<DashboardLensProps> = ({ sessionContext, on
   }, [sessionContext.sessionId]);
 
   const tabs = [
-    { id: 'hierarchy' as DashboardTab, label: 'Hierarchy', icon: LayoutDashboard },
-    { id: 'evolution' as DashboardTab, label: 'Evolution', icon: BarChart3 },
-    { id: 'sessions' as DashboardTab, label: 'Sessions', icon: Activity },
+    { id: 'hierarchy' as DashboardSubTab, label: 'Hierarchy', icon: LayoutDashboard },
+    { id: 'evolution' as DashboardSubTab, label: 'Evolution', icon: BarChart3 },
+    { id: 'sessions' as DashboardSubTab, label: 'Sessions', icon: Activity },
   ];
 
   return (
     <div className="flex flex-col h-full">
-      {/* Sub-tabs */}
       <div className="flex gap-1 px-4 py-2 border-b border-zinc-800 bg-zinc-900/30 flex-shrink-0">
         {tabs.map(tab => {
           const Icon = tab.icon;
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => setActiveSubTab(tab.id)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all ${
-                activeTab === tab.id
+                navigation.activeSubTab === tab.id
                   ? 'bg-blue-600 text-white shadow-sm'
                   : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
               }`}
@@ -109,15 +113,22 @@ export const DashboardLens: React.FC<DashboardLensProps> = ({ sessionContext, on
         })}
       </div>
 
-      {/* Content */}
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'hierarchy' && (
+        {navigation.activeSubTab === 'hierarchy' && (
           <TaqwinHierarchicalView
             onNavigateToSqlite={() => {}}
             onActivityContextChange={handleActivityContextChange}
+            controlledNavigation={{
+              viewLevel,
+              selectedProjectId,
+              selectedSessionId,
+              onViewLevelChange: setViewLevel,
+              onSelectedProjectIdChange: setSelectedProjectId,
+              onSelectedSessionIdChange: setSelectedSessionId,
+            }}
           />
         )}
-        {activeTab === 'evolution' && (
+        {navigation.activeSubTab === 'evolution' && (
           <div className="h-full overflow-y-auto">
             {!sessionContext.sessionId ? (
               <div className="h-full flex items-center justify-center text-zinc-500">
@@ -148,7 +159,7 @@ export const DashboardLens: React.FC<DashboardLensProps> = ({ sessionContext, on
             ) : null}
           </div>
         )}
-        {activeTab === 'sessions' && (
+        {navigation.activeSubTab === 'sessions' && (
           <ActiveSessionsPanel
             currentSessionId={sessionContext.sessionId}
             currentProjectId={sessionContext.projectId}

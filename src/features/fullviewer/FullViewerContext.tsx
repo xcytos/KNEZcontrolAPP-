@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
-import type { LensType, LayoutMode, RightPanelContent, SessionContext, FullViewerState } from './types';
+import type { LensType, LayoutMode, RightPanelContent, SessionContext, FullViewerState, NavigationState, DashboardSubTab, ViewLevel } from './types';
 
 interface FullViewerContextType extends FullViewerState {
   setActiveLens: (lens: LensType) => void;
@@ -9,7 +9,22 @@ interface FullViewerContextType extends FullViewerState {
   setSessionContext: (ctx: SessionContext) => void;
   toggleActivityBar: () => void;
   cycleLayoutMode: () => void;
+  setActiveSubTab: (tab: DashboardSubTab) => void;
+  setViewLevel: (level: ViewLevel) => void;
+  setSelectedProjectId: (id: string | null) => void;
+  setSelectedSessionId: (id: string | null) => void;
+  setSearchTerm: (term: string) => void;
+  setViewMode: (mode: 'timeline' | 'sections') => void;
 }
+
+const defaultNavigation: NavigationState = {
+  activeSubTab: 'hierarchy',
+  viewLevel: 'projects',
+  selectedProjectId: null,
+  selectedSessionId: null,
+  searchTerm: '',
+  viewMode: 'timeline',
+};
 
 const defaultState: FullViewerState = {
   activeLens: 'dashboard',
@@ -17,6 +32,7 @@ const defaultState: FullViewerState = {
   rightPanel: 'agent',
   sessionContext: {},
   showActivityBar: true,
+  navigation: defaultNavigation,
 };
 
 const FullViewerContext = createContext<FullViewerContextType | null>(null);
@@ -25,7 +41,11 @@ export const FullViewerProvider: React.FC<{ children: ReactNode; initialState?: 
   children,
   initialState,
 }) => {
-  const [state, setState] = useState<FullViewerState>({ ...defaultState, ...initialState });
+  const [state, setState] = useState<FullViewerState>({
+    ...defaultState,
+    ...initialState,
+    navigation: { ...defaultNavigation, ...initialState?.navigation },
+  });
 
   const setActiveLens = useCallback((lens: LensType) => {
     setState(prev => ({ ...prev, activeLens: lens }));
@@ -44,7 +64,12 @@ export const FullViewerProvider: React.FC<{ children: ReactNode; initialState?: 
   }, []);
 
   const setSessionContext = useCallback((ctx: SessionContext) => {
-    setState(prev => ({ ...prev, sessionContext: ctx }));
+    setState(prev => {
+      if (Object.keys(ctx).length === 0) {
+        return { ...prev, sessionContext: {} };
+      }
+      return { ...prev, sessionContext: { ...prev.sessionContext, ...ctx } };
+    });
   }, []);
 
   const toggleActivityBar = useCallback(() => {
@@ -60,6 +85,30 @@ export const FullViewerProvider: React.FC<{ children: ReactNode; initialState?: 
     });
   }, []);
 
+  const setActiveSubTab = useCallback((tab: DashboardSubTab) => {
+    setState(prev => ({ ...prev, navigation: { ...prev.navigation, activeSubTab: tab } }));
+  }, []);
+
+  const setViewLevel = useCallback((level: ViewLevel) => {
+    setState(prev => ({ ...prev, navigation: { ...prev.navigation, viewLevel: level } }));
+  }, []);
+
+  const setSelectedProjectId = useCallback((id: string | null) => {
+    setState(prev => ({ ...prev, navigation: { ...prev.navigation, selectedProjectId: id } }));
+  }, []);
+
+  const setSelectedSessionId = useCallback((id: string | null) => {
+    setState(prev => ({ ...prev, navigation: { ...prev.navigation, selectedSessionId: id } }));
+  }, []);
+
+  const setSearchTerm = useCallback((term: string) => {
+    setState(prev => ({ ...prev, navigation: { ...prev.navigation, searchTerm: term } }));
+  }, []);
+
+  const setViewMode = useCallback((mode: 'timeline' | 'sections') => {
+    setState(prev => ({ ...prev, navigation: { ...prev.navigation, viewMode: mode } }));
+  }, []);
+
   return (
     <FullViewerContext.Provider value={{
       ...state,
@@ -70,6 +119,12 @@ export const FullViewerProvider: React.FC<{ children: ReactNode; initialState?: 
       setSessionContext,
       toggleActivityBar,
       cycleLayoutMode,
+      setActiveSubTab,
+      setViewLevel,
+      setSelectedProjectId,
+      setSelectedSessionId,
+      setSearchTerm,
+      setViewMode,
     }}>
       {children}
     </FullViewerContext.Provider>

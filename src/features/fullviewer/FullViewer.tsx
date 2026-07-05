@@ -14,7 +14,7 @@ import { AgentChatPanel } from './panels/AgentChatPanel';
 import { FileDetailPanel } from './panels/FileDetailPanel';
 import { useFullViewer, FullViewerProvider } from './FullViewerContext';
 import { useFullViewerStats } from './hooks/useFullViewerStats';
-import type { LensType, SessionContext } from './types';
+import type { LensType } from './types';
 
 const FullViewerInner: React.FC<{
   connectionStatus: { online: boolean; isConnected: boolean; isModelReady: boolean; isDegraded: boolean };
@@ -28,22 +28,20 @@ const FullViewerInner: React.FC<{
 
   const { sessionMetrics: stats, statusBarMetrics: statusBarStats } = useFullViewerStats(sessionContext.sessionId);
 
-  const handleSessionContextChange = (ctx: SessionContext) => setSessionContext(ctx);
-
   const renderLens = () => {
     switch (activeLens) {
-      case 'dashboard': return <DashboardLens sessionContext={sessionContext} onSessionContextChange={handleSessionContextChange} />;
+      case 'dashboard': return <DashboardLens />;
       case 'evolution': return <EvolutionLens sessionContext={sessionContext} />;
       case 'explorer': return <ExplorerLens />;
       case 'graph': return (
         <GraphLens
           onClose={() => setActiveLens('dashboard')}
           onNavigateToSession={(sessionId, projectId) => {
-            setSessionContext({ ...sessionContext, sessionId, projectId });
+            setSessionContext({ sessionId, projectId });
             setActiveLens('evolution');
           }}
           onNavigateToProject={(projectId) => {
-            setSessionContext({ ...sessionContext, projectId });
+            setSessionContext({ projectId });
             setActiveLens('dashboard');
           }}
         />
@@ -51,7 +49,7 @@ const FullViewerInner: React.FC<{
       case 'repository': return <RepositoryLens sessionContext={sessionContext} />;
       case 'terminal': return <TerminalLens />;
       case 'chat': return <ChatLens sessionContext={sessionContext} />;
-      default: return <DashboardLens sessionContext={sessionContext} onSessionContextChange={handleSessionContextChange} />;
+      default: return <DashboardLens />;
     }
   };
 
@@ -59,7 +57,7 @@ const FullViewerInner: React.FC<{
     if (!secondaryLens) return null;
 
     const lensComponents: Record<string, React.ReactNode> = {
-      dashboard: <DashboardLens sessionContext={sessionContext} onSessionContextChange={handleSessionContextChange} />,
+      dashboard: <DashboardLens />,
       evolution: <EvolutionLens sessionContext={sessionContext} />,
       explorer: <ExplorerLens />,
       graph: <GraphLens onClose={() => setSecondaryLens(undefined)} />,
