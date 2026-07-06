@@ -8,7 +8,7 @@ import type { DashboardSubTab, SessionContext } from '../types';
 export const DashboardLens: React.FC = () => {
   const {
     sessionContext, setSessionContext,
-    navigation, setActiveSubTab, setActiveLens,
+    navigation, setActiveSubTab,
     setSelectedSessionId, setSelectedProjectId, setViewLevel,
   } = useFullViewer();
   const { selectedSessionId, selectedProjectId, viewLevel } = navigation;
@@ -21,10 +21,6 @@ export const DashboardLens: React.FC = () => {
     else if (ctx.projectId) setViewLevel('sessions');
     else setViewLevel('projects');
   }, [setSessionContext, setSelectedSessionId, setSelectedProjectId, setViewLevel]);
-
-  const handleNavigateToFullView = useCallback(() => {
-    setActiveLens('evolution');
-  }, [setActiveLens]);
 
   const tabs = [
     { id: 'hierarchy' as DashboardSubTab, label: 'Hierarchy', icon: LayoutDashboard },
@@ -58,7 +54,6 @@ export const DashboardLens: React.FC = () => {
           <TaqwinHierarchicalView
             onNavigateToSqlite={() => {}}
             onActivityContextChange={handleActivityContextChange}
-            onNavigateToFullView={handleNavigateToFullView}
             controlledNavigation={{
               viewLevel,
               selectedProjectId,
