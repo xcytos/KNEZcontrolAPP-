@@ -601,6 +601,25 @@ pub async fn list_sqlite_checkpoints(
     }
 }
 
+#[tauri::command]
+pub async fn sqlite_update_session_status(
+    db_path: String,
+    session_id: String,
+    new_status: String,
+) -> Result<DatabaseResponse<bool>, String> {
+    let path = PathBuf::from(db_path);
+
+    match connect_sqlite(path) {
+        Ok(conn) => {
+            match update_taqwin_session_status(&conn, &session_id, &new_status) {
+                Ok(updated) => Ok(DatabaseResponse::success(updated)),
+                Err(e) => Ok(DatabaseResponse::error(format!("Update failed: {}", e))),
+            }
+        }
+        Err(e) => Ok(DatabaseResponse::error(format!("Failed to connect: {}", e))),
+    }
+}
+
 
 // Git Statistics
 #[derive(Debug, Serialize)]

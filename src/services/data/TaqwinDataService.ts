@@ -614,6 +614,24 @@ export class TaqwinDataService {
       };
     }
   }
+
+  async updateSessionStatus(sessionId: string, newStatus: string): Promise<boolean> {
+    if (!this.dbPath) return false;
+    try {
+      const response = await invoke<{ success: boolean; data?: boolean; error?: string }>('sqlite_update_session_status', {
+        dbPath: this.dbPath,
+        sessionId,
+        newStatus,
+      });
+      if (response.success && response.data !== undefined) {
+        return response.data;
+      }
+      return false;
+    } catch (error) {
+      console.error('[TaqwinDataService] Update session status error:', error);
+      return false;
+    }
+  }
 }
 
 export const taqwinDataService = TaqwinDataService.getInstance();

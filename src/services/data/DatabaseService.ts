@@ -258,6 +258,28 @@ export class SqliteService {
       throw error;
     }
   }
+
+  async updateSessionStatus(sessionId: string, newStatus: string): Promise<boolean> {
+    if (!this.dbPath) {
+      throw new Error('Database path not set');
+    }
+
+    try {
+      const response = await invoke<DatabaseResponse<boolean>>('sqlite_update_session_status', {
+        dbPath: this.dbPath,
+        sessionId,
+        newStatus,
+      });
+      if (response.success && response.data !== undefined) {
+        return response.data;
+      } else {
+        throw new Error(response.error || 'Failed to update session status');
+      }
+    } catch (error) {
+      console.error('[SqliteService] Update session status error:', error);
+      throw error;
+    }
+  }
 }
 
 // Export singleton instances

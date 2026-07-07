@@ -533,6 +533,7 @@ pub fn run() {
             data_commands::list_sqlite_memories,
             data_commands::list_sqlite_checkpoints,
             data_commands::sqlite_get_session_hierarchy,
+            data_commands::sqlite_update_session_status,
             data_commands::get_git_stats,
             data_commands::git_push,
             repo_commands::fs_walk,

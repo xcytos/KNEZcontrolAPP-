@@ -550,6 +550,29 @@ pub fn list_taqwin_sessions(conn: &Connection, limit: i64) -> SqliteResult<Vec<T
     Ok(sessions)
 }
 
+pub fn update_taqwin_session_status(conn: &Connection, session_id: &str, new_status: &str) -> SqliteResult<bool> {
+    let mut check_stmt = conn.prepare("PRAGMA table_info(sessions)")?;
+    let columns: Vec<String> = check_stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let has_session_id = columns.contains(&"session_id".to_string());
+    let has_status = columns.contains(&"status".to_string());
+
+    if !has_status {
+        return Ok(false);
+    }
+
+    let id_col = if has_session_id { "session_id" } else { "id" };
+
+    let updated = conn.execute(
+        &format!("UPDATE sessions SET status = ?1, updated_at = datetime('now') WHERE {} = ?2", id_col),
+        rusqlite::params![new_status, session_id],
+    )?;
+
+    Ok(updated > 0)
+}
+
 pub fn list_taqwin_memories(conn: &Connection, limit: i64) -> SqliteResult<Vec<TaqwinMemory>> {
     // Check what columns exist
     let mut check_stmt = conn.prepare("PRAGMA table_info(memories)")?;
