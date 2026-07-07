@@ -3,6 +3,7 @@ import {
   CheckCircle,
   XCircle,
   RefreshCw,
+  Loader,
   Settings,
   TestTube,
   Server,
@@ -13,6 +14,7 @@ import {
   X,
   Power,
   Globe,
+  StopCircle,
 } from 'lucide-react';
 import { ModelSelectionService, ModelInfo } from '../../services/models/ModelSelectionService';
 import {
@@ -42,7 +44,7 @@ const PROVIDER_ICONS: Record<string, React.ReactNode> = {
 };
 
 export const ModelsPage: React.FC = () => {
-  const { availableModels, loading, routerHealthy, refreshModels } = useModel();
+  const { availableModels, loading, routerHealthy, routerStarting, refreshModels, startRouter, stopRouter } = useModel();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedProvider, setSelectedProvider] = useState<string>('all');
   const [testingModels, setTestingModels] = useState<Set<string>>(new Set());
@@ -151,22 +153,36 @@ export const ModelsPage: React.FC = () => {
         </div>
         <div className="flex items-center gap-2">
           {routerHealthy ? (
-            <a
-              href="http://localhost:20128"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-emerald-400 hover:text-emerald-300 bg-zinc-800 hover:bg-zinc-700 rounded border border-zinc-700 transition-colors"
-            >
-              <Globe className="w-3.5 h-3.5" />
-              9Router
-            </a>
+            <div className="flex items-center gap-1">
+              <a
+                href="http://localhost:20128"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-emerald-400 hover:text-emerald-300 bg-zinc-800 hover:bg-zinc-700 rounded border border-zinc-700 transition-colors"
+              >
+                <Globe className="w-3.5 h-3.5" />
+                9Router
+              </a>
+              <button
+                onClick={stopRouter}
+                className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-zinc-800 rounded transition-colors"
+                title="Stop 9Router"
+              >
+                <StopCircle className="w-4 h-4" />
+              </button>
+            </div>
           ) : (
             <button
-              onClick={() => window.open('http://localhost:20128', '_blank')}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 rounded border border-zinc-700 transition-colors"
+              onClick={startRouter}
+              disabled={routerStarting}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 rounded border border-zinc-700 transition-colors"
             >
-              <Power className="w-3.5 h-3.5" />
-              Turn On 9Router
+              {routerStarting ? (
+                <Loader className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Power className="w-3.5 h-3.5" />
+              )}
+              {routerStarting ? 'Starting...' : 'Turn On 9Router'}
             </button>
           )}
           <button

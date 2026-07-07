@@ -15,6 +15,9 @@ interface ModelContextValue {
   routerHealth: RouterHealth | null;
   routerHealthy: boolean;
   routerLoading: boolean;
+  routerStarting: boolean;
+  startRouter: () => Promise<void>;
+  stopRouter: () => Promise<void>;
 }
 
 export const ModelContext = createContext<ModelContextValue | null>(null);
@@ -28,6 +31,7 @@ export const ModelProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [routerHealth, setRouterHealth] = useState<RouterHealth | null>(null);
   const [routerHealthy, setRouterHealthy] = useState(false);
   const [routerLoading, setRouterLoading] = useState(true);
+  const [routerStarting, setRouterStarting] = useState(false);
 
   const fetchModels = useCallback(async () => {
     try {
@@ -97,6 +101,23 @@ export const ModelProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setSelectedModelId(modelId);
   }, []);
 
+  const startRouter = useCallback(async () => {
+    setRouterStarting(true);
+    try {
+      await nineRouterService.startProcess();
+      await new Promise(r => setTimeout(r, 2000));
+      await fetchRouter();
+    } finally {
+      setRouterStarting(false);
+    }
+  }, [fetchRouter]);
+
+  const stopRouter = useCallback(async () => {
+    await nineRouterService.stopProcess();
+    setRouterHealthy(false);
+    setRouterModels([]);
+  }, []);
+
   return (
     <ModelContext.Provider value={{
       availableModels,
@@ -111,6 +132,9 @@ export const ModelProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       routerHealth,
       routerHealthy,
       routerLoading,
+      routerStarting,
+      startRouter,
+      stopRouter,
     }}>
       {children}
     </ModelContext.Provider>

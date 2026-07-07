@@ -96,6 +96,8 @@ class NineRouterService {
     providers: RouterProvider[] | null;
     lastFetch: number;
   };
+  private childProcess: any = null;
+  private processStarting = false;
 
   constructor() {
     this.baseUrl = 'http://localhost:20128/v1';
@@ -381,6 +383,59 @@ class NineRouterService {
       tokensSaved: 0,
       savingsPercent: 0,
     };
+  }
+
+  /**
+   * Start 9Router as a background process
+   */
+  async startProcess(): Promise<void> {
+    if (this.childProcess || this.processStarting) return;
+    const isTauri = !!(window as any).__TAURI_INTERNALS__;
+    if (!isTauri) {
+      this.openDashboard();
+      return;
+    }
+    this.processStarting = true;
+    try {
+      const { Command } = await import('@tauri-apps/plugin-shell');
+      const command = Command.create("cmd", ["/c", "9router"]);
+      command.on("error", (error: any) => {
+        console.error('[NineRouter] Process error:', error);
+        this.processStarting = false;
+      });
+      command.stdout.on("data", (line: string) => {
+        console.log('[NineRouter]', line);
+      });
+      command.stderr.on("data", (line: string) => {
+        console.log('[NineRouter]', line);
+      });
+      this.childProcess = await command.spawn();
+      this.processStarting = false;
+    } catch (error) {
+      console.error('[NineRouter] Failed to start process:', error);
+      this.processStarting = false;
+      this.openDashboard();
+    }
+  }
+
+  /**
+   * Stop the 9Router background process
+   */
+  async stopProcess(): Promise<void> {
+    if (this.childProcess) {
+      try {
+        await this.childProcess.kill();
+      } catch {}
+      this.childProcess = null;
+    }
+  }
+
+  get isProcessRunning(): boolean {
+    return this.childProcess !== null;
+  }
+
+  get isProcessStarting(): boolean {
+    return this.processStarting;
   }
 
   /**

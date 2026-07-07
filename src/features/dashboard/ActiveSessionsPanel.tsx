@@ -109,9 +109,10 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
           // Add dev events
           if (hierarchy.events) {
             hierarchy.events.forEach((evt: any) => {
-              const eventData = typeof evt.event_data === 'string' 
-                ? JSON.parse(evt.event_data) 
+              const rawData = typeof evt.event_data === 'string'
+                ? (() => { try { return JSON.parse(evt.event_data); } catch { return null; } })()
                 : evt.event_data;
+              const eventData = rawData || {};
               
               allEvents.push({
                 id: `evt-${evt.event_id}`,
