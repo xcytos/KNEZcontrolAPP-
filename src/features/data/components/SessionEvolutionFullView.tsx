@@ -94,7 +94,7 @@ export const SessionEvolutionFullView: React.FC<SessionFullViewProps> = ({
       if (hierarchy.events && Array.isArray(hierarchy.events)) {
         hierarchy.events.forEach((event: any) => {
           timeline.push({
-            type: 'event',
+            type: event.event_type === 'dev_event' ? 'dev_event' : 'event',
             timestamp: event.created_at,
             data: event,
           });

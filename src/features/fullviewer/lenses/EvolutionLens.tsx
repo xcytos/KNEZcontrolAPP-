@@ -143,7 +143,7 @@ function buildTimeline(hierarchy: any): any[] {
     }
   }
   for (const evt of hierarchy.events || []) {
-    events.push({ type: 'event', timestamp: evt.created_at || evt.timestamp, data: evt });
+    events.push({ type: evt.event_type === 'dev_event' ? 'dev_event' : 'event', timestamp: evt.created_at || evt.timestamp, data: evt });
   }
   for (const mem of hierarchy.memories || []) {
     events.push({ type: 'insight', timestamp: mem.created_at, data: mem });

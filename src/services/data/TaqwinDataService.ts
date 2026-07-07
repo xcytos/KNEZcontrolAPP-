@@ -244,10 +244,10 @@ export class TaqwinDataService {
       });
     });
 
-    // Add events
+    // Add events (distinguish dev_events)
     hierarchy.events.forEach((evt) => {
       timeline.push({
-        type: 'event',
+        type: evt.event_type === 'dev_event' ? 'dev_event' : 'event',
         timestamp: evt.created_at || evt.timestamp,
         data: evt,
       });

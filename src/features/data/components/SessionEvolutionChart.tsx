@@ -16,7 +16,7 @@ import { DocumentViewer } from './DocumentViewer';
 import { Document } from './DocumentList';
 
 interface TimelineEvent {
-  type: 'checkpoint' | 'event' | 'decision' | 'insight' | 'pattern' | 'file' | 'document';
+  type: 'checkpoint' | 'event' | 'dev_event' | 'decision' | 'insight' | 'pattern' | 'file' | 'document';
   timestamp: string;
   data: any;
 }
@@ -78,6 +78,8 @@ export const SessionEvolutionChart: React.FC<SessionEvolutionChartProps> = ({
         return { bg: 'bg-pink-500', border: 'border-pink-400', text: 'text-pink-400' };
       case 'event':
         return { bg: 'bg-purple-500', border: 'border-purple-400', text: 'text-purple-400' };
+      case 'dev_event':
+        return { bg: 'bg-indigo-500', border: 'border-indigo-400', text: 'text-indigo-400' };
       default:
         return { bg: 'bg-zinc-500', border: 'border-zinc-400', text: 'text-zinc-400' };
     }
@@ -97,6 +99,8 @@ export const SessionEvolutionChart: React.FC<SessionEvolutionChartProps> = ({
         return FileText;
       case 'document':
         return FileText;
+      case 'dev_event':
+        return Activity;
       default:
         return Activity;
     }
@@ -181,6 +185,8 @@ export const SessionEvolutionChart: React.FC<SessionEvolutionChartProps> = ({
     
     const insights = sortedTimeline.filter(e => e.type === 'insight' || e.type === 'pattern').length;
     
+    const devEvents = sortedTimeline.filter(e => e.type === 'dev_event').length;
+    
     // Count total learned memories
     let learnedCount = 0;
     sortedTimeline.forEach(e => {
@@ -199,7 +205,7 @@ export const SessionEvolutionChart: React.FC<SessionEvolutionChartProps> = ({
       }
     });
 
-    return { checkpoints, decisions: decisionsCount, files: filesCount, insights, learnedCount };
+    return { checkpoints, decisions: decisionsCount, files: filesCount, insights, learnedCount, devEvents };
   }, [sortedTimeline]);
 
   return (
@@ -229,6 +235,11 @@ export const SessionEvolutionChart: React.FC<SessionEvolutionChartProps> = ({
         <div className="flex-1 px-4 py-3 border-r border-zinc-800/50 hover:bg-zinc-800/30 transition-colors">
           <div className="text-2xl font-bold text-green-400">{metrics.checkpoints}</div>
           <div className="text-[10px] uppercase tracking-wide text-zinc-500 mt-0.5">Checkpoints</div>
+        </div>
+        
+        <div className="flex-1 px-4 py-3 border-r border-zinc-800/50 hover:bg-zinc-800/30 transition-colors">
+          <div className="text-2xl font-bold text-indigo-400">{metrics.devEvents}</div>
+          <div className="text-[10px] uppercase tracking-wide text-zinc-500 mt-0.5">Dev Events</div>
         </div>
         
         {/* Full View Button */}
