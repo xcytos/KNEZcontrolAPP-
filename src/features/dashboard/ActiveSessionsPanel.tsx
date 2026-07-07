@@ -4,7 +4,8 @@ import { taqwinDataService, SessionListItem } from '../../services/data/TaqwinDa
 
 interface ActiveSessionsPanelProps {
   currentSessionId?: string;
-  currentProjectId?: string; // eslint-disable-line @typescript-eslint/no-unused-vars
+  currentProjectId?: string;
+  onSessionClick?: (sessionId: string, projectId?: string) => void;
 }
 
 interface ActivityEvent {
@@ -20,6 +21,7 @@ interface ActivityEvent {
 
 export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
   currentSessionId,
+  onSessionClick,
 }) => {
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -331,7 +333,8 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
               return (
                 <div
                   key={sessionId}
-                  className={`p-2.5 rounded border transition-all ${getStatusColor(status)} ${
+                  onClick={() => onSessionClick?.(sessionId, session.project_id)}
+                  className={`p-2.5 rounded border transition-all cursor-pointer ${getStatusColor(status)} ${
                     isCurrent ? 'ring-1 ring-blue-500' : ''
                   } ${isMonitored ? 'ring-1 ring-green-500' : ''}`}
                 >
@@ -355,7 +358,7 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
                         </span>
                       )}
                       <button
-                        onClick={() => toggleMonitor(sessionId)}
+                        onClick={(e) => { e.stopPropagation(); toggleMonitor(sessionId); }}
                         className={`p-1 rounded transition-all ${
                           isMonitored
                             ? 'bg-green-900/40 text-green-400 hover:bg-green-900/60'
