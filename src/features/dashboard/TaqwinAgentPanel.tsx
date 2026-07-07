@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, Loader, X, Sparkles, Brain, AlertCircle, Square } from 'lucide-react';
 import { knezClient } from '../../services/knez/KnezClient';
+import { nineRouterService } from '../../services/router/NineRouterService';
+import { useModel } from '../../contexts/ModelContext';
+import { ModelSelectionDropdown } from '../chat/components/ModelSelectionDropdown';
 
 interface Message {
   id: string;
@@ -24,8 +27,21 @@ export const TaqwinAgentPanel: React.FC<TaqwinAgentPanelProps> = ({
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const [meta, setMeta] = useState<{ model?: string } | null>(null);
+
+  const { availableModels, selectedModelId, setSelectedModelId, clearSelection, routerModels } = useModel();
+
+  const allModels = React.useMemo(() => {
+    const routerAsModelInfo = (routerModels || []).map(r => ({
+      model_id: r.id,
+      provider: r.id.includes('/') ? r.id.split('/')[0] : '9Router',
+      status: 'healthy' as const,
+    }));
+    return [...availableModels, ...routerAsModelInfo];
+  }, [availableModels, routerModels]);
 
   useEffect(() => {
     setMessages([{
@@ -40,6 +56,16 @@ export const TaqwinAgentPanel: React.FC<TaqwinAgentPanelProps> = ({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  const handleSelectModel = (modelId: string) => {
+    setSelectedModelId(modelId);
+    setDropdownOpen(false);
+  };
+
+  const handleClearSelection = () => {
+    clearSelection();
+    setDropdownOpen(false);
+  };
+
   const handleStop = () => {
     if (abortRef.current) {
       abortRef.current.abort();
@@ -49,19 +75,20 @@ export const TaqwinAgentPanel: React.FC<TaqwinAgentPanelProps> = ({
 
   const handleSend = async () => {
     if (!input.trim()) return;
-    
+
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
       content: input.trim(),
       timestamp: new Date(),
     };
-    
+
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
     setError(null);
-    
+    setMeta(null);
+
     const assistantId = (Date.now() + 1).toString();
     setMessages(prev => [...prev, {
       id: assistantId,
@@ -69,10 +96,10 @@ export const TaqwinAgentPanel: React.FC<TaqwinAgentPanelProps> = ({
       content: '',
       timestamp: new Date(),
     }]);
-    
+
     const controller = new AbortController();
     abortRef.current = controller;
-    
+
     try {
       const systemPrompt = `You are TAQWIN Agent, an AI assistant specializing in TAQWIN memory system analysis.
 
@@ -95,42 +122,46 @@ TONE:
         { role: 'system' as const, content: systemPrompt },
         { role: 'user' as const, content: userMessage.content },
       ];
-      
+
       let accumulatedContent = '';
-      
-      const stream = knezClient.chatCompletionsStream(
-        messagesForStream,
-        sessionId || 'dashboard-agent',
-        { signal: controller.signal }
-      );
-      
+      const selectedModel = selectedModelId ?? undefined;
+      const useRouter = selectedModel !== undefined && selectedModel.includes('/');
+
+      const onMeta = (m: { model?: string }) => {
+        setMeta(m);
+      };
+
+      const stream = useRouter
+        ? nineRouterService.chatCompletionsStream(messagesForStream as any, sessionId || 'dashboard-agent', { signal: controller.signal, onMeta, model: selectedModel })
+        : knezClient.chatCompletionsStream(messagesForStream, sessionId || 'dashboard-agent', { signal: controller.signal, onMeta, model: selectedModel });
+
       for await (const chunk of stream) {
         if (controller.signal.aborted) break;
         accumulatedContent += chunk;
-        setMessages(prev => 
-          prev.map(m => 
-            m.id === assistantId 
-              ? { ...m, content: accumulatedContent } 
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === assistantId
+              ? { ...m, content: accumulatedContent }
               : m
           )
         );
       }
-      
+
       if (!accumulatedContent && !controller.signal.aborted) {
         throw new Error('No response received from KNEZ backend');
       }
-      
+
     } catch (err: any) {
       if (err?.name === 'AbortError') return;
       const errorMsg = err?.message || String(err);
       setError(errorMsg);
-      
+
       setMessages(prev => {
         const hasAssistant = prev.some(m => m.id === assistantId);
         if (hasAssistant) {
-          return prev.map(m => 
-            m.id === assistantId 
-              ? { ...m, content: `❌ Error: ${errorMsg}` } 
+          return prev.map(m =>
+            m.id === assistantId
+              ? { ...m, content: `❌ Error: ${errorMsg}` }
               : m
           );
         } else {
@@ -159,6 +190,15 @@ TONE:
     }
   };
 
+  const selectedModelDisplay = selectedModelId
+    ? allModels.find(m => m.model_id === selectedModelId)
+    : null;
+  const displayModelName = meta?.model
+    ? meta.model
+    : selectedModelDisplay?.model_id
+    ? selectedModelDisplay.model_id
+    : 'KNEZ + Ollama';
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -167,17 +207,29 @@ TONE:
           <Brain className="w-5 h-5 text-purple-400" />
           <h2 className="text-sm font-semibold text-zinc-100">TAQWIN Agent</h2>
           <span className="px-2 py-0.5 bg-zinc-800 text-zinc-400 text-xs rounded-full font-mono">
-            KNEZ + Ollama
+            {displayModelName}
           </span>
         </div>
-        {onClose && (
-          <button
-            onClick={onClose}
-            className="text-zinc-500 hover:text-zinc-300 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          <ModelSelectionDropdown
+            isOpen={dropdownOpen}
+            onToggle={() => setDropdownOpen(!dropdownOpen)}
+            models={allModels}
+            selectedModelId={selectedModelId}
+            onSelectModel={handleSelectModel}
+            onConfigureModel={() => {}}
+            onClearSelection={handleClearSelection}
+            loading={false}
+          />
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Context Info */}
@@ -219,7 +271,7 @@ TONE:
             </div>
           </div>
         ))}
-        
+
         {isLoading && (
           <div className="flex justify-start">
             <div className="bg-zinc-800 rounded-lg px-3 py-2 flex items-center gap-2">
@@ -228,7 +280,7 @@ TONE:
             </div>
           </div>
         )}
-        
+
         <div ref={messagesEndRef} />
       </div>
 
@@ -271,7 +323,7 @@ TONE:
         </div>
         <div className="mt-2 text-[10px] text-zinc-500 flex items-center gap-1">
           <Sparkles className="w-3 h-3" />
-          Powered by KNEZ + Ollama
+          Powered by {displayModelName}
         </div>
       </div>
     </div>
