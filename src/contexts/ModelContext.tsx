@@ -105,8 +105,12 @@ export const ModelProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setRouterStarting(true);
     try {
       await nineRouterService.startProcess();
-      await new Promise(r => setTimeout(r, 2000));
-      await fetchRouter();
+      for (let i = 0; i < 30; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        await fetchRouter();
+        const health = await nineRouterService.checkHealth();
+        if (health?.status === 'healthy') break;
+      }
     } finally {
       setRouterStarting(false);
     }

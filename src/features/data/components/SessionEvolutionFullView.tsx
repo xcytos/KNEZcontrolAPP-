@@ -26,6 +26,7 @@ export const SessionEvolutionFullView: React.FC<SessionFullViewProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [allProjectSessions, setAllProjectSessions] = useState<any[]>([]);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Load session data - wrapped in useCallback to prevent infinite loops
   const loadSessionData = useCallback(async () => {
@@ -219,6 +220,8 @@ export const SessionEvolutionFullView: React.FC<SessionFullViewProps> = ({
         session={sessionData?.session || null}
         stats={sessionData?.stats || { checkpoints: 0, events: 0, memories: 0, decisions: 0, files: 0, documents: 0 }}
         loading={loading}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed(prev => !prev)}
       />
 
       {/* Main Content Area */}

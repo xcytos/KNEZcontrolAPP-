@@ -254,9 +254,9 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
   };
 
   return (
-    <div className="flex h-full bg-zinc-950 gap-2 p-4">
-      {/* Left Side: Sessions List (40%) */}
-      <div className="w-2/5 flex flex-col border-r border-zinc-800 pr-4">
+    <div className="flex flex-col h-full bg-zinc-950 gap-2 p-4">
+      {/* Top: Sessions List */}
+      <div className="flex flex-col border-b border-zinc-800 pb-4 max-h-[50%]">
       {/* Header */}
       <div className="mb-4">
         <div className="flex items-center justify-between mb-3">
@@ -452,8 +452,8 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
       )}
     </div>
 
-    {/* Right Side: Activity Feed (60%) */}
-    <div className="flex-1 flex flex-col pl-4">
+    {/* Bottom: Activity Feed */}
+    <div className="flex-1 flex flex-col">
       {/* Header */}
       <div className="mb-4">
         <div className="flex items-center justify-between mb-3">
