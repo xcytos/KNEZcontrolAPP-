@@ -1516,7 +1516,7 @@ export const ChatPane: React.FC<Props> = ({ sessionId, readOnly, systemStatus })
       <ModelConfigModal
         isOpen={modelConfigModalOpen}
         onClose={() => setModelConfigModalOpen(false)}
-        modelId={configModelId}
+        model={allModels.find(m => m.model_id === configModelId) || { model_id: configModelId, provider: '', status: 'healthy' as const }}
         onSave={handleSaveApiKey}
         onTest={handleTestConnection}
       />

@@ -42,7 +42,10 @@ export interface TestConnectionResponse {
   response?: string;
 }
 
-const KNEZ_BASE_URL = 'http://127.0.0.1:8000';
+function getKnezBaseUrl(): string {
+  const port = (import.meta.env.VITE_KNEZ_PORT as string) || '8000';
+  return (import.meta.env.VITE_KNEZ_URL as string) || `http://127.0.0.1:${port}`;
+}
 
 /**
  * Model Selection Service
@@ -53,7 +56,7 @@ export class ModelSelectionService {
    * Fetch available models with health status
    */
   static async getAvailableModels(): Promise<AvailableModelsResponse> {
-    const response = await fetch(`${KNEZ_BASE_URL}/api/models/available`);
+    const response = await fetch(`${getKnezBaseUrl()}/api/models/available`);
     if (!response.ok) {
       throw new Error(`Failed to fetch models: ${response.statusText}`);
     }
@@ -64,7 +67,7 @@ export class ModelSelectionService {
    * Select a model manually
    */
   static async selectModel(modelId: string, force: boolean = false): Promise<ModelSelectionResponse> {
-    const response = await fetch(`${KNEZ_BASE_URL}/api/models/select`, {
+    const response = await fetch(`${getKnezBaseUrl()}/api/models/select`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model_id: modelId, force })
@@ -82,7 +85,7 @@ export class ModelSelectionService {
    * Get current model selection
    */
   static async getCurrentSelection(): Promise<ModelSelectionResponse> {
-    const response = await fetch(`${KNEZ_BASE_URL}/api/models/select`);
+    const response = await fetch(`${getKnezBaseUrl()}/api/models/select`);
     if (!response.ok) {
       throw new Error(`Failed to get current selection: ${response.statusText}`);
     }
@@ -93,7 +96,7 @@ export class ModelSelectionService {
    * Clear model selection (back to automatic)
    */
   static async clearSelection(): Promise<ModelSelectionResponse> {
-    const response = await fetch(`${KNEZ_BASE_URL}/api/models/select`, {
+    const response = await fetch(`${getKnezBaseUrl()}/api/models/select`, {
       method: 'DELETE'
     });
 
@@ -109,7 +112,7 @@ export class ModelSelectionService {
    * Save API key for a model
    */
   static async saveApiKey(key: string, value: string): Promise<EnvConfigResponse> {
-    const response = await fetch(`${KNEZ_BASE_URL}/api/config/env`, {
+    const response = await fetch(`${getKnezBaseUrl()}/api/config/env`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key, value })
@@ -128,7 +131,7 @@ export class ModelSelectionService {
    */
   static async testModel(modelId: string): Promise<TestConnectionResponse> {
     try {
-      const response = await fetch(`${KNEZ_BASE_URL}/api/models/test/${encodeURIComponent(modelId)}`, {
+      const response = await fetch(`${getKnezBaseUrl()}/api/models/test/${encodeURIComponent(modelId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
@@ -156,7 +159,7 @@ export class ModelSelectionService {
    */
   static async testConnection(): Promise<TestConnectionResponse> {
     try {
-      const response = await fetch(`${KNEZ_BASE_URL}/v1/chat/completions`, {
+      const response = await fetch(`${getKnezBaseUrl()}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -191,7 +194,7 @@ export class ModelSelectionService {
    * Get health status from backend
    */
   static async getHealth(): Promise<any> {
-    const response = await fetch(`${KNEZ_BASE_URL}/health`);
+    const response = await fetch(`${getKnezBaseUrl()}/health`);
     if (!response.ok) {
       throw new Error(`Failed to fetch health: ${response.statusText}`);
     }

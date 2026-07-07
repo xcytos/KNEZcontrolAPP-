@@ -1,17 +1,12 @@
-/**
- * Model Configuration Modal
- * Allows users to configure API keys for cloud models
- */
-
 import React, { useState } from 'react';
 import { X, Key, ExternalLink, Loader, CheckCircle, XCircle } from 'lucide-react';
-import { TestConnectionResponse } from '../../../services/models/ModelSelectionService';
-import { getModelDisplayName, getApiKeyVar, getSetupUrl, getModelIcon } from '../../../utils/modelUtils';
+import { TestConnectionResponse, ModelInfo } from '../../../services/models/ModelSelectionService';
+import { getProviderMeta, getModelProviderDisplayName } from '../../../utils/modelUtils';
 
 interface ModelConfigModalProps {
   isOpen: boolean;
   onClose: () => void;
-  modelId: string;
+  model: ModelInfo;
   onSave: (key: string, value: string) => Promise<void>;
   onTest: () => Promise<TestConnectionResponse>;
 }
@@ -19,7 +14,7 @@ interface ModelConfigModalProps {
 export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
   isOpen,
   onClose,
-  modelId,
+  model,
   onSave,
   onTest
 }) => {
@@ -30,19 +25,17 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
 
   if (!isOpen) return null;
 
-  const displayName = getModelDisplayName(modelId);
-  const icon = getModelIcon(modelId);
-  const apiKeyVar = getApiKeyVar(modelId);
-  const setupUrl = getSetupUrl(modelId);
+  const meta = getProviderMeta(model.provider);
+  const displayName = getModelProviderDisplayName(model.provider);
 
   const handleSave = async () => {
-    if (!apiKeyValue.trim() || !apiKeyVar) {
+    if (!apiKeyValue.trim() || !meta.apiKeyVar) {
       return;
     }
 
     setSaving(true);
     try {
-      await onSave(apiKeyVar, apiKeyValue);
+      await onSave(meta.apiKeyVar, apiKeyValue);
       setApiKeyValue('');
     } catch (error) {
       console.error('[ModelConfigModal] Save error:', error);
@@ -73,7 +66,7 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-zinc-800">
           <div className="flex items-center gap-2">
-            <span className="text-2xl">{icon}</span>
+            <span className="text-2xl">{meta.icon}</span>
             <div>
               <h2 className="text-lg font-semibold text-zinc-100">Configure API Key</h2>
               <p className="text-xs text-zinc-400">{displayName}</p>
@@ -100,9 +93,9 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
               <li>Create a new API key</li>
               <li>Copy and paste it below</li>
             </ol>
-            {setupUrl && (
+            {meta.setupUrl && (
               <a
-                href={setupUrl}
+                href={meta.setupUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-1 mt-2 text-blue-400 hover:text-blue-300 transition-colors"
@@ -123,7 +116,7 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
               type="password"
               value={apiKeyValue}
               onChange={(e) => setApiKeyValue(e.target.value)}
-              placeholder={`Enter your ${apiKeyVar}`}
+              placeholder={`Enter your ${meta.apiKeyVar}`}
               className="w-full px-3 py-2 bg-zinc-950 border border-zinc-700 rounded text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             <p className="text-xs text-zinc-500 mt-1">

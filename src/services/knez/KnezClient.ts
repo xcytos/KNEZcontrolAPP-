@@ -195,64 +195,7 @@ export class KnezClient {
     console.log('Updating playground session:', sessionId, updates);
   }
 
-  async deleteSession(sessionId: string): Promise<void> {
-    // Implementation for deleting playground sessions
-    console.log('Deleting playground session:', sessionId);
-  }
 
-  async getProviders(): Promise<any[]> {
-    // Implementation for getting available providers
-    return [
-      { name: 'OpenAI', type: 'cloud', description: 'OpenAI models' },
-      { name: 'Ollama', type: 'local', description: 'Local Ollama models' },
-      { name: 'Claude', type: 'cloud', description: 'Anthropic Claude models' }
-    ];
-  }
-
-  async addProvider(provider: any): Promise<void> {
-    // Implementation for adding providers
-    console.log('Adding provider:', provider);
-  }
-
-  async removeProvider(name: string): Promise<void> {
-    // Implementation for removing providers
-    console.log('Removing provider:', name);
-  }
-
-  async testProvider(provider: any): Promise<boolean> {
-    // Implementation for testing providers
-    console.log('Testing provider:', provider);
-    return true;
-  }
-
-  async getProviderModels(provider: string): Promise<any[]> {
-    // Implementation for getting provider models
-    console.log('Getting models for provider:', provider);
-    return [
-      { provider, model: 'gpt-4', capabilities: ['chat', 'code'], contextWindow: 8192, maxTokens: 4096 },
-      { provider, model: 'gpt-3.5-turbo', capabilities: ['chat', 'code'], contextWindow: 4096, maxTokens: 4096 }
-    ];
-  }
-
-  async selectModel(provider: string, model: string): Promise<void> {
-    // Implementation for selecting models
-    console.log('Selecting model:', provider, model);
-  }
-
-  async createStream(streamId: string, config: any): Promise<void> {
-    // Implementation for creating streams
-    console.log('Creating stream:', streamId, config);
-  }
-
-  async sendStreamData(streamId: string, data: any): Promise<void> {
-    // Implementation for sending stream data
-    console.log('Sending stream data:', streamId, data);
-  }
-
-  async closeStream(streamId: string): Promise<void> {
-    // Implementation for closing streams
-    console.log('Closing stream:', streamId);
-  }
 
   onStreamData(streamId: string, _callback: (data: any) => void): void {
     // Implementation for stream data callbacks
@@ -1024,9 +967,9 @@ export class KnezClient {
   async chatCompletionsNonStream(
     messages: CompletionMessage[],
     sessionId: string,
-    options?: { onMeta?: (meta: { model?: string; totalTokens?: number }) => void }
+    options?: { onMeta?: (meta: { model?: string; totalTokens?: number }) => void; model?: string }
   ): Promise<string> {
-    const data = await this.chatCompletionsNonStreamRaw(messages, sessionId, { onMeta: options?.onMeta });
+    const data = await this.chatCompletionsNonStreamRaw(messages, sessionId, { onMeta: options?.onMeta, model: options?.model });
     return data.choices?.[0]?.message?.content ?? "";
   }
 
@@ -1040,6 +983,7 @@ export class KnezClient {
       maxTokens?: number;
       topP?: number;
       onMeta?: (meta: { model?: string; totalTokens?: number }) => void;
+      model?: string;
     }
   ): Promise<ChatCompletionsFinal> {
     return safeRequest(async () => {
@@ -1048,6 +992,7 @@ export class KnezClient {
         messages,
         stream: false,
         session_id: sessionId,
+        model: options?.model,
         temperature: options?.temperature,
         max_tokens: options?.maxTokens,
         top_p: options?.topP,
@@ -1085,6 +1030,53 @@ export class KnezClient {
       }
       return data;
     }, "chatCompletionsNonStreamRaw");
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    logger.info("knez_client", "delete_session", { sessionId });
+  }
+
+  async getProviders(): Promise<any[]> {
+    return [
+      { name: 'OpenAI', type: 'cloud', description: 'OpenAI models' },
+      { name: 'Ollama', type: 'local', description: 'Local Ollama models' },
+      { name: 'Claude', type: 'cloud', description: 'Anthropic Claude models' }
+    ];
+  }
+
+  async addProvider(provider: any): Promise<void> {
+    logger.info("knez_client", "add_provider", { provider });
+  }
+
+  async removeProvider(name: string): Promise<void> {
+    logger.info("knez_client", "remove_provider", { name });
+  }
+
+  async testProvider(_provider: any): Promise<boolean> {
+    return true;
+  }
+
+  async getProviderModels(provider: string): Promise<any[]> {
+    return [
+      { provider, model: 'gpt-4', capabilities: ['chat', 'code'], contextWindow: 8192, maxTokens: 4096 },
+      { provider, model: 'gpt-3.5-turbo', capabilities: ['chat', 'code'], contextWindow: 4096, maxTokens: 4096 }
+    ];
+  }
+
+  async selectModel(provider: string, model: string): Promise<void> {
+    logger.info("knez_client", "select_model", { provider, model });
+  }
+
+  async createStream(streamId: string, config: any): Promise<void> {
+    logger.info("knez_client", "create_stream", { streamId, config });
+  }
+
+  async sendStreamData(streamId: string, data: any): Promise<void> {
+    logger.info("knez_client", "send_stream_data", { streamId, data });
+  }
+
+  async closeStream(streamId: string): Promise<void> {
+    logger.info("knez_client", "close_stream", { streamId });
   }
 
   async getToolCallingSupport(): Promise<"supported" | "unsupported"> {

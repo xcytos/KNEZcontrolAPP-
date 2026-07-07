@@ -1,19 +1,12 @@
-/**
- * Model Selection Dropdown
- * Displays available models with health status and allows selection
- */
-
 import React from 'react';
 import { Check, ChevronDown, Settings, RefreshCw, X } from 'lucide-react';
 import { ModelInfo } from '../../../services/models/ModelSelectionService';
 import {
   getModelDisplayName,
-  getModelProvider,
-  getModelIcon,
-  modelRequiresApiKey,
+  getModelProviderDisplayName,
+  getProviderMeta,
   sortModelsByPriority,
   formatLatency,
-  shouldShowModel
 } from '../../../utils/modelUtils';
 
 interface ModelSelectionDropdownProps {
@@ -37,9 +30,8 @@ export const ModelSelectionDropdown: React.FC<ModelSelectionDropdownProps> = ({
   onClearSelection,
   loading = false,
 }) => {
-  const filteredModels = models.filter(m => shouldShowModel(m.model_id));
-  const selectedModel = filteredModels.find(m => m.model_id === selectedModelId);
-  const sortedModels = sortModelsByPriority(filteredModels);
+  const selectedModel = models.find(m => m.model_id === selectedModelId);
+  const sortedModels = sortModelsByPriority(models);
 
   return (
     <div className="relative">
@@ -50,9 +42,9 @@ export const ModelSelectionDropdown: React.FC<ModelSelectionDropdownProps> = ({
       >
         {selectedModel ? (
           <>
-            <span className="text-lg">{getModelIcon(selectedModel.model_id)}</span>
+            <span className="text-lg">{getProviderMeta(selectedModel.provider).icon}</span>
             <span className="text-xs text-zinc-300 font-medium hidden md:inline">
-              {getModelDisplayName(selectedModel.model_id)}
+              {getModelDisplayName(selectedModel)}
             </span>
           </>
         ) : (
@@ -81,7 +73,7 @@ export const ModelSelectionDropdown: React.FC<ModelSelectionDropdownProps> = ({
                 </button>
               </div>
               <p className="text-xs text-zinc-500 mt-1">
-                {filteredModels.length} models available
+                {models.length} models available
               </p>
             </div>
 
@@ -99,7 +91,8 @@ export const ModelSelectionDropdown: React.FC<ModelSelectionDropdownProps> = ({
                 sortedModels.map((model) => {
                   const isSelected = model.model_id === selectedModelId;
                   const isUnhealthy = model.status === 'unhealthy';
-                  const requiresKey = modelRequiresApiKey(model.model_id);
+                  const meta = getProviderMeta(model.provider);
+                  const requiresKey = meta.apiKeyVar !== null;
 
                   return (
                     <div
@@ -111,16 +104,16 @@ export const ModelSelectionDropdown: React.FC<ModelSelectionDropdownProps> = ({
                           : 'hover:bg-zinc-800/50'
                       } ${isUnhealthy ? 'opacity-50' : ''}`}
                     >
-                      <span className="text-lg flex-shrink-0">{getModelIcon(model.model_id)}</span>
+                      <span className="text-lg flex-shrink-0">{meta.icon}</span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium text-zinc-100 truncate">
-                            {getModelDisplayName(model.model_id)}
+                            {getModelDisplayName(model)}
                           </span>
                           {isUnhealthy && <X className="w-3 h-3 text-red-400 flex-shrink-0" />}
                         </div>
                         <div className="flex items-center gap-2 text-xs text-zinc-500">
-                          <span>{getModelProvider(model.model_id)}</span>
+                          <span>{getModelProviderDisplayName(model.provider)}</span>
                           {model.latency_ms !== null && model.latency_ms !== undefined && (
                             <span>{formatLatency(model.latency_ms)}</span>
                           )}

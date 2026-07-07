@@ -1,8 +1,3 @@
-/**
- * Models Configuration Page
- * VS Code-style layout with provider sidebar and compact model cards
- */
-
 import React, { useMemo, useState } from 'react';
 import {
   CheckCircle,
@@ -10,7 +5,6 @@ import {
   RefreshCw,
   Settings,
   TestTube,
-  Zap,
   Server,
   Cloud,
   HardDrive,
@@ -22,20 +16,17 @@ import {
 } from 'lucide-react';
 import { ModelSelectionService, ModelInfo } from '../../services/models/ModelSelectionService';
 import {
+  getProviderMeta,
   getModelDisplayName,
-  getModelProvider,
-  getModelIcon,
-  getStatusDotColor,
-  modelRequiresApiKey,
+  getModelProviderDisplayName,
   getApiKeyVar,
   getSetupUrl,
+  getStatusDotColor,
   formatLatency,
   formatTokensPerSec,
 } from '../../utils/modelUtils';
 import { useToast } from '../../components/ui/Toast';
 import { useModel } from '../../contexts/ModelContext';
-
-interface ModelsPageProps {}
 
 interface ProviderItem {
   id: string;
@@ -44,7 +35,13 @@ interface ProviderItem {
   models: ModelInfo[];
 }
 
-export const ModelsPage: React.FC<ModelsPageProps> = () => {
+const PROVIDER_ICONS: Record<string, React.ReactNode> = {
+  'groq': <Cloud className="w-4 h-4 text-purple-400" />,
+  'z.ai': <Cloud className="w-4 h-4 text-yellow-400" />,
+  'ollama': <HardDrive className="w-4 h-4 text-green-400" />,
+};
+
+export const ModelsPage: React.FC = () => {
   const { availableModels, loading, routerHealthy, refreshModels } = useModel();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedProvider, setSelectedProvider] = useState<string>('all');
@@ -56,27 +53,20 @@ export const ModelsPage: React.FC<ModelsPageProps> = () => {
   const { showToast } = useToast();
 
   const providers: ProviderItem[] = useMemo(() => {
-    const groups: ProviderItem[] = [
-      {
-        id: 'groq',
-        label: 'Groq',
-        icon: <Cloud className="w-4 h-4 text-purple-400" />,
-        models: availableModels.filter(m => m.model_id.includes('llama') || m.model_id.includes('groq')),
-      },
-      {
-        id: 'zai',
-        label: 'Z.ai',
-        icon: <Zap className="w-4 h-4 text-yellow-400" />,
-        models: availableModels.filter(m => m.model_id.includes('glm') || m.model_id.includes('z.ai')),
-      },
-      {
-        id: 'ollama',
-        label: 'Ollama',
-        icon: <HardDrive className="w-4 h-4 text-green-400" />,
-        models: availableModels.filter(m => !m.model_id.includes('llama') && !m.model_id.includes('glm') && !m.model_id.includes('groq') && !m.model_id.includes('z.ai')),
-      },
-    ];
-    return groups.filter(g => g.models.length > 0);
+    const groupMap = new Map<string, ModelInfo[]>();
+    for (const model of availableModels) {
+      const key = model.provider || 'other';
+      if (!groupMap.has(key)) groupMap.set(key, []);
+      groupMap.get(key)!.push(model);
+    }
+    return Array.from(groupMap.entries())
+      .map(([id, models]) => ({
+        id,
+        label: getModelProviderDisplayName(id),
+        icon: PROVIDER_ICONS[id] || <Cloud className="w-4 h-4 text-zinc-400" />,
+        models,
+      }))
+      .filter(g => g.models.length > 0);
   }, [availableModels]);
 
   const filteredModels = useMemo(() => {
@@ -86,9 +76,9 @@ export const ModelsPage: React.FC<ModelsPageProps> = () => {
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       list = list.filter(m =>
-        getModelDisplayName(m.model_id).toLowerCase().includes(q) ||
+        getModelDisplayName(m).toLowerCase().includes(q) ||
         m.model_id.toLowerCase().includes(q) ||
-        getModelProvider(m.model_id).toLowerCase().includes(q)
+        getModelProviderDisplayName(m.provider).toLowerCase().includes(q)
       );
     }
     return list;
@@ -101,7 +91,7 @@ export const ModelsPage: React.FC<ModelsPageProps> = () => {
     try {
       const result = await ModelSelectionService.testModel(modelId);
       setTestResults(prev => ({ ...prev, [modelId]: result }));
-      showToast(`${getModelDisplayName(modelId)}: ${result.message}`, result.success ? 'success' : 'error');
+      showToast(`${modelId}: ${result.message}`, result.success ? 'success' : 'error');
     } catch (error) {
       const errorMsg = (error as Error).message;
       setTestResults(prev => ({ ...prev, [modelId]: { success: false, message: errorMsg } }));
@@ -119,10 +109,12 @@ export const ModelsPage: React.FC<ModelsPageProps> = () => {
     if (!configuringKey || !apiKeyValue.trim()) return;
     setSavingKey(true);
     try {
-      const keyVar = getApiKeyVar(configuringKey);
+      const model = availableModels.find(m => m.model_id === configuringKey);
+      const provider = model?.provider || '';
+      const keyVar = getApiKeyVar(provider);
       if (keyVar) {
         await ModelSelectionService.saveApiKey(keyVar, apiKeyValue.trim());
-        showToast(`API key saved for ${getModelDisplayName(configuringKey)}`, 'success');
+        showToast(`API key saved for ${configuringKey}`, 'success');
       }
       setConfiguringKey(null);
       setApiKeyValue('');
@@ -240,22 +232,23 @@ export const ModelsPage: React.FC<ModelsPageProps> = () => {
                 {filteredModels.map((model) => {
                   const isTesting = testingModels.has(model.model_id);
                   const testResult = testResults[model.model_id];
-                  const requiresKey = modelRequiresApiKey(model.model_id);
+                  const meta = getProviderMeta(model.provider);
+                  const requiresKey = meta.apiKeyVar !== null;
                   const isHealthy = model.status === 'healthy';
 
                   return (
                     <div key={model.model_id} className="group flex items-center gap-3 px-3 py-2.5 rounded hover:bg-zinc-800/40 transition-colors">
-                      <span className="text-xl flex-shrink-0">{getModelIcon(model.model_id)}</span>
+                      <span className="text-xl flex-shrink-0">{meta.icon}</span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className={`w-2 h-2 rounded-full ${getStatusDotColor(model.status)}`} />
                           <span className="text-sm font-medium text-zinc-100 truncate">
-                            {getModelDisplayName(model.model_id)}
+                            {getModelDisplayName(model)}
                           </span>
                           {!isHealthy && <X className="w-3 h-3 text-red-400 flex-shrink-0" />}
                         </div>
                         <div className="flex items-center gap-2 text-xs text-zinc-500">
-                          <span>{getModelProvider(model.model_id)}</span>
+                          <span>{getModelProviderDisplayName(model.provider)}</span>
                           {model.latency_ms !== null && model.latency_ms !== undefined && (
                             <span>{formatLatency(model.latency_ms)}</span>
                           )}
@@ -309,64 +302,68 @@ export const ModelsPage: React.FC<ModelsPageProps> = () => {
       </div>
 
       {/* API Key Configuration Modal */}
-      {configuringKey && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-md mx-4 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl">
-            <div className="flex items-center justify-between p-4 border-b border-zinc-800">
-              <h3 className="text-sm font-semibold text-zinc-100">
-                API Key: {getModelDisplayName(configuringKey)}
-              </h3>
-              <button
-                onClick={() => { setConfiguringKey(null); setApiKeyValue(''); }}
-                className="p-1 hover:bg-zinc-800 rounded transition-colors"
-              >
-                <X className="w-4 h-4 text-zinc-400" />
-              </button>
-            </div>
-            <div className="p-4 space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1.5">
-                  Environment Variable: <code className="text-blue-400">{getApiKeyVar(configuringKey)}</code>
-                </label>
-                <input
-                  type="password"
-                  value={apiKeyValue}
-                  onChange={(e) => setApiKeyValue(e.target.value)}
-                  placeholder="Paste your API key here..."
-                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-blue-600 transition-colors"
-                  autoFocus
-                />
-              </div>
-              {getSetupUrl(configuringKey) && (
-                <a
-                  href={getSetupUrl(configuringKey)!}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                >
-                  <ExternalLink className="w-3 h-3" />
-                  Get API key from {getSetupUrl(configuringKey)}
-                </a>
-              )}
-              <div className="flex items-center gap-2 pt-2">
-                <button
-                  onClick={handleSaveApiKey}
-                  disabled={savingKey || !apiKeyValue.trim()}
-                  className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors"
-                >
-                  {savingKey ? 'Saving...' : 'Save API Key'}
-                </button>
+      {configuringKey && (() => {
+        const model = availableModels.find(m => m.model_id === configuringKey);
+        const provider = model?.provider || '';
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div className="w-full max-w-md mx-4 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl">
+              <div className="flex items-center justify-between p-4 border-b border-zinc-800">
+                <h3 className="text-sm font-semibold text-zinc-100">
+                  API Key: {configuringKey}
+                </h3>
                 <button
                   onClick={() => { setConfiguringKey(null); setApiKeyValue(''); }}
-                  className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm font-medium transition-colors"
+                  className="p-1 hover:bg-zinc-800 rounded transition-colors"
                 >
-                  Cancel
+                  <X className="w-4 h-4 text-zinc-400" />
                 </button>
+              </div>
+              <div className="p-4 space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-zinc-400 mb-1.5">
+                    Environment Variable: <code className="text-blue-400">{getApiKeyVar(provider)}</code>
+                  </label>
+                  <input
+                    type="password"
+                    value={apiKeyValue}
+                    onChange={(e) => setApiKeyValue(e.target.value)}
+                    placeholder="Paste your API key here..."
+                    className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-blue-600 transition-colors"
+                    autoFocus
+                  />
+                </div>
+                {getSetupUrl(provider) && (
+                  <a
+                    href={getSetupUrl(provider)!}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    Get API key
+                  </a>
+                )}
+                <div className="flex items-center gap-2 pt-2">
+                  <button
+                    onClick={handleSaveApiKey}
+                    disabled={savingKey || !apiKeyValue.trim()}
+                    className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors"
+                  >
+                    {savingKey ? 'Saving...' : 'Save API Key'}
+                  </button>
+                  <button
+                    onClick={() => { setConfiguringKey(null); setApiKeyValue(''); }}
+                    className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm font-medium transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Status Bar */}
       <div className="px-4 py-1.5 border-t border-zinc-800 bg-zinc-900/50 text-xs text-zinc-500 flex items-center gap-3">

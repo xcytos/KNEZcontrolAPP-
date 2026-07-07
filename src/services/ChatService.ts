@@ -2886,10 +2886,11 @@ export class ChatService {
       let toolCallBuffer = ""; // Preserve tool call JSON for finalization
       let firstTokenReceived = false;
 
-      const useRouter = this.currentModelId !== null && this.currentModelId.includes('/');
+      const selectedModel = this.currentModelId ?? undefined;
+      const useRouter = selectedModel !== undefined && selectedModel.includes('/');
       const stream = useRouter
-        ? nineRouterService.chatCompletionsStream(injectedMessages as any, sessionId, { signal: controller.signal, onMeta, model: this.currentModelId! })
-        : knezClient.chatCompletionsStream(injectedMessages as any, sessionId, { signal: controller.signal, onMeta });
+        ? nineRouterService.chatCompletionsStream(injectedMessages as any, sessionId, { signal: controller.signal, onMeta, model: selectedModel })
+        : knezClient.chatCompletionsStream(injectedMessages as any, sessionId, { signal: controller.signal, onMeta, model: selectedModel });
       for await (const chunk of stream) {
         // FIX: Trigger FIRST_TOKEN on first chunk to transition to streaming phase
         if (!firstTokenReceived && chunk.trim()) {

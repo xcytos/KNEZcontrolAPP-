@@ -334,6 +334,8 @@ export function useSystemOrchestrator(onReady?: () => void) {
           setOutput((prev) => prev + "[KNEZ] Not running, will start new instance.\n");
         }
 
+        const defaultModel = (import.meta.env.VITE_DEFAULT_MODEL as string) || "qwen2.5:7b-instruct-q4_K_M";
+
         // Only kill and start if not already running
         if (!knezAlreadyRunningLocal) {
           // Port cleanup: Kill existing KNEZ python processes
@@ -347,10 +349,10 @@ export function useSystemOrchestrator(onReady?: () => void) {
           }
         
         setOutput((prev) => prev + "[KNEZ] Configuration:");
-        setOutput((prev) => prev + "[KNEZ]   Model: qwen2.5:7b-instruct-q4_K_M");
+        setOutput((prev) => prev + `[KNEZ]   Model: ${defaultModel}`);
         const knezPort = (import.meta.env.VITE_KNEZ_PORT as string) || "8000";
         setOutput((prev) => prev + `[KNEZ]   Endpoint: http://127.0.0.1:${knezPort}`);
-        const knezPath = "C:\\Users\\syedm\\Downloads\\ASSETS\\controlAPP\\KNEZ";
+        const knezPath = (import.meta.env.VITE_KNEZ_PATH as string) || "C:\\Users\\syedm\\Downloads\\ASSETS\\controlAPP\\KNEZ";
         setOutput((prev) => prev + `[KNEZ]   Path: ${knezPath}`);
         
         // Path validation
@@ -379,7 +381,7 @@ export function useSystemOrchestrator(onReady?: () => void) {
         setOutput((prev) => prev + "[KNEZ] Spawning uvicorn process via Rust shell plugin...");
         const knezCommand = Command.create("cmd", [
           "/c",
-          "set", "DEFAULT_MODEL=qwen2.5:7b-instruct-q4_K_M",
+          "set", `DEFAULT_MODEL=${defaultModel}`,
           "&&",
           "cd", "/d", knezPath,
           "&&",
@@ -458,7 +460,6 @@ export function useSystemOrchestrator(onReady?: () => void) {
         else {
           setOutput((prev) => prev + "[KNEZ] Skipping startup - already running.\n");
         }
-      } // End of if (!knezAlreadyRunning)
 
       // Warmup model to prevent first-request delay
       setOutput((prev) => prev + "\n[3/3] Loading model...");
@@ -469,7 +470,7 @@ export function useSystemOrchestrator(onReady?: () => void) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: "qwen2.5:7b-instruct-q4_K_M"
+            model: defaultModel
           }),
           signal: AbortSignal.timeout(60000)
         });
@@ -496,6 +497,7 @@ export function useSystemOrchestrator(onReady?: () => void) {
         startupTimeoutRef.current = null;
       }
       if (onReady) onReady();
+      } // End of if (!knezAlreadyRunning)
 
     } catch (e) {
       logger.error("system_orchestrator", "spawn_failed", { error: String(e) });
