@@ -3,6 +3,7 @@ import { SessionEvolutionFullView } from '../../data/components/SessionEvolution
 import { ActiveSessionsPanel } from '../../dashboard/ActiveSessionsPanel';
 import { useFullViewer } from '../FullViewerContext';
 import { taqwinDataService } from '../../../services/data/TaqwinDataService';
+import { ResizableSplitPane } from '../../../components/layout/ResizableSplitPane';
 import type { SessionContext } from '../types';
 
 const STATUS_OPTIONS = [
@@ -42,55 +43,58 @@ export const EvolutionLens: React.FC<EvolutionLensProps> = ({ sessionContext }) 
   }, [sessionContext.sessionId]);
 
   return (
-    <div className="flex h-full">
-      <div className="w-72 border-r border-zinc-800 bg-zinc-900/30 flex flex-col overflow-hidden flex-shrink-0">
-        <div className="px-3 py-2 border-b border-zinc-800 bg-zinc-950/50">
-          <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Sessions</h2>
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          <ActiveSessionsPanel
-            currentSessionId={sessionContext.sessionId}
-            currentProjectId={sessionContext.projectId}
-            onSessionClick={handleSessionSelect}
-          />
-        </div>
-      </div>
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {sessionContext.sessionId ? (
-          <>
-            <div className="flex items-center gap-2 px-4 py-1.5 border-b border-zinc-800 bg-zinc-900/50 flex-shrink-0">
-              <span className="text-xs text-zinc-400 font-medium truncate flex-1">
-                {sessionContext.sessionName || sessionContext.sessionId}
-              </span>
-              <div className="flex items-center gap-1">
-                {STATUS_OPTIONS.map(opt => (
-                  <button
-                    key={opt.value}
-                    onClick={() => handleStatusChange(opt.value)}
-                    disabled={statusUpdating}
-                    className={`px-2 py-0.5 rounded text-[10px] font-medium transition-all ${
-                      statusUpdating ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80'
-                    } ${opt.color} text-white`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <SessionEvolutionFullView
-              sessionId={sessionContext.sessionId}
-              onClose={() => {}}
-              embedded
+    <ResizableSplitPane
+      defaultLeftWidth={288}
+      minLeftWidth={160}
+      maxLeftWidth={500}
+      left={
+        <>
+          <div className="px-3 py-2 border-b border-zinc-800 bg-zinc-950/50">
+            <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Sessions</h2>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            <ActiveSessionsPanel
+              currentSessionId={sessionContext.sessionId}
+              currentProjectId={sessionContext.projectId}
+              onSessionClick={handleSessionSelect}
             />
-          </>
-        ) : (
-          <div className="h-full flex items-center justify-center text-zinc-500">
-            <div className="text-center">
-              <div className="text-sm">Select a session from the sidebar to view details</div>
+          </div>
+        </>
+      }
+      right={sessionContext.sessionId ? (
+        <>
+          <div className="flex items-center gap-2 px-4 py-1.5 border-b border-zinc-800 bg-zinc-900/50 flex-shrink-0">
+            <span className="text-xs text-zinc-400 font-medium truncate flex-1">
+              {sessionContext.sessionName || sessionContext.sessionId}
+            </span>
+            <div className="flex items-center gap-1">
+              {STATUS_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => handleStatusChange(opt.value)}
+                  disabled={statusUpdating}
+                  className={`px-2 py-0.5 rounded text-[10px] font-medium transition-all ${
+                    statusUpdating ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80'
+                  } ${opt.color} text-white`}
+                >
+                  {opt.label}
+                </button>
+              ))}
             </div>
           </div>
-        )}
-      </div>
-    </div>
+          <SessionEvolutionFullView
+            sessionId={sessionContext.sessionId}
+            onClose={() => {}}
+            embedded
+          />
+        </>
+      ) : (
+        <div className="h-full flex items-center justify-center text-zinc-500">
+          <div className="text-center">
+            <div className="text-sm">Select a session from the sidebar to view details</div>
+          </div>
+        </div>
+      )}
+    />
   );
 };
