@@ -22,6 +22,7 @@ export const EvolutionLens: React.FC<EvolutionLensProps> = ({ sessionContext }) 
   const [statusUpdating, setStatusUpdating] = useState(false);
 
   const handleSessionSelect = (sessionId: string, projectId?: string) => {
+    console.log('[EvolutionLens] Session selected:', sessionId, projectId);
     setSessionContext({ sessionId, projectId });
     setSelectedSessionId(sessionId);
     if (projectId) {

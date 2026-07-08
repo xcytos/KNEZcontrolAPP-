@@ -254,45 +254,38 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full bg-zinc-950 gap-2 p-4">
+    <div className="flex flex-col h-full bg-zinc-950 gap-1 p-2">
       {/* Top: Sessions List */}
-      <div className="flex flex-col border-b border-zinc-800 pb-4 max-h-[50%]">
-      {/* Header */}
-      <div className="mb-4">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h2 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
-              <Activity className="w-4 h-4 text-green-400" />
-              Sessions
-            </h2>
-            <p className="text-xs text-zinc-400 mt-0.5">
-              Click eye icon to monitor
-            </p>
-          </div>
+      <div className="flex flex-col border-b border-zinc-800 pb-2 max-h-[50%]">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-xs font-semibold text-zinc-100 flex items-center gap-1.5">
+            <Activity className="w-3 h-3 text-green-400" />
+            Sessions
+          </h3>
           <button
             onClick={loadSessions}
             disabled={loading}
-            className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 rounded text-xs text-zinc-300 transition-colors flex items-center gap-1.5"
+            className="px-1.5 py-0.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 rounded text-[10px] text-zinc-300 transition-colors"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
+            <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
 
         {/* Filter Buttons */}
-        <div className="flex gap-1.5">
+        <div className="flex gap-1 mb-2">
           {(['all', 'active', 'paused'] as const).map((status) => (
             <button
               key={status}
               onClick={() => setFilterStatus(status)}
-              className={`px-2.5 py-1 rounded text-[10px] font-medium transition-all ${
+              className={`px-1.5 py-0.5 rounded text-[9px] font-medium transition-all ${
                 filterStatus === status
                   ? 'bg-blue-600 text-white'
                   : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
               }`}
             >
               {status.charAt(0).toUpperCase() + status.slice(1)}
-              <span className="ml-1 px-1 py-0.5 rounded bg-zinc-900/50 text-[9px]">
+              <span className="ml-1 px-1 py-0.5 rounded bg-zinc-900/50 text-[8px]">
                 {status === 'all'
                   ? sessions.length
                   : sessions.filter(s => (s as any).status === status).length}
@@ -300,315 +293,258 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
             </button>
           ))}
         </div>
-      </div>
 
-      {/* Loading State */}
-      {loading && (
-        <div className="flex items-center justify-center py-12 text-zinc-400">
-          <Loader className="w-5 h-5 animate-spin mr-2" />
-          Loading sessions...
-        </div>
-      )}
+        {/* Loading State */}
+        {loading && (
+          <div className="flex items-center justify-center py-4 text-zinc-400 text-[10px]">
+            <Loader className="w-3 h-3 animate-spin mr-1.5" />
+            Loading...
+          </div>
+        )}
 
-      {/* Error State */}
-      {error && (
-        <div className="p-4 bg-red-900/20 border border-red-800 rounded-lg text-red-300 text-sm">
-          {error}
-        </div>
-      )}
+        {/* Error State */}
+        {error && (
+          <div className="p-2 bg-red-900/20 border border-red-800 rounded text-red-300 text-[10px]">
+            {error}
+          </div>
+        )}
 
-      {/* Sessions Grid */}
-      {!loading && !error && (
-        <div className="flex-1 overflow-y-auto space-y-2">
-          {filteredSessions.length === 0 ? (
-            <div className="text-center py-12 text-zinc-500 text-sm">
-              No {filterStatus !== 'all' && filterStatus} sessions found
-            </div>
-          ) : (
-            filteredSessions.map((session) => {
-              const sessionId = session.session_id || session.id;
-              const status = (session as any).status || 'active';
-              const isCurrent = sessionId === currentSessionId;
-              const isMonitored = monitoredSessions.has(sessionId);
-              
-              return (
-                <div
-                  key={sessionId}
-                  onClick={() => onSessionClick?.(sessionId, session.project_id)}
-                  className={`p-2.5 rounded border transition-all cursor-pointer ${getStatusColor(status)} ${
-                    isCurrent ? 'ring-1 ring-blue-500' : ''
-                  } ${isMonitored ? 'ring-1 ring-green-500' : ''}`}
-                >
-                  {/* Header Row */}
-                  <div className="flex items-start justify-between mb-1.5">
-                    <div className="flex items-start gap-1.5 flex-1 min-w-0">
-                      {getStatusIcon(status)}
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-xs text-zinc-100 truncate">
-                          {session.name || 'Unnamed Session'}
-                        </div>
-                        <div className="text-[10px] text-zinc-500 font-mono">
-                          {session.display_id}
+        {/* Sessions Grid */}
+        {!loading && !error && (
+          <div className="flex-1 overflow-y-auto space-y-1">
+            {filteredSessions.length === 0 ? (
+              <div className="text-center py-6 text-zinc-500 text-[10px]">
+                No {filterStatus !== 'all' && filterStatus} sessions
+              </div>
+            ) : (
+              filteredSessions.map((session) => {
+                const sessionId = session.session_id || session.id;
+                const status = (session as any).status || 'active';
+                const isCurrent = sessionId === currentSessionId;
+                const isMonitored = monitoredSessions.has(sessionId);
+
+                return (
+                  <div
+                    key={sessionId}
+                    onClick={() => onSessionClick?.(sessionId, session.project_id)}
+                    className={`p-1.5 rounded border transition-all cursor-pointer ${getStatusColor(status)} ${
+                      isCurrent ? 'ring-1 ring-blue-500' : ''
+                    } ${isMonitored ? 'ring-1 ring-green-500' : ''}`}
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                        {getStatusIcon(status)}
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[11px] font-medium text-zinc-100 truncate leading-tight">
+                            {session.name || 'Unnamed Session'}
+                          </div>
+                          <div className="text-[9px] text-zinc-500 font-mono leading-tight">
+                            {session.display_id}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      {isCurrent && (
-                        <span className="px-1.5 py-0.5 bg-blue-900/40 text-blue-300 text-[9px] rounded-full">
-                          Current
-                        </span>
-                      )}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); toggleMonitor(sessionId); }}
-                        className={`p-1 rounded transition-all ${
-                          isMonitored
-                            ? 'bg-green-900/40 text-green-400 hover:bg-green-900/60'
-                            : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300'
-                        }`}
-                        title={isMonitored ? 'Stop monitoring' : 'Start monitoring'}
-                      >
-                        {isMonitored ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Project Info */}
-                  {session.project_id && (
-                    <div className="flex items-center gap-1 text-[10px] text-zinc-400 mb-1.5">
-                      <GitBranch className="w-2.5 h-2.5" />
-                      <span className="truncate">{session.project_id}</span>
-                    </div>
-                  )}
-
-                  {/* Tags */}
-                  {(() => {
-                    const tags = (session as any).tags;
-                    // Parse tags if it's a JSON string
-                    let tagsArray: string[] = [];
-                    if (typeof tags === 'string') {
-                      try {
-                        tagsArray = JSON.parse(tags);
-                      } catch {
-                        tagsArray = [];
-                      }
-                    } else if (Array.isArray(tags)) {
-                      tagsArray = tags;
-                    }
-                    
-                    if (tagsArray.length === 0) return null;
-                    
-                    return (
-                      <div className="flex flex-wrap gap-1 mb-1.5">
-                        {tagsArray.slice(0, 2).map((tag: string, idx: number) => (
-                          <span
-                            key={idx}
-                            className="px-1 py-0.5 bg-zinc-800 text-zinc-400 text-[9px] rounded"
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                        {tagsArray.length > 2 && (
-                          <span className="px-1 py-0.5 bg-zinc-800 text-zinc-400 text-[9px] rounded">
-                            +{tagsArray.length - 2}
+                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                        {isCurrent && (
+                          <span className="px-1 py-0.5 bg-blue-900/40 text-blue-300 text-[8px] rounded-full">
+                            Now
                           </span>
                         )}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); toggleMonitor(sessionId); }}
+                          className={`p-0.5 rounded transition-all ${
+                            isMonitored
+                              ? 'bg-green-900/40 text-green-400 hover:bg-green-900/60'
+                              : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300'
+                          }`}
+                          title={isMonitored ? 'Stop monitoring' : 'Start monitoring'}
+                        >
+                          {isMonitored ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+                        </button>
                       </div>
-                    );
-                  })()}
+                    </div>
 
-                  {/* Timestamps */}
-                  <div className="flex items-center justify-between text-[9px] text-zinc-600">
-                    <span>{getTimeAgo((session as any).updated_at || (session as any).created_at || '')}</span>
+                    <div className="flex items-center justify-between mt-0.5">
+                      {session.project_id && (
+                        <div className="flex items-center gap-1 text-[9px] text-zinc-500 truncate">
+                          <GitBranch className="w-2 h-2 flex-shrink-0" />
+                          <span className="truncate">{session.project_id}</span>
+                        </div>
+                      )}
+                      <span className="text-[8px] text-zinc-600 ml-auto">
+                        {getTimeAgo((session as any).updated_at || (session as any).created_at || '')}
+                      </span>
+                    </div>
                   </div>
+                );
+              })
+            )}
+          </div>
+        )}
+
+        {/* Summary */}
+        {!loading && !error && sessions.length > 0 && (
+          <div className="mt-2 pt-1.5 border-t border-zinc-800">
+            <div className="flex gap-1 text-center text-[9px]">
+              <div className="flex-1 p-1 bg-zinc-900/50 rounded">
+                <div className="text-zinc-500">Total</div>
+                <div className="font-semibold text-zinc-100">{sessions.length}</div>
+              </div>
+              <div className="flex-1 p-1 bg-green-900/20 rounded">
+                <div className="text-green-400">Active</div>
+                <div className="font-semibold text-green-300">
+                  {sessions.filter(s => (s as any).status === 'active').length}
                 </div>
-              );
-            })
-          )}
-        </div>
-      )}
-
-      {/* Summary Footer */}
-      {!loading && !error && sessions.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-zinc-800">
-          <div className="grid grid-cols-3 gap-1.5 text-center">
-            <div className="p-1.5 bg-zinc-900/50 rounded">
-              <div className="text-[9px] text-zinc-500">Total</div>
-              <div className="text-sm font-bold text-zinc-100">{sessions.length}</div>
-            </div>
-            <div className="p-1.5 bg-green-900/20 rounded">
-              <div className="text-[9px] text-green-400">Active</div>
-              <div className="text-sm font-bold text-green-300">
-                {sessions.filter(s => (s as any).status === 'active').length}
               </div>
-            </div>
-            <div className="p-1.5 bg-purple-900/20 rounded">
-              <div className="text-[9px] text-purple-400">Monitored</div>
-              <div className="text-sm font-bold text-purple-300">
-                {monitoredSessions.size}
+              <div className="flex-1 p-1 bg-purple-900/20 rounded">
+                <div className="text-purple-400">Monitored</div>
+                <div className="font-semibold text-purple-300">{monitoredSessions.size}</div>
               </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
 
-    {/* Bottom: Activity Feed */}
-    <div className="flex-1 flex flex-col">
-      {/* Header */}
-      <div className="mb-4">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h2 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
-              <Bell className="w-4 h-4 text-purple-400" />
-              Activity Feed
-            </h2>
-            <p className="text-xs text-zinc-400 mt-0.5">
-              Real-time events from monitored sessions
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
+      {/* Bottom: Activity Feed */}
+      <div className="flex-1 flex flex-col min-h-0">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-xs font-semibold text-zinc-100 flex items-center gap-1.5">
+            <Bell className="w-3 h-3 text-purple-400" />
+            Activity
+          </h3>
+          <div className="flex items-center gap-1.5">
             {monitoredSessions.size > 0 && (
-              <span className="px-2 py-1 bg-purple-900/30 text-purple-300 text-[10px] rounded-full">
+              <span className="px-1.5 py-0.5 bg-purple-900/30 text-purple-300 text-[8px] rounded-full">
                 {monitoredSessions.size} monitored
               </span>
             )}
             <button
               onClick={loadActivityFeed}
               disabled={loadingActivity || monitoredSessions.size === 0}
-              className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 rounded text-xs text-zinc-300 transition-colors flex items-center gap-1.5"
+              className="px-1.5 py-0.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 rounded text-[10px] text-zinc-300 transition-colors"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${loadingActivity ? 'animate-spin' : ''}`} />
-              Refresh
+              <RefreshCw className={`w-3 h-3 ${loadingActivity ? 'animate-spin' : ''}`} />
             </button>
           </div>
         </div>
-      </div>
 
-      {/* Activity Feed Content */}
-      {monitoredSessions.size === 0 ? (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center text-zinc-500">
-            <BellOff className="w-12 h-12 mx-auto mb-3 opacity-50" />
-            <p className="text-sm">No sessions monitored</p>
-            <p className="text-xs mt-1">Click the eye icon on sessions to start monitoring</p>
-          </div>
-        </div>
-      ) : loadingActivity ? (
-        <div className="flex items-center justify-center py-12 text-zinc-400">
-          <Loader className="w-5 h-5 animate-spin mr-2" />
-          Loading activity...
-        </div>
-      ) : (
-        <div className="flex-1 overflow-y-auto space-y-2">
-          {activityFeed.length === 0 ? (
-            <div className="text-center py-12 text-zinc-500 text-sm">
-              No activity in monitored sessions
+        {/* Activity Feed Content */}
+        {monitoredSessions.size === 0 ? (
+          <div className="flex-1 flex items-center justify-center min-h-0">
+            <div className="text-center text-zinc-500">
+              <BellOff className="w-6 h-6 mx-auto mb-1.5 opacity-50" />
+              <p className="text-[10px]">No sessions monitored</p>
+              <p className="text-[9px] mt-0.5 text-zinc-600">Click eye icon to monitor</p>
             </div>
-          ) : (
-            activityFeed.map((event) => (
-              <div
-                key={event.id}
-                className={`p-3 rounded border ${getActivityColor(event.type)} hover:bg-zinc-900/30 transition-all cursor-pointer`}
-              >
-                {/* Event Header */}
-                <div className="flex items-start justify-between mb-2">
-                  <div className="flex items-start gap-2 flex-1 min-w-0">
-                    {getActivityIcon(event.type)}
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm text-zinc-100 truncate">
-                        {event.title}
-                      </div>
-                      <div className="text-xs text-zinc-400 truncate">
-                        {event.sessionName}
+          </div>
+        ) : loadingActivity ? (
+          <div className="flex items-center justify-center py-4 text-zinc-400 text-[10px]">
+            <Loader className="w-3 h-3 animate-spin mr-1.5" />
+            Loading...
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto space-y-1 min-h-0">
+            {activityFeed.length === 0 ? (
+              <div className="text-center py-6 text-zinc-500 text-[10px]">
+                No activity
+              </div>
+            ) : (
+              activityFeed.map((event) => (
+                <div
+                  key={event.id}
+                  className={`p-1.5 rounded border ${getActivityColor(event.type)} hover:bg-zinc-900/30 transition-all cursor-pointer`}
+                >
+                  <div className="flex items-start justify-between gap-1">
+                    <div className="flex items-start gap-1.5 flex-1 min-w-0">
+                      {getActivityIcon(event.type)}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[11px] font-medium text-zinc-100 truncate leading-tight">
+                          {event.title}
+                        </div>
+                        <div className="text-[9px] text-zinc-500 truncate leading-tight">
+                          {event.sessionName}
+                        </div>
                       </div>
                     </div>
+                    <span className={`px-1 py-0.5 text-[8px] rounded-full flex-shrink-0 ${
+                      event.type === 'checkpoint' ? 'bg-blue-900/40 text-blue-300' :
+                      event.type === 'event' ? 'bg-purple-900/40 text-purple-300' :
+                      'bg-cyan-900/40 text-cyan-300'
+                    }`}>
+                      {event.type}
+                    </span>
                   </div>
-                  <span className={`px-2 py-0.5 text-[9px] rounded-full ${
-                    event.type === 'checkpoint' ? 'bg-blue-900/40 text-blue-300' :
-                    event.type === 'event' ? 'bg-purple-900/40 text-purple-300' :
-                    'bg-cyan-900/40 text-cyan-300'
-                  }`}>
-                    {event.type}
-                  </span>
-                </div>
 
-                {/* Event Description */}
-                {event.description && (
-                  <p className="text-xs text-zinc-400 mb-2">
-                    {event.description}
-                  </p>
-                )}
+                  {event.description && (
+                    <p className="text-[10px] text-zinc-400 mt-1 truncate">{event.description}</p>
+                  )}
 
-                {/* Event Metadata */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3 text-[10px] text-zinc-600">
-                    {event.type === 'checkpoint' && event.metadata && (
-                      <>
-                        {event.metadata.learned_memories > 0 && (
-                          <span className="flex items-center gap-1">
-                            <Database className="w-3 h-3" />
-                            {event.metadata.learned_memories} memories
-                          </span>
-                        )}
-                        {event.metadata.decisions > 0 && (
-                          <span>{event.metadata.decisions} decisions</span>
-                        )}
-                      </>
-                    )}
-                    {event.type === 'event' && event.metadata?.files && (
-                      <span>{event.metadata.files.length} files</span>
-                    )}
-                  </div>
-                  <span className="text-[10px] text-zinc-600">
-                    {getTimeAgo(event.timestamp)}
-                  </span>
-                </div>
-
-                {/* Files List for Events */}
-                {event.type === 'event' && event.metadata?.files && event.metadata.files.length > 0 && (
-                  <div className="mt-2 pt-2 border-t border-zinc-800">
-                    <div className="text-[10px] text-zinc-500 space-y-0.5">
-                      {event.metadata.files.slice(0, 3).map((file: string, idx: number) => (
-                        <div key={idx} className="font-mono truncate">{file}</div>
-                      ))}
-                      {event.metadata.files.length > 3 && (
-                        <div className="text-zinc-600">+{event.metadata.files.length - 3} more</div>
+                  <div className="flex items-center justify-between mt-0.5">
+                    <div className="flex items-center gap-2 text-[9px] text-zinc-600">
+                      {event.type === 'checkpoint' && event.metadata && (
+                        <>
+                          {event.metadata.learned_memories > 0 && (
+                            <span className="flex items-center gap-0.5">
+                              <Database className="w-2 h-2" />
+                              {event.metadata.learned_memories}
+                            </span>
+                          )}
+                          {event.metadata.decisions > 0 && (
+                            <span>{event.metadata.decisions} dec</span>
+                          )}
+                        </>
+                      )}
+                      {event.type === 'event' && event.metadata?.files && (
+                        <span>{event.metadata.files.length} files</span>
                       )}
                     </div>
+                    <span className="text-[9px] text-zinc-600">{getTimeAgo(event.timestamp)}</span>
                   </div>
-                )}
-              </div>
-            ))
-          )}
-        </div>
-      )}
 
-      {/* Activity Stats Footer */}
-      {monitoredSessions.size > 0 && activityFeed.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-zinc-800">
-          <div className="grid grid-cols-3 gap-1.5 text-center">
-            <div className="p-1.5 bg-blue-900/20 rounded">
-              <div className="text-[9px] text-blue-400">Checkpoints</div>
-              <div className="text-sm font-bold text-blue-300">
-                {activityFeed.filter(e => e.type === 'checkpoint').length}
+                  {event.type === 'event' && event.metadata?.files && event.metadata.files.length > 0 && (
+                    <div className="mt-1 pt-1 border-t border-zinc-800">
+                      <div className="text-[9px] text-zinc-500 space-y-0.5">
+                        {event.metadata.files.slice(0, 2).map((file: string, idx: number) => (
+                          <div key={idx} className="font-mono truncate">{file}</div>
+                        ))}
+                        {event.metadata.files.length > 2 && (
+                          <div className="text-zinc-600">+{event.metadata.files.length - 2} more</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* Activity Stats Footer */}
+        {monitoredSessions.size > 0 && activityFeed.length > 0 && (
+          <div className="mt-1.5 pt-1.5 border-t border-zinc-800">
+            <div className="flex gap-1 text-center text-[9px]">
+              <div className="flex-1 p-1 bg-blue-900/20 rounded">
+                <div className="text-blue-400">Check</div>
+                <div className="font-semibold text-blue-300">
+                  {activityFeed.filter(e => e.type === 'checkpoint').length}
+                </div>
               </div>
-            </div>
-            <div className="p-1.5 bg-purple-900/20 rounded">
-              <div className="text-[9px] text-purple-400">Events</div>
-              <div className="text-sm font-bold text-purple-300">
-                {activityFeed.filter(e => e.type === 'event').length}
+              <div className="flex-1 p-1 bg-purple-900/20 rounded">
+                <div className="text-purple-400">Events</div>
+                <div className="font-semibold text-purple-300">
+                  {activityFeed.filter(e => e.type === 'event').length}
+                </div>
               </div>
-            </div>
-            <div className="p-1.5 bg-cyan-900/20 rounded">
-              <div className="text-[9px] text-cyan-400">Documents</div>
-              <div className="text-sm font-bold text-cyan-300">
-                {activityFeed.filter(e => e.type === 'document').length}
+              <div className="flex-1 p-1 bg-cyan-900/20 rounded">
+                <div className="text-cyan-400">Docs</div>
+                <div className="font-semibold text-cyan-300">
+                  {activityFeed.filter(e => e.type === 'document').length}
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
-  </div>
   );
 };
