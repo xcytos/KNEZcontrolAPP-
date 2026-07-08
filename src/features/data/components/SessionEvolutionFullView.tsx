@@ -12,6 +12,7 @@ export const SessionEvolutionFullView: React.FC<SessionFullViewProps> = ({
   initialView = 'timeline',
   onClose,
   embedded = false,
+  onNavigateToSession,
 }) => {
   const [activeView, setActiveView] = useState<'timeline' | 'graph'>(initialView);
   const [filters, setFilters] = useState<EventTypeFilters>({
@@ -304,12 +305,8 @@ export const SessionEvolutionFullView: React.FC<SessionFullViewProps> = ({
                     session_id: doc.session_id || '',
                   }))}
                   onClose={onClose}
-                  onNavigateToSession={(newSessionId) => {
-                    // Switch to the selected session
-                    window.location.hash = `session-${newSessionId}`;
-                    // Reload with new session
-                    // Note: This is a simple implementation - for full SPA behavior,
-                    // you'd update the sessionId prop from parent component
+                  onNavigateToSession={(newSessionId, newProjectId) => {
+                    onNavigateToSession?.(newSessionId, newProjectId);
                   }}
                 />
               )}

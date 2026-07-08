@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Activity, Clock, CheckCircle, Pause, GitBranch, Loader, RefreshCw, Bell, BellOff, FileText, Bookmark, Database, Eye, EyeOff } from 'lucide-react';
 import { taqwinDataService, SessionListItem } from '../../services/data/TaqwinDataService';
 
@@ -32,17 +32,17 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
   const [monitoredSessions, setMonitoredSessions] = useState<Set<string>>(new Set());
   const [activityFeed, setActivityFeed] = useState<ActivityEvent[]>([]);
   const [loadingActivity, setLoadingActivity] = useState(false);
+  const monitoredRef = useRef(monitoredSessions);
+  monitoredRef.current = monitoredSessions;
 
   useEffect(() => {
     loadSessions();
-    // Auto-monitor active sessions initially
     const interval = setInterval(() => {
       loadSessions();
-      if (monitoredSessions.size > 0) {
+      if (monitoredRef.current.size > 0) {
         loadActivityFeed();
       }
-    }, 10000); // Refresh every 10 seconds
-    
+    }, 10000);
     return () => clearInterval(interval);
   }, [monitoredSessions]);
 
@@ -174,9 +174,6 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
       }
       return newSet;
     });
-    
-    // Reload activity feed after toggle
-    setTimeout(() => loadActivityFeed(), 100);
   };
 
   const filteredSessions = sessions.filter(session => {

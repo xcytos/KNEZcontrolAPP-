@@ -104,6 +104,7 @@ export const TaqwinHierarchicalView: React.FC<{
 
   // Cache previously loaded session hierarchies to avoid re-fetching
   const hierarchyCache = useRef<Map<string, any>>(new Map());
+  const loadingSessionRef = useRef<string | null>(null);
 
   // Load projects on mount
   useEffect(() => {
@@ -298,12 +299,12 @@ export const TaqwinHierarchicalView: React.FC<{
   };
 
   const loadSessionHierarchy = async (sessionId: string) => {
+    loadingSessionRef.current = sessionId;
     const cached = hierarchyCache.current.get(sessionId);
     if (cached) {
       setHierarchy(cached.data);
       setTimeline(cached.timeline);
       setSessionDocuments(cached.documents || []);
-      setViewLevel('session-detail');
       setExpandedSections({ checkpoints: true, events: true, decisions: true, documents: true });
       return;
     }
@@ -312,31 +313,32 @@ export const TaqwinHierarchicalView: React.FC<{
       setLoading(true);
       setError(null);
       setHierarchy(null);
-      
+
       console.log('[TaqwinHierarchicalView] Loading hierarchy for session:', sessionId);
       const data = await taqwinDataService.getSessionHierarchy(sessionId);
+      if (loadingSessionRef.current !== sessionId) return;
       console.log('[TaqwinHierarchicalView] Hierarchy loaded:', data);
       setHierarchy(data);
-      
+
       console.log('[TaqwinHierarchicalView] Loading timeline...');
       const timelineData = await taqwinDataService.getSessionTimeline(sessionId);
+      if (loadingSessionRef.current !== sessionId) return;
       console.log('[TaqwinHierarchicalView] Timeline loaded:', timelineData.length, 'items');
       setTimeline(timelineData);
-      
+
       let docs: any[] = [];
       try {
         docs = await taqwinDataService.getSessionDocuments(sessionId) || [];
+        if (loadingSessionRef.current !== sessionId) return;
         console.log('[TaqwinHierarchicalView] Session documents loaded:', docs);
         setSessionDocuments(docs);
       } catch (docErr) {
         console.warn('[TaqwinHierarchicalView] Could not load session documents:', docErr);
         setSessionDocuments([]);
       }
-      
+
       hierarchyCache.current.set(sessionId, { data, timeline: timelineData, documents: docs });
-      
-      console.log('[TaqwinHierarchicalView] Setting view level to session-detail');
-      setViewLevel('session-detail');
+
       setExpandedSections({
         checkpoints: true,
         events: true,
@@ -349,6 +351,7 @@ export const TaqwinHierarchicalView: React.FC<{
       console.error('[TaqwinHierarchicalView] Error loading hierarchy:', err);
       setError(errorMsg);
     } finally {
+      if (loadingSessionRef.current === sessionId) loadingSessionRef.current = null;
       console.log('[TaqwinHierarchicalView] Finally block - clearing loading state');
       setLoading(false);
     }
@@ -389,6 +392,7 @@ export const TaqwinHierarchicalView: React.FC<{
         // Go back to root projects view
         setViewLevel('projects');
         setSelectedProjectId(null);
+        setSelectedSessionId(null);
         setSessions([]);
         setProjectBreadcrumb([]);
       }
@@ -573,6 +577,7 @@ export const TaqwinHierarchicalView: React.FC<{
       
       // Navigate directly to session without loading all project sessions
       setSelectedSessionId(sessionId);
+      setViewLevel('session-detail');
       
       // loadSessionHierarchy manages its own loading state
       await loadSessionHierarchy(sessionId);
@@ -619,6 +624,8 @@ export const TaqwinHierarchicalView: React.FC<{
                         onClick={() => {
                           if (index < projectBreadcrumb.length - 1 || viewLevel === 'session-detail') {
                             setSelectedProjectId(project.project_id);
+                            setSelectedSessionId(null);
+                            setViewLevel('sessions');
                             loadProjectSessions(project.project_id);
                           }
                         }}
@@ -795,6 +802,7 @@ export const TaqwinHierarchicalView: React.FC<{
                           key={sessionId}
                           onClick={() => {
                             setSelectedSessionId(sessionId);
+                            setViewLevel('session-detail');
                             loadSessionHierarchy(sessionId);
                           }}
                           className={`w-full text-left p-3 rounded-lg border-l-4 transition-all mb-2

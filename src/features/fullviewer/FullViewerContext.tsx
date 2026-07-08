@@ -64,12 +64,7 @@ export const FullViewerProvider: React.FC<{ children: ReactNode; initialState?: 
   }, []);
 
   const setSessionContext = useCallback((ctx: SessionContext) => {
-    setState(prev => {
-      if (Object.keys(ctx).length === 0) {
-        return { ...prev, sessionContext: {} };
-      }
-      return { ...prev, sessionContext: { ...prev.sessionContext, ...ctx } };
-    });
+    setState(prev => ({ ...prev, sessionContext: ctx }));
   }, []);
 
   const toggleActivityBar = useCallback(() => {

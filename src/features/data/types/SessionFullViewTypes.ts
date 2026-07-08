@@ -7,6 +7,7 @@ export interface SessionFullViewProps {
   initialView?: 'timeline' | 'graph';
   onClose: () => void;
   embedded?: boolean;
+  onNavigateToSession?: (sessionId: string, projectId?: string) => void;
 }
 
 export interface SessionData {

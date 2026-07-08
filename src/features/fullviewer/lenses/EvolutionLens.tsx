@@ -87,6 +87,7 @@ export const EvolutionLens: React.FC<EvolutionLensProps> = ({ sessionContext }) 
             sessionId={sessionContext.sessionId}
             onClose={() => {}}
             embedded
+            onNavigateToSession={handleSessionSelect}
           />
         </>
       ) : (

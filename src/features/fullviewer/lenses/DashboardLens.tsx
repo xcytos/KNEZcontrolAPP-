@@ -68,6 +68,10 @@ export const DashboardLens: React.FC = () => {
           <ActiveSessionsPanel
             currentSessionId={sessionContext.sessionId}
             currentProjectId={sessionContext.projectId}
+            onSessionClick={(sessionId, projectId) => {
+              handleActivityContextChange({ sessionId, projectId });
+              setActiveSubTab('hierarchy');
+            }}
           />
         </div>
       </div>
