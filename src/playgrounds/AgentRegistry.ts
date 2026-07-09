@@ -22,8 +22,8 @@ const agentDefinitions: AgentDefinition[] = [
   },
   {
     id: 'opencode',
-    name: 'OpenCode CLI',
-    description: 'Terminal-native AI coding agent by OpenCode (already integrated)',
+    name: 'OpenCode',
+    description: 'Terminal-native AI coding agent by OpenCode (dedicated playground tab with MCP sync)',
     icon: '\u{1F4A1}',
     category: 'coding',
     color: AGENT_PRESET_COLORS.opencode,

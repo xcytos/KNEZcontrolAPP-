@@ -29,7 +29,7 @@ interface MainLayoutProps {
   onHeaderToggle?: () => void;
 }
 
-const SANDBOX_VIEWS = new Set(['terminal-sandbox']);
+const SANDBOX_VIEWS = new Set(['playground-sandbox']);
 const isSandbox = (v: string) => SANDBOX_VIEWS.has(v);
 
 export const MainLayout: React.FC<MainLayoutProps> = ({

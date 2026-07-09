@@ -1,18 +1,19 @@
 import React from 'react';
-import { LayoutDashboard, BarChart3, HardDrive, Network, GitBranch, Terminal, MessageSquare, ChevronLeft } from 'lucide-react';
+import { LayoutDashboard, BarChart3, Columns2, HardDrive, Network, GitBranch, Terminal, MessageSquare, ChevronLeft } from 'lucide-react';
 import type { LensType } from './types';
 
 const LENS_ICONS: Record<LensType, React.ReactNode> = {
   dashboard: <LayoutDashboard className="w-5 h-5" />,
   evolution: <BarChart3 className="w-5 h-5" />,
+  combined: <Columns2 className="w-5 h-5" />,
   explorer: <HardDrive className="w-5 h-5" />,
   graph: <Network className="w-5 h-5" />,
   repository: <GitBranch className="w-5 h-5" />,
-  terminal: <Terminal className="w-5 h-5" />,
+  playground: <Terminal className="w-5 h-5" />,
   chat: <MessageSquare className="w-5 h-5" />,
 };
 
-const LENS_ORDER: LensType[] = ['dashboard', 'evolution', 'explorer', 'graph', 'repository', 'terminal', 'chat'];
+const LENS_ORDER: LensType[] = ['dashboard', 'evolution', 'combined', 'explorer', 'graph', 'repository', 'playground', 'chat'];
 
 interface ActivityBarProps {
   activeLens: LensType;

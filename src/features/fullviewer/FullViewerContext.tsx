@@ -28,7 +28,7 @@ const defaultNavigation: NavigationState = {
 
 const defaultState: FullViewerState = {
   activeLens: 'dashboard',
-  layoutMode: 'full',
+  layoutMode: 'split',
   rightPanel: 'agent',
   sessionContext: {},
   showActivityBar: true,
@@ -73,7 +73,7 @@ export const FullViewerProvider: React.FC<{ children: ReactNode; initialState?: 
 
   const cycleLayoutMode = useCallback(() => {
     setState(prev => {
-      const modes: LayoutMode[] = ['full', 'compact', 'split', 'focus'];
+      const modes: LayoutMode[] = ['split', 'compact', 'focus'];
       const idx = modes.indexOf(prev.layoutMode);
       const next = modes[(idx + 1) % modes.length];
       return { ...prev, layoutMode: next };

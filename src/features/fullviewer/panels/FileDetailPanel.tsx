@@ -112,7 +112,7 @@ export const FileDetailPanel: React.FC<{
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={() => {
-                window.dispatchEvent(new CustomEvent('knez-navigate', { detail: { view: 'terminal-sandbox' } }));
+                window.dispatchEvent(new CustomEvent('knez-navigate', { detail: { view: 'playground-sandbox' } }));
               }}
               className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs transition-all"
             >

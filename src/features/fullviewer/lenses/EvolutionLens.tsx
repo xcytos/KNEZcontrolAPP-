@@ -4,6 +4,9 @@ import { ActiveSessionsPanel } from '../../dashboard/ActiveSessionsPanel';
 import { useFullViewer } from '../FullViewerContext';
 import { taqwinDataService } from '../../../services/data/TaqwinDataService';
 import { ResizableSplitPane } from '../../../components/layout/ResizableSplitPane';
+import { ViewManager } from '../../viewer/ViewManager';
+import { CreateViewDialog } from '../../viewer/CreateViewDialog';
+import { SavedViewSelector } from '../../viewer/SavedViewSelector';
 import type { SessionContext } from '../types';
 
 const STATUS_OPTIONS = [
@@ -20,6 +23,8 @@ interface EvolutionLensProps {
 export const EvolutionLens: React.FC<EvolutionLensProps> = ({ sessionContext }) => {
   const { setSessionContext, setSelectedSessionId, setSelectedProjectId, setViewLevel } = useFullViewer();
   const [statusUpdating, setStatusUpdating] = useState(false);
+  const [showCreateView, setShowCreateView] = useState(false);
+  const [activeViewId, setActiveViewId] = useState<string | null>(ViewManager.getActive()?.id ?? null);
 
   const handleSessionSelect = (sessionId: string, projectId?: string) => {
     console.log('[EvolutionLens] Session selected:', sessionId, projectId);
@@ -43,60 +48,106 @@ export const EvolutionLens: React.FC<EvolutionLensProps> = ({ sessionContext }) 
     }
   }, [sessionContext.sessionId]);
 
+  const handleCreateView = useCallback((name: string) => {
+    ViewManager.create(name, sessionContext.sessionId || '', sessionContext.projectId, []);
+    setShowCreateView(false);
+  }, [sessionContext]);
+
+  const handleSelectSavedView = useCallback((viewId: string) => {
+    const view = ViewManager.get(viewId);
+    if (!view) return;
+    ViewManager.setActive(viewId);
+    setActiveViewId(viewId);
+    if (view.sessionId) {
+      setSessionContext({ sessionId: view.sessionId, projectId: view.projectId });
+      setSelectedSessionId(view.sessionId);
+      if (view.projectId) {
+        setSelectedProjectId(view.projectId);
+        setViewLevel('session-detail');
+      }
+    }
+  }, [setSessionContext, setSelectedSessionId, setSelectedProjectId, setViewLevel]);
+
   return (
+    <div className="relative h-full">
     <ResizableSplitPane
       defaultLeftWidth={288}
       minLeftWidth={160}
       maxLeftWidth={500}
       left={
-        <>
-          <div className="px-3 py-2 border-b border-zinc-800 bg-zinc-950/50">
+        <div className="flex flex-col h-full">
+          <div className="px-3 py-2 border-b border-zinc-800 bg-zinc-950/50 flex-shrink-0">
             <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Sessions</h2>
           </div>
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto min-h-0">
             <ActiveSessionsPanel
               currentSessionId={sessionContext.sessionId}
               currentProjectId={sessionContext.projectId}
               onSessionClick={handleSessionSelect}
             />
           </div>
-        </>
-      }
-      right={sessionContext.sessionId ? (
-        <>
-          <div className="flex items-center gap-2 px-4 py-1.5 border-b border-zinc-800 bg-zinc-900/50 flex-shrink-0">
-            <span className="text-xs text-zinc-400 font-medium truncate flex-1">
-              {sessionContext.sessionName || sessionContext.sessionId}
-            </span>
-            <div className="flex items-center gap-1">
-              {STATUS_OPTIONS.map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => handleStatusChange(opt.value)}
-                  disabled={statusUpdating}
-                  className={`px-2 py-0.5 rounded text-[10px] font-medium transition-all ${
-                    statusUpdating ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80'
-                  } ${opt.color} text-white`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <SessionEvolutionFullView
-            sessionId={sessionContext.sessionId}
-            onClose={() => {}}
-            embedded
-            onNavigateToSession={handleSessionSelect}
-          />
-        </>
-      ) : (
-        <div className="h-full flex items-center justify-center text-zinc-500">
-          <div className="text-center">
-            <div className="text-sm">Select a session from the sidebar to view details</div>
+          <div className="border-t border-zinc-800 bg-zinc-950/30 px-2 py-2 flex-shrink-0">
+            <SavedViewSelector
+              activeViewId={activeViewId}
+              onSelect={handleSelectSavedView}
+            />
           </div>
         </div>
-      )}
+      }
+      right={
+        <>
+          {sessionContext.sessionId ? (
+            <div className="flex flex-col h-full">
+              <div className="flex items-center gap-2 px-4 py-1.5 border-b border-zinc-800 bg-zinc-900/50 flex-shrink-0">
+                <span className="text-xs text-zinc-400 font-medium truncate flex-1">
+                  {sessionContext.sessionName || sessionContext.sessionId}
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setShowCreateView(true)}
+                    className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors"
+                    title="Create View from this session"
+                  >
+                    Create View
+                  </button>
+                  {STATUS_OPTIONS.map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={() => handleStatusChange(opt.value)}
+                      disabled={statusUpdating}
+                      className={`px-2 py-0.5 rounded text-[10px] font-medium transition-all ${
+                        statusUpdating ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80'
+                      } ${opt.color} text-white`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <SessionEvolutionFullView
+                sessionId={sessionContext.sessionId}
+                onClose={() => {}}
+                embedded
+                onNavigateToSession={handleSessionSelect}
+              />
+            </div>
+          ) : (
+            <div className="h-full flex items-center justify-center text-zinc-500">
+              <div className="text-center">
+                <div className="text-sm">Select a session from the sidebar to view details</div>
+              </div>
+            </div>
+          )}
+          {showCreateView && (
+            <CreateViewDialog
+              defaultName={`View - ${sessionContext.sessionId}`}
+              onSave={handleCreateView}
+              onClose={() => setShowCreateView(false)}
+            />
+          )}
+        </>
+      }
     />
+    </div>
   );
 };

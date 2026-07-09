@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { ActivityBar } from './ActivityBar';
 import { StatusBar } from './StatusBar';
 import { Toolbar } from './Toolbar';
@@ -7,8 +7,9 @@ import { EvolutionLens } from './lenses/EvolutionLens';
 import { ExplorerLens } from './lenses/ExplorerLens';
 import { GraphLens } from './lenses/GraphLens';
 import { RepositoryLens } from './lenses/RepositoryLens';
-import { TerminalLens } from './lenses/TerminalLens';
+import { PlaygroundLens } from './lenses/PlaygroundLens';
 import { ChatLens } from './lenses/ChatLens';
+import { CombinedView } from '../viewer/CombinedView';
 import { SessionContextPanel } from './panels/SessionContextPanel';
 import { AgentChatPanel } from './panels/AgentChatPanel';
 import { FileDetailPanel } from './panels/FileDetailPanel';
@@ -28,9 +29,16 @@ const FullViewerInner: React.FC<{
 
   const { sessionMetrics: stats, statusBarMetrics: statusBarStats } = useFullViewerStats(sessionContext.sessionId);
 
+  useEffect(() => {
+    if (activeLens === 'combined') {
+      setRightPanel('none');
+    }
+  }, [activeLens, setRightPanel]);
+
   const lensContent: Record<string, React.ReactNode> = {
     dashboard: <DashboardLens />,
     evolution: <EvolutionLens sessionContext={sessionContext} />,
+    combined: <CombinedView sessionContext={sessionContext} />,
     explorer: <ExplorerLens />,
     graph: (
       <GraphLens
@@ -46,7 +54,7 @@ const FullViewerInner: React.FC<{
       />
     ),
     repository: <RepositoryLens sessionContext={sessionContext} />,
-    terminal: <TerminalLens />,
+    playground: <PlaygroundLens />,
     chat: <ChatLens sessionContext={sessionContext} />,
   };
 
@@ -113,7 +121,7 @@ const FullViewerInner: React.FC<{
       />
 
       <div className="flex-1 flex flex-col overflow-hidden">
-        {layoutMode !== 'compact' && layoutMode !== 'focus' && (
+        {(
           <Toolbar
             activeLens={activeLens}
             layoutMode={layoutMode}

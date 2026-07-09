@@ -127,7 +127,7 @@ export const AgentManagerPanel: React.FC<AgentManagerPanelProps> = ({ sdk: _sdk,
         <div>
           <h1 style={{ fontSize: '20px', fontWeight: 700, color: '#e6edf3', margin: 0 }}>AI Agent Playgrounds</h1>
           <p style={{ fontSize: '13px', color: '#8b949e', marginTop: '4px' }}>
-            Install and launch CLI AI coding agents in dedicated terminals
+            Install and launch CLI AI coding agents in dedicated playgrounds
           </p>
         </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
