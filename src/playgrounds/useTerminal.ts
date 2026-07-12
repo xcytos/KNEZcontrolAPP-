@@ -58,6 +58,8 @@ export function useTerminal({
   const resizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    if (!isActive) return;
+
     let terminal: Terminal | null = null;
     let fitAddon: FitAddon | null = null;
     let cleanup: (() => void) | null = null;
@@ -275,7 +277,7 @@ export function useTerminal({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionIdPrefix, tabId, tabLabel, ...deps]);
+  }, [isActive, sessionIdPrefix, tabId, tabLabel, ...deps]);
 
   const refreshTerminal = useCallback(() => {
     handleResizeRef.current?.();
