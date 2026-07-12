@@ -7,6 +7,22 @@
     "fs:default",
     "fs:allow-applocaldata-write",
     "fs:allow-read",
+    {
+      "identifier": "fs:allow-exists",
+      "allow": [{ "path": "$HOME/.config/opencode/**" }]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": [{ "path": "$HOME/.config/opencode/**" }]
+    },
+    {
+      "identifier": "fs:allow-read",
+      "allow": [{ "path": "$HOME/.config/opencode/**" }]
+    },
+    {
+      "identifier": "fs:allow-write",
+      "allow": [{ "path": "$HOME/.config/opencode/**" }]
+    },
     "http:default",
     "dialog:default",
     "dialog:allow-open",

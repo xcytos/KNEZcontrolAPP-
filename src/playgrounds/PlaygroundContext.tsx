@@ -361,6 +361,12 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     const ro = new ResizeObserver(updateOverlayFromVisible);
     resizeObserverRef.current = ro;
+    // Observe viewports that registered before this effect ran (callback refs fire before effects)
+    for (const el of viewportMapRef.current.values()) {
+      ro.observe(el);
+    }
+    // Re-evaluate in case a viewport registered before the ResizeObserver existed
+    updateOverlayFromVisible();
     window.addEventListener('scroll', updateOverlayFromVisible, true);
     return () => {
       ro.disconnect();
