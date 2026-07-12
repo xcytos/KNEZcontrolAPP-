@@ -1,7 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { EvolutionLens } from '../fullviewer/lenses/EvolutionLens';
 import { PlaygroundContainer } from '../../playgrounds/PlaygroundContainer';
-import { playgroundSDK } from '../../services/playground/PlaygroundSDK';
 import type { SessionContext } from '../fullviewer/types';
 import { ViewManager } from './ViewManager';
 import { SavedViewSelector } from './SavedViewSelector';
@@ -176,7 +175,7 @@ export const CombinedView: React.FC<CombinedViewProps> = ({ sessionContext }) =>
             </button>
           </div>
           <div className="flex flex-1 overflow-hidden min-h-0">
-            <PlaygroundContainer sdk={playgroundSDK} />
+            <PlaygroundContainer />
           </div>
         </div>
       )}

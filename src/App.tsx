@@ -28,7 +28,6 @@ import { logger } from './services/utils/LogService';
 import { features } from './config/features';
 import { initMcpBoot } from './mcp/mcpBoot';
 import { getStaticMemoryLoader } from './services/memory/StaticMemoryLoader';
-import { playgroundSDK } from './services/playground/PlaygroundSDK';
 import { captureStartupSample } from './observability/StartupMetrics';
 import { PlaygroundProvider } from './playgrounds/PlaygroundContext';
 
@@ -58,7 +57,6 @@ const ExtractionDashboard = L(() => import('./features/extraction/ExtractionDash
 const TestPanel = L(() => import('./features/diagnostics/TestPanel').then(m => ({ default: m.TestPanel })));
 const SkillsView = L(() => import('./features/skills/SkillsView').then(m => ({ default: m.SkillsView })));
 const ModelsPage = L(() => import('./features/models/ModelsPage').then(m => ({ default: m.ModelsPage })));
-const PlaygroundContainer = L(() => import('./playgrounds/PlaygroundContainer').then(m => ({ default: m.PlaygroundContainer })));
 const SettingsModal = L(() => import('./features/settings/SettingsModal').then(m => ({ default: m.SettingsModal })));
 
 // ...
@@ -346,65 +344,62 @@ function AppContent() {
   }, [sessionId]);
 
   return (
-    <MainLayout
-      activeView={activeView}
-      onViewChange={handleViewChange}
-      presenceState={presenceState}
-      tabErrors={tabErrors}
-      onHeaderToggle={() => setHeaderVisible(v => !v)}
-      connectionStatus={{
-        state:
-          systemStatus === "starting"
-            ? "starting"
-            : systemStatus === "failed"
-              ? "error"
-              : isDegraded
-                ? "degraded"
-                : isConnected
-                  ? "running"
-                  : "down",
-        connected: online,
-        isModelReady: isModelReady,
-        endpoint: knezClient.getProfile().endpoint,
-        lastCheck: lastCheck
-      }}
-      headerVisible={headerVisible}
-      headerSubtitle={
-        sessionId ? (
-          <div className="text-xs text-zinc-500 font-mono">
-            session {sessionId.slice(0, 8)}
+<PlaygroundProvider>
+      <MainLayout
+        activeView={activeView}
+        onViewChange={handleViewChange}
+        presenceState={presenceState}
+        tabErrors={tabErrors}
+        onHeaderToggle={() => setHeaderVisible(v => !v)}
+        connectionStatus={{
+          state:
+            systemStatus === "starting"
+              ? "starting"
+              : systemStatus === "failed"
+                ? "error"
+                : isDegraded
+                  ? "degraded"
+                  : isConnected
+                    ? "running"
+                    : "down",
+          connected: online,
+          isModelReady: isModelReady,
+          endpoint: knezClient.getProfile().endpoint,
+          lastCheck: lastCheck
+        }}
+        headerVisible={headerVisible}
+        headerSubtitle={
+          sessionId ? (
+            <div className="text-xs text-zinc-500 font-mono">
+              session {sessionId.slice(0, 8)}
+            </div>
+          ) : null
+        }
+        headerActions={
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                if (isConnected || isDegraded) {
+                  forceCheck();
+                  return;
+                }
+                launchAndConnect(systemStatus === "failed");
+              }}
+              disabled={systemStatus === "starting"}
+              className="text-xs bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 px-3 py-1 rounded"
+            >
+              {systemStatus === "starting" ? "Starting" : (isConnected || isDegraded) ? "Reconnect" : "Start"}
+            </button>
+            <button
+              onClick={() => setShowSettings(true)}
+              className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-1 rounded"
+            >
+              Settings
+            </button>
           </div>
-        ) : null
-      }
-      headerActions={
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => {
-              if (isConnected || isDegraded) {
-                forceCheck();
-                return;
-              }
-              launchAndConnect(systemStatus === "failed");
-            }}
-            disabled={systemStatus === "starting"}
-            className="text-xs bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 px-3 py-1 rounded"
-          >
-            {systemStatus === "starting" ? "Starting" : (isConnected || isDegraded) ? "Reconnect" : "Start"}
-          </button>
-          <button
-            onClick={() => setShowSettings(true)}
-            className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-1 rounded"
-          >
-            Settings
-          </button>
-        </div>
-      }
-      bottomPanel={
-        <PlaygroundContainer sdk={playgroundSDK} />
-      }
-    >
-      <PlaygroundProvider>
-      <CommandPalette 
+        }
+      >
+      <CommandPalette
         isOpen={commandPaletteOpen} 
         onClose={() => setCommandPaletteOpen(false)}
         onNavigate={(view) => { handleViewChange(view); setCommandPaletteOpen(false); }}
@@ -444,10 +439,9 @@ function AppContent() {
             </div>
           )}
         </div>
-      </FullViewerProvider>
-      </PlaygroundProvider>
-      
-       {showSettings && <SettingsModal 
+</FullViewerProvider>
+
+       {showSettings && <SettingsModal
          onClose={() => {
            setShowSettings(false);
            forceCheck();
@@ -455,9 +449,10 @@ function AppContent() {
          systemStatus={systemStatus}
          systemOutput={systemOutput}
          systemHealthProbe={systemHealthProbe}
-         onForceStart={launchAndConnect}
-       />}
+onForceStart={launchAndConnect}
+        />}
     </MainLayout>
+    </PlaygroundProvider>
   );
 }
 

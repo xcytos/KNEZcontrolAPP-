@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { SessionFullViewProps, EventTypeFilters, SessionFullData } from '../types/SessionFullViewTypes';
 import { taqwinDataService } from '../../../services/data/TaqwinDataService';
 import { SessionMetadataSidebar } from './SessionMetadataSidebar';
@@ -28,9 +28,13 @@ export const SessionEvolutionFullView: React.FC<SessionFullViewProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [allProjectSessions, setAllProjectSessions] = useState<any[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const loadRef = useRef(false);
 
   // Load session data - wrapped in useCallback to prevent infinite loops
   const loadSessionData = useCallback(async () => {
+    if (!sessionId) return;
+    if (loadRef.current) return;
+    loadRef.current = true;
     const requestTime = Date.now();
     console.log(`[SessionEvolutionFullView] Loading session ${sessionId} at ${new Date().toISOString()}`);
     try {
@@ -170,6 +174,7 @@ export const SessionEvolutionFullView: React.FC<SessionFullViewProps> = ({
       setError(errorMsg);
       console.error('[SessionEvolutionFullView] Load error:', err);
     } finally {
+      loadRef.current = false;
       const elapsed = Date.now() - requestTime;
       const minLoadMs = 300;
       if (elapsed < minLoadMs) {
@@ -183,7 +188,7 @@ export const SessionEvolutionFullView: React.FC<SessionFullViewProps> = ({
   // Load session data on mount or when sessionId changes
   useEffect(() => {
     loadSessionData();
-  }, [loadSessionData]);
+  }, [sessionId]); // stable — sessionId from props only changes on deliberate selection
 
   const handleExport = useCallback((format: 'json' | 'markdown') => {
     if (!sessionData) return;

@@ -105,6 +105,7 @@ export const TaqwinHierarchicalView: React.FC<{
   // Cache previously loaded session hierarchies to avoid re-fetching
   const hierarchyCache = useRef<Map<string, any>>(new Map());
   const loadingSessionRef = useRef<string | null>(null);
+  const prevViewLevelRef = useRef<ViewLevel>(viewLevel);
 
   // Load projects on mount
   useEffect(() => {
@@ -135,9 +136,11 @@ export const TaqwinHierarchicalView: React.FC<{
           sessionId: undefined,
           sessionName: undefined,
         });
-      } else {
+      } else if (prevViewLevelRef.current === 'session-detail' && viewLevel !== 'session-detail') {
+        // Only clear when actually LEAVING session-detail, not when hierarchy is still loading
         onActivityContextChange({});
       }
+      prevViewLevelRef.current = viewLevel;
     }
   }, [viewLevel, selectedSessionId, selectedProjectId, hierarchy, onActivityContextChange]);
 
