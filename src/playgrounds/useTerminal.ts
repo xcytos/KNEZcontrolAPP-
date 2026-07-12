@@ -35,7 +35,7 @@ export interface UseTerminalReturn {
   refreshTerminal: () => void;
 }
 
-const SESSION_MARKER = '\x1b[2m\x1b[3m'; // dim + italic
+const SESSION_MARKER = '\x1b[2m\x1b[3m';
 const MARKER_RESET = '\x1b[23m\x1b[22m';
 
 export function useTerminal({
@@ -57,18 +57,37 @@ export function useTerminal({
   const handleResizeRef = useRef<(() => void) | null>(null);
   const resizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Persistent refs that survive effect re-runs so terminal is never destroyed on tab switch
+  const terminalInstanceRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const localPtyRef = useRef<any>(null);
+  const localConnectedRef = useRef(false);
+  const currentSessionIdRef = useRef('');
+  const unlistenPtyOutputRef = useRef<Promise<() => void> | null>(null);
+  const unlistenExitRef = useRef<(() => void) | null>(null);
+  const unlistenErrorRef = useRef<(() => void) | null>(null);
+
   useEffect(() => {
     if (!isActive) return;
 
+    // Already initialized → just re-fit on re-activation
+    if (terminalInstanceRef.current) {
+      setTimeout(() => {
+        try {
+          fitAddonRef.current?.fit();
+          terminalInstanceRef.current?.refresh(0, terminalInstanceRef.current.rows - 1);
+        } catch { /* ignore */ }
+      }, 50);
+      return;
+    }
+
     let terminal: Terminal | null = null;
     let fitAddon: FitAddon | null = null;
-    let cleanup: (() => void) | null = null;
-    let unlistenPtyOutput: (() => void) | null = null;
     let localPty: any = null;
     let localIsConnected = false;
-    let isUnmounted = false;
     let currentSessionId = '';
     let firstOutputFired = false;
+    let isUnmounted = false;
 
     const initializeTerminal = async () => {
       if (!terminalRef.current) return;
@@ -97,6 +116,10 @@ export function useTerminal({
       await new Promise<void>((resolve) =>
         requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
       );
+      if (isUnmounted) {
+        terminal.dispose();
+        return;
+      }
       try { fitAddon.fit(); } catch { /* pre-layout */ }
 
       // Restore previous session output before starting the new PTY
@@ -185,16 +208,15 @@ export function useTerminal({
           terminal.write(`\x1b[32m[PID] ${session.pid}\x1b[0m\r\n`);
         }
 
-        listen<{ pty_id: string; data: string }>('pty-output', (event) => {
+        // Store promise immediately — cleanup can always unsubscribe even if component unmounts mid-resolution
+        unlistenPtyOutputRef.current = listen<{ pty_id: string; data: string }>('pty-output', (event) => {
           if (event.payload.pty_id !== pty.id || !terminal) return;
           try { terminal.write(event.payload.data); } catch { /* disposed */ }
 
-          // Persist output for cross-restart restore
           if (tabId) {
             pushOutput(tabId, tabLabel || sessionIdPrefix, event.payload.data);
           }
 
-          // Re-fit after first output batch to correct scrollbar-affected geometry
           if (!firstOutputFired) {
             firstOutputFired = true;
             setTimeout(() => {
@@ -204,14 +226,22 @@ export function useTerminal({
               } catch { /* ignore */ }
             }, 300);
           }
-        }).then((fn) => { unlistenPtyOutput = fn; }).catch((err) => {
-          console.error('[useTerminal] Failed to subscribe pty-output:', err);
         });
 
         const { getPTYService } = await import('./runtime/PTYService');
+
+        if (isUnmounted) {
+          const manager = getTerminalManager();
+          manager.destroyTerminal(currentSessionId).catch(() => {
+            if (localPty) localPty.destroy();
+          });
+          if (terminal) terminal.dispose();
+          return;
+        }
+
         const ptyService = getPTYService();
 
-        ptyService.on('exit', (event: any) => {
+        const onExit = (event: any) => {
           if (event.ptyId === localPty?.id) {
             localIsConnected = false;
             setIsConnected(false);
@@ -221,17 +251,22 @@ export function useTerminal({
               terminal.write('\r\n\x1b[33m[PROCESS EXITED]\x1b[0m\r\n');
             }
           }
-        });
+        };
+        ptyService.on('exit', onExit);
+        unlistenExitRef.current = () => ptyService.off('exit', onExit);
 
-        ptyService.on('error', (event: any) => {
+        const onError = (event: any) => {
           if (event.ptyId === localPty?.id && terminal) {
             const errorMsg = event.error?.message || 'Unknown PTY error';
             console.error('PTY Error:', errorMsg);
             terminal.write(`\r\n\x1b[31m[PTY ERROR] ${errorMsg}\x1b[0m\r\n`);
           }
-        });
+        };
+        ptyService.on('error', onError);
+        unlistenErrorRef.current = () => ptyService.off('error', onError);
 
       } catch (error) {
+        if (isUnmounted) return;
         console.error('[useTerminal] Failed to initialize:', error);
         setStatus('error');
         if (terminal) {
@@ -239,45 +274,66 @@ export function useTerminal({
         }
       }
 
-      cleanup = async () => {
-        window.removeEventListener('resize', handleResize);
-        if (resizeObserver) resizeObserver.disconnect();
-        if (resizeTimeoutRef.current) clearTimeout(resizeTimeoutRef.current);
-        if (unlistenPtyOutput) { unlistenPtyOutput(); unlistenPtyOutput = null; }
-
-        // Record session in history before destroying
-        if (tabId && currentSessionId) {
-          pushSession({ tabId, type: sessionIdPrefix, label: tabLabel || sessionIdPrefix, timestamp: Date.now() });
-        }
-
-        const terminalManager = getTerminalManager();
-        try {
-          if (currentSessionId) {
-            await terminalManager.destroyTerminal(currentSessionId);
-          }
-        } catch (error) {
-          console.error('Failed to destroy terminal:', error);
-          if (localPty) localPty.destroy();
-        }
-
-        if (terminal) terminal.dispose();
-      };
+      // Store persistent refs so the terminal survives effect re-runs
+      terminalInstanceRef.current = terminal;
+      fitAddonRef.current = fitAddon;
+      localPtyRef.current = localPty;
+      localConnectedRef.current = localIsConnected;
+      currentSessionIdRef.current = currentSessionId;
     };
 
     initializeTerminal();
 
     return () => {
       isUnmounted = true;
-      if (cleanup) {
-        (async () => {
-          try { await cleanup(); } catch (error: unknown) {
-            console.error('Cleanup error:', error);
-          }
-        })();
-      }
     };
+    // isActive needed in deps to wake up on tab switch and to re-fit
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive, sessionIdPrefix, tabId, tabLabel, ...deps]);
+
+  // Separate effect for actual cleanup — runs only on component unmount
+  useEffect(() => {
+    return () => {
+      const terminal = terminalInstanceRef.current;
+      const currentSessionId = currentSessionIdRef.current;
+
+      window.removeEventListener('resize', handleResizeRef.current!);
+      if (resizeTimeoutRef.current) clearTimeout(resizeTimeoutRef.current);
+
+      if (unlistenPtyOutputRef.current) {
+        unlistenPtyOutputRef.current.then(unsub => unsub());
+        unlistenPtyOutputRef.current = null;
+      }
+      if (unlistenExitRef.current) {
+        unlistenExitRef.current();
+        unlistenExitRef.current = null;
+      }
+      if (unlistenErrorRef.current) {
+        unlistenErrorRef.current();
+        unlistenErrorRef.current = null;
+      }
+
+      if (tabId && currentSessionId) {
+        pushSession({ tabId, type: sessionIdPrefix, label: tabLabel || sessionIdPrefix, timestamp: Date.now() });
+      }
+
+      const terminalManager = getTerminalManager();
+      if (currentSessionId) {
+        terminalManager.destroyTerminal(currentSessionId).catch((error: any) => {
+          console.error('Failed to destroy terminal:', error);
+          if (localPtyRef.current) localPtyRef.current.destroy();
+        });
+      }
+
+      if (terminal) terminal.dispose();
+      terminalInstanceRef.current = null;
+      fitAddonRef.current = null;
+      localPtyRef.current = null;
+      localConnectedRef.current = false;
+      currentSessionIdRef.current = '';
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const refreshTerminal = useCallback(() => {
     handleResizeRef.current?.();

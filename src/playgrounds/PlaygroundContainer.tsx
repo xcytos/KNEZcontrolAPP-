@@ -1,23 +1,24 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { Code, Plus, X, Eye, EyeOff, RefreshCw, ChevronUp, ChevronDown, Link2 } from 'lucide-react';
-import { PlaygroundSDK } from '../services/playground/PlaygroundSDK';
 import { PlaygroundType } from '../domain/PlaygroundTypes';
 import AgentManagerPanel from './AgentManagerPanel';
 import { ViewManager } from '../features/viewer/ViewManager';
 import { CreateViewDialog } from '../features/viewer/CreateViewDialog';
 import { usePlaygroundState } from './PlaygroundContext';
 
-interface PlaygroundContainerProps {
-  sdk: PlaygroundSDK;
-}
-
-export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk }) => {
+export const PlaygroundContainer: React.FC = () => {
   const {
-    tabs, viewState, refreshKeys, refreshTab,
+    tabs, viewState, refreshTab,
     addTerminal, addOpenCode, launchAgent, closeTab, selectTab,
+    registerViewport, showTerminalHeader, setShowTerminalHeader,
   } = usePlaygroundState();
 
-  const [showTerminalHeader, setShowTerminalHeader] = useState(true);
+  // Stable ID for this container instance — survives renders, unique per mount
+  const containerIdRef = useRef(`pc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`);
+  const handleViewportRef = useCallback((el: HTMLDivElement | null) => {
+    registerViewport(containerIdRef.current, el);
+  }, [registerViewport]);
+
   const [showSlidePanel, setShowSlidePanel] = useState(false);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [showAssignSession, setShowAssignSession] = useState(false);
@@ -110,30 +111,17 @@ export const PlaygroundContainer: React.FC<PlaygroundContainerProps> = ({ sdk })
               className="flex flex-col overflow-hidden flex-1 min-h-0"
               style={{ display: panelCollapsed ? 'none' : 'flex' }}
             >
+            {/* Viewport for shared terminal panels — rendered by PlaygroundProvider */}
             <div className="flex-1 relative bg-gray-900 min-h-0">
               <span className="absolute top-0 left-1 text-[8px] text-red-500 font-bold z-20">⬤CONTENT</span>
-              {tabs.map(tab => {
-                const TabComponent = tab.component;
-                const isActive = viewState.panel.activeTabId === tab.id;
-                const tabKey = `${tab.id}-${refreshKeys[tab.id] || 0}`;
-                return (
-                  <div
-                    key={tabKey}
-                    className="absolute inset-0 overflow-auto"
-                    style={{
-                      visibility: isActive ? 'visible' : 'hidden',
-                      pointerEvents: isActive ? 'auto' : 'none',
-                      zIndex: isActive ? 1 : 0,
-                    }}
-                  >
-                    {tab.type === PlaygroundType.AGENT_MANAGER ? (
-                      <AgentManagerPanel sdk={sdk} onLaunch={launchAgent} />
-                    ) : (
-                      <TabComponent sdk={sdk} headerVisible={showTerminalHeader} isActive={isActive} />
-                    )}
-                  </div>
-                );
-              })}
+              {/* Always render viewport div so overlay has a positioning reference */}
+              <div ref={handleViewportRef} className="absolute inset-0" />
+              {/* Overlay AgentManagerPanel on top when that tab is active */}
+              {activeTab?.type === PlaygroundType.AGENT_MANAGER && (
+                <div className="absolute inset-0 z-10">
+                  <AgentManagerPanel sdk={undefined as any} onLaunch={launchAgent} />
+                </div>
+              )}
             </div>
           </div>
         </div>

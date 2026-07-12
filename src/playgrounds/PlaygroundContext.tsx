@@ -1,9 +1,9 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Monitor, Code, Bot } from 'lucide-react';
 import { PlaygroundType, PanelPosition, PlaygroundMode, ViewState, PlaygroundConfig } from '../domain/PlaygroundTypes';
 import { getAgentById } from './AgentRegistry';
 import { getSessionHistory } from './terminalStorage';
-import { PlaygroundSDK } from '../services/playground/PlaygroundSDK';
+import { playgroundSDK, PlaygroundSDK } from '../services/playground/PlaygroundSDK';
 import { TerminalPlayground } from './TerminalPlayground';
 import OpenCodePlayground from './OpenCodePlayground';
 import AgentPlayground from './AgentPlayground';
@@ -218,6 +218,10 @@ interface PlaygroundContextType {
   launchAgent: (agent: AgentDefinition) => void;
   closeTab: (tabId: string, e: React.MouseEvent) => void;
   selectTab: (tabId: string) => void;
+  /** Register a viewport element by instance ID. Pass null to unregister (component unmount). */
+  registerViewport: (id: string, el: HTMLDivElement | null) => void;
+  showTerminalHeader: boolean;
+  setShowTerminalHeader: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 const PlaygroundContext = createContext<PlaygroundContextType | null>(null);
@@ -247,6 +251,11 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
     return saved ? parseInt(saved, 10) : 1;
   });
   const [refreshKeys, setRefreshKeys] = useState<Record<string, number>>({});
+  const [showTerminalHeader, setShowTerminalHeader] = useState(true);
+
+  // Map-based viewport registry — both PlaygroundLens and CombinedView register their viewport divs.
+  // The visible one (offsetParent !== null) provides coordinates for the shared terminal overlay.
+  const viewportMapRef = useRef<Map<string, HTMLDivElement>>(new Map());
 
   useEffect(() => { saveViewState(viewState); }, [viewState]);
   useEffect(() => { localStorage.setItem(TABS_KEY, JSON.stringify(serializeTabs(tabs))); }, [tabs]);
@@ -329,6 +338,54 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
     });
   }, [tabs]);
 
+  // Shared terminal panels — rendered ONCE at provider level, always mounted
+  const sharedTerminals = useMemo(() => tabs.filter(t => t.type !== PlaygroundType.AGENT_MANAGER), [tabs]);
+
+  // Position state for the shared terminal overlay
+  const [overlayRect, setOverlayRect] = useState({ top: 0, left: 0, width: 0, height: 0 });
+
+  // Find the visible viewport element and update overlay position
+  const updateOverlayFromVisible = useCallback(() => {
+    for (const el of viewportMapRef.current.values()) {
+      if (el.offsetParent !== null) {
+        const rect = el.getBoundingClientRect();
+        setOverlayRect({ top: rect.top, left: rect.left, width: rect.width, height: rect.height });
+        return;
+      }
+    }
+    setOverlayRect({ top: 0, left: 0, width: 0, height: 0 });
+  }, []);
+
+  // Single ResizeObserver observes all registered viewports
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  useEffect(() => {
+    const ro = new ResizeObserver(updateOverlayFromVisible);
+    resizeObserverRef.current = ro;
+    window.addEventListener('scroll', updateOverlayFromVisible, true);
+    return () => {
+      ro.disconnect();
+      resizeObserverRef.current = null;
+      window.removeEventListener('scroll', updateOverlayFromVisible, true);
+    };
+  }, [updateOverlayFromVisible]);
+
+  const registerViewport = useCallback((id: string, el: HTMLDivElement | null) => {
+    const ro = resizeObserverRef.current;
+    if (el) {
+      viewportMapRef.current.set(id, el);
+      ro?.observe(el);
+      if (el.offsetParent !== null) {
+        const rect = el.getBoundingClientRect();
+        setOverlayRect({ top: rect.top, left: rect.left, width: rect.width, height: rect.height });
+      }
+    } else {
+      const existing = viewportMapRef.current.get(id);
+      if (existing) ro?.unobserve(existing);
+      viewportMapRef.current.delete(id);
+      updateOverlayFromVisible();
+    }
+  }, [updateOverlayFromVisible]);
+
   return (
     <PlaygroundContext.Provider value={{
       tabs, setTabs, viewState, setViewState,
@@ -336,8 +393,46 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
       nextOpenCodeNum, setNextOpenCodeNum,
       refreshKeys, refreshTab,
       addTerminal, addOpenCode, launchAgent, closeTab, selectTab,
+      registerViewport,
+      showTerminalHeader, setShowTerminalHeader,
     }}>
       {children}
+
+      {/* Shared terminal panels — single instance, always mounted, overlaid via fixed positioning */}
+      <div
+        style={{
+          position: 'fixed',
+          top: overlayRect.top,
+          left: overlayRect.left,
+          width: overlayRect.width,
+          height: overlayRect.height,
+          zIndex: 50,
+          pointerEvents: overlayRect.width > 0 ? 'auto' : 'none',
+          overflow: 'hidden',
+          backgroundColor: '#111827',
+        }}
+      >
+        {sharedTerminals.map(tab => {
+          const TabComponent = tab.component;
+          const isActive = viewState.panel.activeTabId === tab.id;
+          const tabKey = `${tab.id}-${refreshKeys[tab.id] || 0}`;
+          return (
+            <div
+              key={tabKey}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                visibility: isActive ? 'visible' : 'hidden',
+                pointerEvents: isActive ? 'auto' : 'none',
+                zIndex: isActive ? 1 : 0,
+                overflow: 'auto',
+              }}
+            >
+              <TabComponent sdk={playgroundSDK} headerVisible={showTerminalHeader} isActive={isActive} />
+            </div>
+          );
+        })}
+      </div>
     </PlaygroundContext.Provider>
   );
 }
