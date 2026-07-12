@@ -2,9 +2,6 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { EvolutionLens } from '../fullviewer/lenses/EvolutionLens';
 import { PlaygroundContainer } from '../../playgrounds/PlaygroundContainer';
 import type { SessionContext } from '../fullviewer/types';
-import { ViewManager } from './ViewManager';
-import { SavedViewSelector } from './SavedViewSelector';
-import { CreateViewDialog } from './CreateViewDialog';
 import { Maximize2, Minimize2 } from 'lucide-react';
 
 interface PanelState {
@@ -22,11 +19,9 @@ type PanelId = keyof PanelState;
 export const CombinedView: React.FC<CombinedViewProps> = ({ sessionContext }) => {
   const [splitPercent, setSplitPercent] = useState(65);
   const [isDragging, setIsDragging] = useState(false);
-  const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [panels, setPanels] = useState<PanelState>({ sessions: true, evolution: true, playground: true });
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const activeView = ViewManager.getActive();
   const visibleCount = Object.values(panels).filter(Boolean).length;
 
   const togglePanel = useCallback((panel: PanelId) => {
@@ -71,16 +66,6 @@ export const CombinedView: React.FC<CombinedViewProps> = ({ sessionContext }) =>
     };
   }, [isDragging, handleMouseMove, handleMouseUp]);
 
-  const handleSaveView = useCallback((name: string) => {
-    const tabs = activeView?.playgroundTabs ?? [];
-    ViewManager.create(name, sessionContext.sessionId || '', sessionContext.projectId, tabs);
-    setShowSaveDialog(false);
-  }, [sessionContext, activeView]);
-
-  const handleRestoreView = useCallback((viewId: string) => {
-    ViewManager.setActive(viewId);
-  }, []);
-
   const showPlaygroundDivider = panels.playground && panels.evolution;
 
   return (
@@ -91,7 +76,6 @@ export const CombinedView: React.FC<CombinedViewProps> = ({ sessionContext }) =>
           className="flex flex-col overflow-hidden min-h-0 relative"
           style={{ width: panels.playground ? `${splitPercent}%` : '100%' }}
         >
-          <span className="absolute top-0 left-1 text-[8px] text-red-500 font-bold z-20">⬤EVOL</span>
           <div className="flex items-center justify-between px-3 py-1 border-b border-zinc-800 bg-zinc-900/50 flex-shrink-0">
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Evolution</span>
@@ -100,16 +84,15 @@ export const CombinedView: React.FC<CombinedViewProps> = ({ sessionContext }) =>
               )}
             </div>
             <div className="flex items-center gap-1">
-              {panels.playground && (
+              {panels.playground ? (
                 <button
                   onClick={() => togglePanel('playground')}
                   className="p-0.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors"
-                  title={panels.playground ? 'Hide playground' : 'Show playground'}
+                  title="Hide playground"
                 >
                   <Minimize2 className="w-3 h-3" />
                 </button>
-              )}
-              {!panels.playground && (
+              ) : (
                 <button
                   onClick={() => togglePanel('playground')}
                   className="p-0.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors"
@@ -118,17 +101,6 @@ export const CombinedView: React.FC<CombinedViewProps> = ({ sessionContext }) =>
                   <Maximize2 className="w-3 h-3" />
                 </button>
               )}
-              <button
-                onClick={() => setShowSaveDialog(true)}
-                className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors"
-                title="Save as View"
-              >
-                Create View
-              </button>
-              <SavedViewSelector
-                activeViewId={activeView?.id ?? null}
-                onSelect={handleRestoreView}
-              />
             </div>
           </div>
           <div className="flex flex-1 overflow-hidden min-h-0">
@@ -163,16 +135,26 @@ export const CombinedView: React.FC<CombinedViewProps> = ({ sessionContext }) =>
           className="flex flex-col overflow-hidden min-h-0 relative"
           style={{ width: panels.evolution || panels.sessions ? `${100 - splitPercent}%` : '100%' }}
         >
-          <span className="absolute top-0 right-1 text-[8px] text-red-500 font-bold z-20">⬤PLAY</span>
           <div className="flex items-center justify-between px-3 py-1 border-b border-zinc-800 bg-zinc-900/50 flex-shrink-0">
             <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Playground</span>
-            <button
-              onClick={() => togglePanel('playground')}
-              className="p-0.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors"
-              title="Collapse playground"
-            >
-              <Minimize2 className="w-3 h-3" />
-            </button>
+            <div className="flex items-center gap-1">
+              {!panels.evolution && !panels.sessions && (
+                <button
+                  onClick={() => togglePanel('evolution')}
+                  className="p-0.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors"
+                  title="Show evolution"
+                >
+                  <Maximize2 className="w-3 h-3" />
+                </button>
+              )}
+              <button
+                onClick={() => togglePanel('playground')}
+                className="p-0.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors"
+                title="Collapse playground"
+              >
+                <Minimize2 className="w-3 h-3" />
+              </button>
+            </div>
           </div>
           <div className="flex flex-1 overflow-hidden min-h-0">
             <PlaygroundContainer />
@@ -180,13 +162,6 @@ export const CombinedView: React.FC<CombinedViewProps> = ({ sessionContext }) =>
         </div>
       )}
 
-      {showSaveDialog && (
-        <CreateViewDialog
-          defaultName={`View - ${sessionContext.sessionId || 'new'}`}
-          onSave={handleSaveView}
-          onClose={() => setShowSaveDialog(false)}
-        />
-      )}
     </div>
   );
 };

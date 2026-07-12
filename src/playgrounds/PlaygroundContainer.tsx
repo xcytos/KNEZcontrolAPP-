@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Code, Plus, X, Eye, EyeOff, RefreshCw, ChevronUp, ChevronDown, Link2 } from 'lucide-react';
 import { PlaygroundType } from '../domain/PlaygroundTypes';
 import AgentManagerPanel from './AgentManagerPanel';
@@ -36,10 +36,16 @@ export const PlaygroundContainer: React.FC = () => {
 
   const activeTab = tabs.find(t => t.id === viewState.panel.activeTabId);
 
+  // Auto-uncollapse when Agents tab is active — content must never be hidden for AgentManagerPanel
+  useEffect(() => {
+    if (activeTab?.type === PlaygroundType.AGENT_MANAGER) {
+      setPanelCollapsed(false);
+    }
+  }, [activeTab?.type]);
+
   return (
     <div className="flex flex-col flex-1 min-h-0 bg-gray-900">
-      <div className="flex items-center justify-between bg-gray-800 border-b border-gray-700 select-none flex-shrink-0 relative">
-        <span className="absolute top-0 left-1 text-[8px] text-red-500 font-bold z-20">⬤TAB-BAR</span>
+      <div className="flex items-center justify-between bg-gray-800 border-b border-gray-700 select-none flex-shrink-0">
         <div className="flex items-center overflow-x-auto">
           {tabs.map(tab => {
             const Icon = tab.icon;
@@ -113,7 +119,6 @@ export const PlaygroundContainer: React.FC = () => {
             >
             {/* Viewport for shared terminal panels — rendered by PlaygroundProvider */}
             <div className="flex-1 relative bg-gray-900 min-h-0">
-              <span className="absolute top-0 left-1 text-[8px] text-red-500 font-bold z-20">⬤CONTENT</span>
               {/* Always render viewport div so overlay has a positioning reference */}
               <div ref={handleViewportRef} className="absolute inset-0" />
               {/* Overlay AgentManagerPanel on top when that tab is active */}
@@ -127,8 +132,7 @@ export const PlaygroundContainer: React.FC = () => {
         </div>
 
         {showSlidePanel && (
-          <div className="w-64 border-l border-gray-700 bg-gray-900 flex-shrink-0 flex flex-col min-h-0 relative">
-            <span className="absolute top-0 left-1 text-[8px] text-red-500 font-bold z-20">⬤PANEL</span>
+          <div className="w-64 border-l border-gray-700 bg-gray-900 flex-shrink-0 flex flex-col min-h-0">
             <div className="p-3 text-xs text-gray-400 font-medium border-b border-gray-700">
               Active Tabs
             </div>
@@ -179,8 +183,7 @@ export const PlaygroundContainer: React.FC = () => {
         )}
       </div>
 
-      <div className="flex items-center justify-between px-3 py-1 bg-gray-800 border-t border-gray-700 text-xs text-gray-400 flex-shrink-0 relative">
-        <span className="absolute top-0 right-1 text-[8px] text-red-500 font-bold z-20">⬤BAR</span>
+      <div className="flex items-center justify-between px-3 py-1 bg-gray-800 border-t border-gray-700 text-xs text-gray-400 flex-shrink-0">
         <div className="flex items-center gap-3">
           <button
             onClick={() => setPanelCollapsed(v => !v)}

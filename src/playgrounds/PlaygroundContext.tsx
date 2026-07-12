@@ -343,6 +343,9 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
 
   // Position state for the shared terminal overlay
   const [overlayRect, setOverlayRect] = useState({ top: 0, left: 0, width: 0, height: 0 });
+  // Hide overlay when AGENT_MANAGER tab is active so AgentManagerPanel isn't blocked
+  const activeTab = tabs.find(t => t.id === viewState.panel.activeTabId);
+  const overlayHidden = activeTab?.type === PlaygroundType.AGENT_MANAGER;
 
   // Find the visible viewport element and update overlay position
   const updateOverlayFromVisible = useCallback(() => {
@@ -416,6 +419,7 @@ export function PlaygroundProvider({ children }: { children: React.ReactNode }) 
           pointerEvents: overlayRect.width > 0 ? 'auto' : 'none',
           overflow: 'hidden',
           backgroundColor: '#111827',
+          display: overlayHidden ? 'none' : undefined,
         }}
       >
         {sharedTerminals.map(tab => {
