@@ -173,9 +173,31 @@ export const EvolutionLens: React.FC<EvolutionLensProps> = ({
           right={evolutionContent}
         />
       ) : showSessions ? (
-        sessionsPanel
+        <div className="flex h-full">
+          <div className="flex-1 min-w-0">{sessionsPanel}</div>
+          {onToggleEvolution && (
+            <button
+              onClick={onToggleEvolution}
+              className="w-6 flex-shrink-0 flex items-center justify-center bg-zinc-900 border-l border-zinc-800 hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors"
+              title="Show evolution"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       ) : showEvolution ? (
-        evolutionContent
+        <div className="flex h-full">
+          {onToggleSessions && (
+            <button
+              onClick={onToggleSessions}
+              className="w-6 flex-shrink-0 flex items-center justify-center bg-zinc-900 border-r border-zinc-800 hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors"
+              title="Show sessions"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <div className="flex-1 min-w-0">{evolutionContent}</div>
+        </div>
       ) : null}
       {showCreateView && (
         <CreateViewDialog
