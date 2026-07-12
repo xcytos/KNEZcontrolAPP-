@@ -105,6 +105,8 @@ export interface GitStats {
 export class TaqwinDataService {
   private static instance: TaqwinDataService;
   private dbPath: string = 'C:\\Users\\syedm\\taqwin_memory.db';
+  private hierarchyCache = new Map<string, { data: SessionHierarchy; expiry: number }>();
+  private CACHE_TTL = 2000; // 2 seconds — covers concurrent calls within same render cycle
 
   private constructor() {}
 
@@ -188,6 +190,12 @@ export class TaqwinDataService {
       throw new Error('Database path not set');
     }
 
+    // Check in-memory cache — multiple callers in same render cycle share one result
+    const cached = this.hierarchyCache.get(sessionId);
+    if (cached && Date.now() < cached.expiry) {
+      return cached.data;
+    }
+
     try {
       const response = await invoke<DatabaseResponse<SessionHierarchy>>(
         'sqlite_get_session_hierarchy',
@@ -198,6 +206,7 @@ export class TaqwinDataService {
       );
 
       if (response.success && response.data) {
+        this.hierarchyCache.set(sessionId, { data: response.data, expiry: Date.now() + this.CACHE_TTL });
         return response.data;
       } else {
         throw new Error(response.error || 'Failed to get session hierarchy');

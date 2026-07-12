@@ -64,6 +64,7 @@ export const FullViewerProvider: React.FC<{ children: ReactNode; initialState?: 
   }, []);
 
   const setSessionContext = useCallback((ctx: SessionContext) => {
+    console.log(`[FullViewerContext] setSessionContext at ${new Date().toISOString()}:`, ctx);
     setState(prev => ({ ...prev, sessionContext: ctx }));
   }, []);
 

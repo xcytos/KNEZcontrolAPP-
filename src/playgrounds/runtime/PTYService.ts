@@ -1,6 +1,7 @@
 // Import Tauri API directly
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { recordPtySpawn } from '../../observability/StartupMetrics';
 
 // Tauri type declarations
 declare global {
@@ -315,6 +316,7 @@ export class PTYService {
         }
         
         // Spawn actual PTY process with real shell using direct invoke
+        const t0 = performance.now();
         const result = await invoke('pty_create', {
           config: {
             cols: config.cols,
@@ -326,8 +328,9 @@ export class PTYService {
           }
         }) as string;
         
+        recordPtySpawn();
         if (process.env.NODE_ENV === 'development') {
-          console.log('[PTY DEBUG] PTY created successfully:', result);
+          console.log('[PTY DEBUG] PTY created in', (performance.now() - t0).toFixed(0), 'ms:', result);
         }
         
         const handle: PTYHandle = {

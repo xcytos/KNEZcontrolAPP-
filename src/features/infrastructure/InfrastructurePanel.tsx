@@ -6,6 +6,7 @@ import { HealthProbeStatus, SystemStatus } from "../system/useSystemOrchestrator
 import { PerformancePanel } from "../performance/PerformancePanel";
 import { backendHasLiveMetrics, isBackendHealthyStatus } from "../../utils/health";
 import { InfrastructureVisualizer } from "./InfrastructureVisualizer";
+import { StartupMetricsPanel } from "../../observability/StartupMetricsPanel";
 
 type Props = {
   isConnected: boolean;
@@ -83,6 +84,8 @@ export const InfrastructurePanel: React.FC<Props> = ({
       <div className="h-6"></div>
 
       <PerformancePanel />
+
+      <StartupMetricsPanel />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
         {/* Backend Health */}

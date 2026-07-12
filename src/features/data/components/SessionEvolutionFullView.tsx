@@ -31,6 +31,8 @@ export const SessionEvolutionFullView: React.FC<SessionFullViewProps> = ({
 
   // Load session data - wrapped in useCallback to prevent infinite loops
   const loadSessionData = useCallback(async () => {
+    const requestTime = Date.now();
+    console.log(`[SessionEvolutionFullView] Loading session ${sessionId} at ${new Date().toISOString()}`);
     try {
       setLoading(true);
       setError(null);
@@ -41,7 +43,14 @@ export const SessionEvolutionFullView: React.FC<SessionFullViewProps> = ({
       // Extract data from hierarchy response
       const session = hierarchy.session as any;
       const checkpoints = hierarchy.checkpoints || [];
-      const documents = hierarchy.documents || [];
+      
+      // Fetch documents separately — they come from PostgreSQL via McpDocumentBridge, not SQLite
+      let documents: any[] = [];
+      try {
+        documents = await taqwinDataService.getSessionDocuments(sessionId) || [];
+      } catch (err) {
+        console.warn('[SessionEvolutionFullView] Failed to load documents:', err);
+      }
       
       // Load all sessions from the same project for the graph
       if (session.project_id) {
@@ -103,6 +112,15 @@ export const SessionEvolutionFullView: React.FC<SessionFullViewProps> = ({
         });
       }
       
+      // Add documents
+      documents.forEach((doc: any) => {
+        timeline.push({
+          type: 'document',
+          timestamp: doc.created_at || new Date().toISOString(),
+          data: doc,
+        });
+      });
+      
       // Sort timeline by timestamp (newest first)
       timeline.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       
@@ -152,6 +170,12 @@ export const SessionEvolutionFullView: React.FC<SessionFullViewProps> = ({
       setError(errorMsg);
       console.error('[SessionEvolutionFullView] Load error:', err);
     } finally {
+      const elapsed = Date.now() - requestTime;
+      const minLoadMs = 300;
+      if (elapsed < minLoadMs) {
+        await new Promise(r => setTimeout(r, minLoadMs - elapsed));
+      }
+      console.log(`[SessionEvolutionFullView] Finished loading session ${sessionId} in ${Math.max(elapsed, minLoadMs)}ms`);
       setLoading(false);
     }
   }, [sessionId]); // Only depend on sessionId

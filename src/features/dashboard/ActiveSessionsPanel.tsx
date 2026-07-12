@@ -24,7 +24,6 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
   onSessionClick,
 }) => {
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'paused'>('active');
   
@@ -34,26 +33,26 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
   const [loadingActivity, setLoadingActivity] = useState(false);
   const monitoredRef = useRef(monitoredSessions);
   monitoredRef.current = monitoredSessions;
+  const [clickedId, setClickedId] = useState<string | null>(null);
+  const [activityScope, setActivityScope] = useState<'all' | 'selected'>('all');
 
   useEffect(() => {
     loadSessions();
     const interval = setInterval(() => {
       loadSessions();
-      if (monitoredRef.current.size > 0) {
+      if (monitoredRef.current.size > 0 || (activityScope === 'selected' && currentSessionId)) {
         loadActivityFeed();
       }
     }, 10000);
     return () => clearInterval(interval);
-  }, [monitoredSessions]);
+  }, []);
 
   const loadSessions = async () => {
     try {
-      setLoading(true);
       setError(null);
       taqwinDataService.setDatabasePath('C:\\Users\\syedm\\taqwin_memory.db');
       
       const allSessions = await taqwinDataService.listSessions(1000);
-      console.log('[ActiveSessionsPanel] Loaded sessions:', allSessions.length);
       setSessions(allSessions);
       
       // Auto-monitor active sessions if none are monitored yet
@@ -67,19 +66,20 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
     } catch (err) {
       console.error('[ActiveSessionsPanel] Error loading sessions:', err);
       setError(err instanceof Error ? err.message : 'Failed to load sessions');
-    } finally {
-      setLoading(false);
     }
   };
 
   const loadActivityFeed = async () => {
-    if (monitoredSessions.size === 0) return;
+    const sessionIds = activityScope === 'selected' && currentSessionId
+      ? [currentSessionId]
+      : Array.from(monitoredSessions);
+    if (sessionIds.length === 0) return;
     
     try {
       setLoadingActivity(true);
       const allEvents: ActivityEvent[] = [];
       
-      for (const sessionId of Array.from(monitoredSessions)) {
+      for (const sessionId of sessionIds) {
         const session = sessions.find(s => (s.session_id || s.id) === sessionId);
         if (!session) continue;
         
@@ -262,10 +262,9 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
           </h3>
           <button
             onClick={loadSessions}
-            disabled={loading}
-            className="px-1.5 py-0.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 rounded text-[10px] text-zinc-300 transition-colors"
+            className="px-1.5 py-0.5 bg-zinc-800 hover:bg-zinc-700 rounded text-[10px] text-zinc-300 transition-colors"
           >
-            <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className="w-3 h-3" />
           </button>
         </div>
 
@@ -291,14 +290,6 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
           ))}
         </div>
 
-        {/* Loading State */}
-        {loading && (
-          <div className="flex items-center justify-center py-4 text-zinc-400 text-[10px]">
-            <Loader className="w-3 h-3 animate-spin mr-1.5" />
-            Loading...
-          </div>
-        )}
-
         {/* Error State */}
         {error && (
           <div className="p-2 bg-red-900/20 border border-red-800 rounded text-red-300 text-[10px]">
@@ -307,7 +298,7 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
         )}
 
         {/* Sessions Grid */}
-        {!loading && !error && (
+        {!error && (
           <div className="flex-1 overflow-y-auto space-y-1">
             {filteredSessions.length === 0 ? (
               <div className="text-center py-6 text-zinc-500 text-[10px]">
@@ -323,9 +314,13 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
                 return (
                   <div
                     key={sessionId}
-                    onClick={() => onSessionClick?.(sessionId, session.project_id)}
+                    onClick={() => {
+                      console.log('[ActiveSessionsPanel] Session clicked:', sessionId, session.project_id);
+                      setClickedId(sessionId);
+                      onSessionClick?.(sessionId, session.project_id);
+                    }}
                     className={`p-1.5 rounded border transition-all cursor-pointer ${getStatusColor(status)} ${
-                      isCurrent ? 'ring-1 ring-blue-500' : ''
+                      isCurrent || clickedId === sessionId ? 'ring-2 ring-blue-500 bg-blue-950/20' : ''
                     } ${isMonitored ? 'ring-1 ring-green-500' : ''}`}
                   >
                     <div className="flex items-center justify-between gap-1">
@@ -342,8 +337,8 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
                       </div>
                       <div className="flex items-center gap-0.5 flex-shrink-0">
                         {isCurrent && (
-                          <span className="px-1 py-0.5 bg-blue-900/40 text-blue-300 text-[8px] rounded-full">
-                            Now
+                          <span className="px-1 py-0.5 bg-amber-900/40 text-amber-300 text-[8px] rounded-full">
+                            Selected
                           </span>
                         )}
                         <button
@@ -379,7 +374,7 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
         )}
 
         {/* Summary */}
-        {!loading && !error && sessions.length > 0 && (
+        {!error && sessions.length > 0 && (
           <div className="mt-2 pt-1.5 border-t border-zinc-800">
             <div className="flex gap-1 text-center text-[9px]">
               <div className="flex-1 p-1 bg-zinc-900/50 rounded">
@@ -410,6 +405,26 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
             Activity
           </h3>
           <div className="flex items-center gap-1.5">
+            {currentSessionId && (
+              <div className="flex gap-0.5 bg-zinc-800 rounded p-0.5">
+                <button
+                  onClick={() => { setActivityScope('all'); loadActivityFeed(); }}
+                  className={`px-1.5 py-0.5 text-[9px] rounded transition-all ${
+                    activityScope === 'all' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  All
+                </button>
+                <button
+                  onClick={() => { setActivityScope('selected'); loadActivityFeed(); }}
+                  className={`px-1.5 py-0.5 text-[9px] rounded transition-all ${
+                    activityScope === 'selected' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  Selected
+                </button>
+              </div>
+            )}
             {monitoredSessions.size > 0 && (
               <span className="px-1.5 py-0.5 bg-purple-900/30 text-purple-300 text-[8px] rounded-full">
                 {monitoredSessions.size} monitored
@@ -417,7 +432,7 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
             )}
             <button
               onClick={loadActivityFeed}
-              disabled={loadingActivity || monitoredSessions.size === 0}
+              disabled={loadingActivity || (activityScope === 'selected' ? !currentSessionId : monitoredSessions.size === 0)}
               className="px-1.5 py-0.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 rounded text-[10px] text-zinc-300 transition-colors"
             >
               <RefreshCw className={`w-3 h-3 ${loadingActivity ? 'animate-spin' : ''}`} />
@@ -426,11 +441,11 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
         </div>
 
         {/* Activity Feed Content */}
-        {monitoredSessions.size === 0 ? (
+        {monitoredSessions.size === 0 && !(activityScope === 'selected' && currentSessionId) ? (
           <div className="flex-1 flex items-center justify-center min-h-0">
             <div className="text-center text-zinc-500">
               <BellOff className="w-6 h-6 mx-auto mb-1.5 opacity-50" />
-              <p className="text-[10px]">No sessions monitored</p>
+              <p className="text-[10px]">{currentSessionId ? 'No activity for this session' : 'No sessions monitored'}</p>
               <p className="text-[9px] mt-0.5 text-zinc-600">Click eye icon to monitor</p>
             </div>
           </div>

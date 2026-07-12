@@ -29,6 +29,8 @@ import { features } from './config/features';
 import { initMcpBoot } from './mcp/mcpBoot';
 import { getStaticMemoryLoader } from './services/memory/StaticMemoryLoader';
 import { playgroundSDK } from './services/playground/PlaygroundSDK';
+import { captureStartupSample } from './observability/StartupMetrics';
+import { PlaygroundProvider } from './playgrounds/PlaygroundContext';
 
 const LoaderFallback = () => (
   <div className="flex items-center justify-center h-full bg-zinc-950">
@@ -73,6 +75,14 @@ function AppContent() {
   const [headerVisible, setHeaderVisible] = useState(true);
   
   const { online, isConnected, isModelReady, isDegraded, lastCheck, health, forceCheck } = useStatus();
+
+  // Capture startup performance sample after first paint
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      setTimeout(() => { void captureStartupSample(); }, 0);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   // CP9-6: Global Command Palette Listener
   useEffect(() => {
@@ -390,12 +400,10 @@ function AppContent() {
         </div>
       }
       bottomPanel={
-        <PlaygroundContainer
-          sdk={playgroundSDK}
-          mode="normal"
-        />
+        <PlaygroundContainer sdk={playgroundSDK} />
       }
     >
+      <PlaygroundProvider>
       <CommandPalette 
         isOpen={commandPaletteOpen} 
         onClose={() => setCommandPaletteOpen(false)}
@@ -437,6 +445,7 @@ function AppContent() {
           )}
         </div>
       </FullViewerProvider>
+      </PlaygroundProvider>
       
        {showSettings && <SettingsModal 
          onClose={() => {

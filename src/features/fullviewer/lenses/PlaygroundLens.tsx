@@ -5,7 +5,7 @@ import { playgroundSDK } from '../../../services/playground/PlaygroundSDK';
 export const PlaygroundLens: React.FC = () => {
   return (
     <div className="h-full flex flex-col bg-zinc-950">
-      <PlaygroundContainer sdk={playgroundSDK} mode="normal" />
+      <PlaygroundContainer sdk={playgroundSDK} />
     </div>
   );
 };

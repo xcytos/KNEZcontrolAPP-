@@ -26,8 +26,13 @@ impl<T> DatabaseResponse<T> {
     }
 }
 
+const MAX_WALK_FILES: usize = 5000;
+
 fn walk_dir_recursive(dir: &Path, base: &Path, entries: &mut Vec<FsEntry>, depth: u32) -> Result<(), String> {
     if depth > 10 {
+        return Ok(());
+    }
+    if entries.len() >= MAX_WALK_FILES {
         return Ok(());
     }
     let read_dir = fs::read_dir(dir).map_err(|e| format!("Failed to read dir {:?}: {}", dir, e))?;

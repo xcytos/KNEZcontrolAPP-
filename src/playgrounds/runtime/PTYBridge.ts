@@ -1,3 +1,5 @@
+import { recordPtySpawn } from '../../observability/StartupMetrics';
+
 export interface PTYBridgeConfig {
   cols: number;
   rows: number;
@@ -88,6 +90,7 @@ export class PTYBridge {
     // Initialize PTY in Tauri backend
     if (window.__TAURI__?.invoke) {
       try {
+        const t0 = performance.now();
         await window.__TAURI__.invoke('pty_create', {
           cols: config.cols,
           rows: config.rows,
@@ -95,7 +98,8 @@ export class PTYBridge {
           env: config.env
         });
         
-        console.log(`PTY bridge ${bridgeId} created with Tauri backend`);
+        recordPtySpawn();
+        console.log(`PTY bridge ${bridgeId} created with Tauri backend (${(performance.now() - t0).toFixed(0)}ms)`);
       } catch (error) {
         console.error('Failed to create PTY bridge:', error);
         throw error;

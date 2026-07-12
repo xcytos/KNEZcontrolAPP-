@@ -166,9 +166,8 @@ export const TaqwinHierarchicalView: React.FC<{
 
   const loadProjects = async () => {
     try {
-      setLoading(true);
       setError(null);
-      const projectData = await taqwinDataService.getProjectHierarchy(); // Use hierarchy instead of flat list
+      const projectData = await taqwinDataService.getProjectHierarchy();
       console.log('[TaqwinHierarchicalView] Projects hierarchy loaded:', projectData);
       
       // Load session counts for each project (recursively for children)
@@ -197,8 +196,6 @@ export const TaqwinHierarchicalView: React.FC<{
       const errorMsg = `Failed to load projects: ${err instanceof Error ? err.message : 'Unknown error'}`;
       console.error('[TaqwinHierarchicalView] Error loading projects:', err);
       setError(errorMsg);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -213,7 +210,6 @@ export const TaqwinHierarchicalView: React.FC<{
 
   const loadProjectSessions = async (projectId: string) => {
     try {
-      setLoading(true);
       setError(null);
       
       // Find the project in hierarchy
@@ -293,8 +289,6 @@ export const TaqwinHierarchicalView: React.FC<{
       const errorMsg = `Failed to load sessions: ${err instanceof Error ? err.message : 'Unknown error'}`;
       console.error('[TaqwinHierarchicalView] Error loading sessions:', err);
       setError(errorMsg);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -310,7 +304,6 @@ export const TaqwinHierarchicalView: React.FC<{
     }
 
     try {
-      setLoading(true);
       setError(null);
       setHierarchy(null);
 
@@ -352,8 +345,6 @@ export const TaqwinHierarchicalView: React.FC<{
       setError(errorMsg);
     } finally {
       if (loadingSessionRef.current === sessionId) loadingSessionRef.current = null;
-      console.log('[TaqwinHierarchicalView] Finally block - clearing loading state');
-      setLoading(false);
     }
   };
 
@@ -726,12 +717,7 @@ export const TaqwinHierarchicalView: React.FC<{
           </div>
 
           <div className="flex-1 overflow-y-auto min-h-0">
-            {loading && viewLevel === 'projects' ? (
-              <div className="flex items-center justify-center p-4 text-zinc-400">
-                <Loader className="w-4 h-4 animate-spin mr-2" />
-                Loading projects...
-              </div>
-            ) : error ? (
+            {error ? (
               <div className="p-4 text-sm text-red-400">{error}</div>
             ) : viewLevel === 'projects' ? (
               /* Projects View - Tree structure */

@@ -44,7 +44,7 @@ const PROVIDER_ICONS: Record<string, React.ReactNode> = {
 };
 
 export const ModelsPage: React.FC = () => {
-  const { availableModels, loading, routerHealthy, routerStarting, refreshModels, startRouter, stopRouter } = useModel();
+  const { availableModels, loading, routerModels, routerHealthy, routerStarting, refreshModels, startRouter, stopRouter } = useModel();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedProvider, setSelectedProvider] = useState<string>('all');
   const [testingModels, setTestingModels] = useState<Set<string>>(new Set());
@@ -54,27 +54,53 @@ export const ModelsPage: React.FC = () => {
   const [savingKey, setSavingKey] = useState(false);
   const { showToast } = useToast();
 
-  const providers: ProviderItem[] = useMemo(() => {
+  // 9Router live models mapped into ModelInfo shape
+  const routerModelsInfo: ModelInfo[] = useMemo(() => (routerModels || []).map(r => ({
+    model_id: r.id,
+    provider: r.provider || r.owned_by || 'unknown',
+    status: 'healthy' as const,
+  })), [routerModels]);
+
+  // Set of model ids that originate from 9Router (used to scope Test/Key actions)
+  const routerIds = useMemo(() => new Set(routerModelsInfo.map(m => m.model_id)), [routerModelsInfo]);
+
+  const allModels: ModelInfo[] = useMemo(
+    () => [...availableModels, ...routerModelsInfo],
+    [availableModels, routerModelsInfo]
+  );
+
+  // Group a model list by provider -> ProviderItem[]
+  const groupByProvider = (models: ModelInfo[]): ProviderItem[] => {
     const groupMap = new Map<string, ModelInfo[]>();
-    for (const model of availableModels) {
+    for (const model of models) {
       const key = model.provider || 'other';
       if (!groupMap.has(key)) groupMap.set(key, []);
       groupMap.get(key)!.push(model);
     }
     return Array.from(groupMap.entries())
-      .map(([id, models]) => ({
+      .map(([id, ms]) => ({
         id,
         label: getModelProviderDisplayName(id),
         icon: PROVIDER_ICONS[id] || <Cloud className="w-4 h-4 text-zinc-400" />,
-        models,
+        models: ms,
       }))
       .filter(g => g.models.length > 0);
-  }, [availableModels]);
+  };
 
+  const backendProviders = useMemo(() => groupByProvider(availableModels), [availableModels]);
+  const routerProviders = useMemo(() => groupByProvider(routerModelsInfo), [routerModelsInfo]);
+
+  // Selection keys: 'all' | backend provider id | '9r' (9Router root) | '9r::<provider>'
   const filteredModels = useMemo(() => {
-    let list = selectedProvider === 'all'
-      ? availableModels
-      : providers.find(p => p.id === selectedProvider)?.models || [];
+    let list: ModelInfo[];
+    if (selectedProvider === 'all') list = allModels;
+    else if (selectedProvider === '9r') list = routerModelsInfo;
+    else if (selectedProvider.startsWith('9r::')) {
+      const pid = selectedProvider.slice(5);
+      list = routerModelsInfo.filter(m => m.provider === pid);
+    } else {
+      list = backendProviders.find(p => p.id === selectedProvider)?.models || [];
+    }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       list = list.filter(m =>
@@ -84,7 +110,7 @@ export const ModelsPage: React.FC = () => {
       );
     }
     return list;
-  }, [availableModels, selectedProvider, searchQuery, providers]);
+  }, [allModels, routerModelsInfo, backendProviders, selectedProvider, searchQuery]);
 
   const handleTestConnection = async (modelId: string) => {
     setTestingModels(prev => new Set(prev).add(modelId));
@@ -210,9 +236,9 @@ export const ModelsPage: React.FC = () => {
             >
               <Server className="w-4 h-4" />
               All Models
-              <span className="ml-auto text-zinc-500">{availableModels.length}</span>
+              <span className="ml-auto text-zinc-500">{allModels.length}</span>
             </button>
-            {providers.map(p => {
+            {backendProviders.map(p => {
               const hasUnhealthy = p.models.some(m => m.status === 'unhealthy');
               return (
                 <button
@@ -233,6 +259,45 @@ export const ModelsPage: React.FC = () => {
                 </button>
               );
             })}
+
+            {/* 9Router section: root + nested providers */}
+            {routerProviders.length > 0 && (
+              <div className="mt-2">
+                <button
+                  onClick={() => setSelectedProvider('9r')}
+                  className={`w-full flex items-center gap-2 px-3 py-2 rounded text-xs font-semibold transition-colors ${
+                    selectedProvider === '9r'
+                      ? 'bg-emerald-600/20 text-emerald-400'
+                      : 'text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800'
+                  }`}
+                >
+                  <Globe className="w-4 h-4 text-emerald-400" />
+                  9Router
+                  <span className="ml-auto text-zinc-500">{routerModelsInfo.length}</span>
+                </button>
+                <div className="ml-3 border-l border-zinc-800 pl-1 mt-0.5 space-y-0.5">
+                  {routerProviders.map(rp => {
+                    const key = `9r::${rp.id}`;
+                    const active = selectedProvider === key;
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => setSelectedProvider(key)}
+                        className={`w-full flex items-center gap-2 px-3 py-1.5 rounded text-xs transition-colors ${
+                          active
+                            ? 'bg-emerald-600/20 text-emerald-300'
+                            : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
+                        }`}
+                      >
+                        {rp.icon}
+                        {rp.label}
+                        <span className="ml-auto text-zinc-600">{rp.models.length}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -251,6 +316,7 @@ export const ModelsPage: React.FC = () => {
                   const meta = getProviderMeta(model.provider);
                   const requiresKey = meta.apiKeyVar !== null;
                   const isHealthy = model.status === 'healthy';
+                  const isRouterModel = routerIds.has(model.model_id);
 
                   return (
                     <div key={model.model_id} className="group flex items-center gap-3 px-3 py-2.5 rounded hover:bg-zinc-800/40 transition-colors">
@@ -265,6 +331,11 @@ export const ModelsPage: React.FC = () => {
                         </div>
                         <div className="flex items-center gap-2 text-xs text-zinc-500">
                           <span>{getModelProviderDisplayName(model.provider)}</span>
+                          {isRouterModel && (
+                            <span className="px-1.5 py-0.5 rounded bg-emerald-600/15 text-emerald-400 text-[10px] font-medium">
+                              9Router
+                            </span>
+                          )}
                           {model.latency_ms !== null && model.latency_ms !== undefined && (
                             <span>{formatLatency(model.latency_ms)}</span>
                           )}
@@ -286,18 +357,19 @@ export const ModelsPage: React.FC = () => {
                         )}
                       </div>
                       <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={() => handleTestConnection(model.model_id)}
-                          disabled={isTesting}
-                          className="px-2.5 py-1.5 text-xs font-medium bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-300 rounded transition-colors flex items-center gap-1"
-                        >
-                          {isTesting ? (
-                            <RefreshCw className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <TestTube className="w-3 h-3" />
-                          )}
-                          Test
-                        </button>
+                         <button
+                           onClick={() => handleTestConnection(model.model_id)}
+                           disabled={isTesting || isRouterModel}
+                           title={isRouterModel ? 'Served via 9Router' : 'Test connection'}
+                           className="px-2.5 py-1.5 text-xs font-medium bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-300 rounded transition-colors flex items-center gap-1"
+                         >
+                           {isTesting ? (
+                             <RefreshCw className="w-3 h-3 animate-spin" />
+                           ) : (
+                             <TestTube className="w-3 h-3" />
+                           )}
+                           Test
+                         </button>
                         {requiresKey && (
                           <button
                             onClick={() => { setConfiguringKey(model.model_id); setApiKeyValue(''); }}
@@ -383,7 +455,7 @@ export const ModelsPage: React.FC = () => {
 
       {/* Status Bar */}
       <div className="px-4 py-1.5 border-t border-zinc-800 bg-zinc-900/50 text-xs text-zinc-500 flex items-center gap-3">
-        <span>{availableModels.length} models</span>
+        <span>{allModels.length} models</span>
         <span>·</span>
         <span>{routerHealthy ? '9Router Connected' : '9Router Offline'}</span>
         <span>·</span>
