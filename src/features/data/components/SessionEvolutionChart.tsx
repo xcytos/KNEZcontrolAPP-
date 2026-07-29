@@ -55,11 +55,30 @@ export const SessionEvolutionChart: React.FC<SessionEvolutionChartProps> = ({
   };
 
   // Sort timeline by timestamp (NEWEST FIRST for bottom-to-top display - latest at top)
+  const validTypes = new Set(['checkpoint', 'event', 'dev_event', 'decision', 'insight', 'pattern', 'file', 'document']);
   const sortedTimeline = useMemo(() => {
-    return [...timeline].sort(
-      (a, b) => normalizeTimestamp(b.timestamp) - normalizeTimestamp(a.timestamp)
-    );
+    return [...timeline]
+      .filter(event => event && validTypes.has(event.type))
+      .sort(
+        (a, b) => normalizeTimestamp(b.timestamp) - normalizeTimestamp(a.timestamp)
+      );
   }, [timeline]);
+
+  // Get dynamic selected class for Tailwind (must be static class names)
+  const getSelectedClass = (colors: { bg: string; border: string; text: string }) => {
+    const colorMap: Record<string, string> = {
+      'bg-blue-500': 'border-blue-500 shadow-lg shadow-blue-500/20',
+      'bg-orange-500': 'border-orange-500 shadow-lg shadow-orange-500/20',
+      'bg-yellow-500': 'border-yellow-500 shadow-lg shadow-yellow-500/20',
+      'bg-green-500': 'border-green-500 shadow-lg shadow-green-500/20',
+      'bg-cyan-500': 'border-cyan-500 shadow-lg shadow-cyan-500/20',
+      'bg-pink-500': 'border-pink-500 shadow-lg shadow-pink-500/20',
+      'bg-purple-500': 'border-purple-500 shadow-lg shadow-purple-500/20',
+      'bg-indigo-500': 'border-indigo-500 shadow-lg shadow-indigo-500/20',
+      'bg-zinc-500': 'border-zinc-500 shadow-lg shadow-zinc-500/20',
+    };
+    return colorMap[colors.bg] || 'border-blue-500 shadow-lg shadow-blue-500/20';
+  };
 
   // Get event color and icon
   const getEventColor = (type: string) => {
@@ -85,7 +104,8 @@ export const SessionEvolutionChart: React.FC<SessionEvolutionChartProps> = ({
     }
   };
 
-  const getEventIcon = (type: string) => {
+  const getEventIcon = (type: string | undefined | null) => {
+    if (!type) return Activity;
     switch (type) {
       case 'checkpoint':
         return CheckCircle;
@@ -128,18 +148,7 @@ export const SessionEvolutionChart: React.FC<SessionEvolutionChartProps> = ({
     }
   };
 
-  if (timeline.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-full bg-zinc-950">
-        <div className="text-center text-zinc-400">
-          <Brain className="w-12 h-12 mx-auto mb-3 opacity-30" />
-          <p className="text-sm">No session evolution data</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Calculate session metrics
+  // Calculate session metrics - always call this hook (even if timeline is empty)
   const metrics = useMemo(() => {
     const checkpoints = sortedTimeline.filter(e => e.type === 'checkpoint').length;
     
@@ -259,15 +268,23 @@ export const SessionEvolutionChart: React.FC<SessionEvolutionChartProps> = ({
 
       {/* Vertical Timeline - Main Content */}
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto py-8 px-6">
-          {/* Timeline Container */}
-          <div className="relative">
-            {/* Vertical Line */}
-            <div className="absolute left-8 top-0 bottom-0 w-0.5 bg-gradient-to-b from-blue-500 via-purple-500 to-zinc-700" />
+        {sortedTimeline.length === 0 ? (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center text-zinc-400">
+              <Brain className="w-12 h-12 mx-auto mb-3 opacity-30" />
+              <p className="text-sm">No session evolution data</p>
+            </div>
+          </div>
+        ) : (
+          <div className="max-w-4xl mx-auto py-8 px-6">
+            {/* Timeline Container */}
+            <div className="relative">
+              {/* Vertical Line */}
+              <div className="absolute left-8 top-0 bottom-0 w-0.5 bg-gradient-to-b from-blue-500 via-purple-500 to-zinc-700" />
 
-            {/* Timeline Events */}
-            <div className="space-y-6">
-              {sortedTimeline.map((event, idx) => {
+              {/* Timeline Events */}
+              <div className="space-y-6">
+                {sortedTimeline.map((event, idx) => {
                 const colors = getEventColor(event.type);
                 const Icon = getEventIcon(event.type);
                 const timeData = formatTime(event.timestamp);
@@ -348,7 +365,7 @@ export const SessionEvolutionChart: React.FC<SessionEvolutionChartProps> = ({
                       onClick={() => setSelectedEvent(isSelected ? null : event)}
                       className={`w-full text-left bg-zinc-900/80 border rounded-lg p-4 hover:bg-zinc-800/80 transition-all duration-200 ${
                         isSelected
-                          ? `border-${colors.border.split('-')[1]}-500 shadow-lg shadow-${colors.bg.split('-')[1]}-500/20`
+                          ? getSelectedClass(colors)
                           : 'border-zinc-700 hover:border-zinc-600'
                       }`}
                     >
@@ -416,10 +433,11 @@ export const SessionEvolutionChart: React.FC<SessionEvolutionChartProps> = ({
                     </button>
                   </div>
                 );
-              })}
+                })}
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Selected Event Detail Panel */}

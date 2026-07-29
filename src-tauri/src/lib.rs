@@ -9,8 +9,10 @@ mod pty;
 mod database;
 mod data_commands;
 mod repo_commands;
+mod entities;
+mod repositories;
 
-use data_commands::DatabaseState;
+use data_commands::{DatabaseState, SeaOrmState};
 
 #[tauri::command]
 fn test_tauri_connection() -> String {
@@ -485,6 +487,7 @@ pub fn run() {
             app.manage(DatabaseState {
                 postgres_pool: Mutex::new(None),
             });
+            app.manage(SeaOrmState::new());
             app.handle().plugin(tauri_plugin_fs::init())?;
             app.handle().plugin(tauri_plugin_http::init())?;
             Ok(())
@@ -518,10 +521,6 @@ pub fn run() {
             pty::pty_kill,
             pty::pty_destroy,
             data_commands::connect_to_postgres,
-            data_commands::list_pg_documents,
-            data_commands::get_pg_document,
-            data_commands::search_pg_documents,
-            data_commands::list_pg_checkpoints,
             data_commands::sqlite_list_tables,
             data_commands::sqlite_get_table_info,
             data_commands::sqlite_query_table,
@@ -529,11 +528,17 @@ pub fn run() {
             data_commands::sqlite_delete_row,
             data_commands::sqlite_update_row,
             data_commands::sqlite_execute_query,
-            data_commands::list_sqlite_sessions,
-            data_commands::list_sqlite_memories,
-            data_commands::list_sqlite_checkpoints,
-            data_commands::sqlite_get_session_hierarchy,
-            data_commands::sqlite_update_session_status,
+            // SeaORM-based commands
+            data_commands::orm_connect_sqlite,
+            data_commands::orm_list_sessions,
+            data_commands::orm_find_session,
+            data_commands::orm_list_checkpoints,
+            data_commands::orm_list_session_events,
+            data_commands::orm_get_session_hierarchy,
+            data_commands::orm_update_session_status,
+            data_commands::orm_connect_postgres,
+            data_commands::orm_list_documents,
+            data_commands::orm_search_documents,
             data_commands::get_git_stats,
             data_commands::git_push,
             repo_commands::fs_walk,

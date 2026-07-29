@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Server, FileText, Search, RefreshCw, AlertCircle, CheckCircle, XCircle, Database as DatabaseIcon, Settings } from 'lucide-react';
-import { postgresService, PgDocument } from '../../services/data/DatabaseService';
+import { postgresService, OrmDocument } from '../../services/data/DatabaseService';
 import { RecordDetailPanel } from './components/RecordDetailPanel';
 import { ensurePostgresConnection } from '../../services/data/PostgresConnectionManager';
 
@@ -11,11 +11,11 @@ interface HealthStatus {
 }
 
 export const PostgresDataView: React.FC = () => {
-  const [documents, setDocuments] = useState<PgDocument[]>([]);
+  const [documents, setDocuments] = useState<OrmDocument[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [selectedDoc, setSelectedDoc] = useState<PgDocument | null>(null);
+  const [selectedDoc, setSelectedDoc] = useState<OrmDocument | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
   const [connecting, setConnecting] = useState(false);
@@ -98,21 +98,8 @@ export const PostgresDataView: React.FC = () => {
     }
   };
 
-  const handleViewDocument = async (doc: PgDocument) => {
-    // If we don't have content, fetch it
-    if (!doc.content) {
-      try {
-        const fullDoc = await postgresService.getDocument(doc.document_id);
-        if (fullDoc) {
-          setSelectedDoc(fullDoc);
-        }
-      } catch (err) {
-        console.error('[PostgresDataView] Failed to fetch document:', err);
-        setSelectedDoc(doc); // Show what we have
-      }
-    } else {
-      setSelectedDoc(doc);
-    }
+  const handleViewDocument = async (doc: OrmDocument) => {
+    setSelectedDoc(doc);
   };
 
   const docTypes = ['all', 'requirement', 'design', 'note', 'form', 'specification', 'other'];
@@ -303,12 +290,12 @@ export const PostgresDataView: React.FC = () => {
                   </div>
                   
                   <div className="text-xs text-zinc-400 space-y-1">
-                    {doc.domain && <div>Domain: {doc.domain}</div>}
                     {doc.project_name && <div>Project: {doc.project_name}</div>}
+                    {doc.purpose && <div>Purpose: {doc.purpose}</div>}
                     {doc.session_id && (
                       <div className="font-mono">Session: {doc.session_id.slice(0, 8)}...</div>
                     )}
-                    <div>Created: {new Date(doc.created_at).toLocaleString()}</div>
+                    <div>Created: {doc.created_at ? new Date(doc.created_at).toLocaleString() : 'N/A'}</div>
                   </div>
 
                   {doc.tags && doc.tags.length > 0 && (

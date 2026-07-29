@@ -3,13 +3,30 @@ use std::sync::Mutex;
 use std::path::PathBuf;
 use std::process::Command;
 use sqlx::postgres::PgPool;
+use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 
 use crate::database::*;
+use crate::repositories;
 
 // Global state for database connections
 pub struct DatabaseState {
     pub postgres_pool: Mutex<Option<PgPool>>,
+}
+
+// SeaORM-based database connection state
+pub struct SeaOrmState {
+    pub sqlite: Mutex<Option<DatabaseConnection>>,
+    pub postgres: Mutex<Option<DatabaseConnection>>,
+}
+
+impl SeaOrmState {
+    pub fn new() -> Self {
+        Self {
+            sqlite: Mutex::new(None),
+            postgres: Mutex::new(None),
+        }
+    }
 }
 
 // Configuration for PostgreSQL
@@ -72,219 +89,9 @@ pub async fn connect_to_postgres(
     }
 }
 
-#[tauri::command]
-pub async fn list_pg_documents(
-    limit: i64,
-    state: State<'_, DatabaseState>,
-) -> Result<DatabaseResponse<Vec<PgDocument>>, String> {
-    let pool = {
-        let pool_guard = state.postgres_pool.lock().unwrap();
-        pool_guard.as_ref().cloned()
-    };
-    
-    if let Some(pool) = pool {
-        match list_postgres_documents(&pool, limit).await {
-            Ok(documents) => Ok(DatabaseResponse::success(documents)),
-            Err(e) => Ok(DatabaseResponse::error(format!("Query failed: {}", e))),
-        }
-    } else {
-        Ok(DatabaseResponse::error("Not connected to PostgreSQL".to_string()))
-    }
-}
 
-#[tauri::command]
-pub async fn get_pg_document(
-    document_id: String,
-    state: State<'_, DatabaseState>,
-) -> Result<DatabaseResponse<Option<PgDocument>>, String> {
-    let pool = {
-        let pool_guard = state.postgres_pool.lock().unwrap();
-        pool_guard.as_ref().cloned()
-    };
-    
-    if let Some(pool) = pool {
-        match get_postgres_document(&pool, &document_id).await {
-            Ok(document) => Ok(DatabaseResponse::success(document)),
-            Err(e) => Ok(DatabaseResponse::error(format!("Query failed: {}", e))),
-        }
-    } else {
-        Ok(DatabaseResponse::error("Not connected to PostgreSQL".to_string()))
-    }
-}
 
-#[tauri::command]
-pub async fn search_pg_documents(
-    query: String,
-    limit: i64,
-    state: State<'_, DatabaseState>,
-) -> Result<DatabaseResponse<Vec<PgDocument>>, String> {
-    let pool = {
-        let pool_guard = state.postgres_pool.lock().unwrap();
-        pool_guard.as_ref().cloned()
-    };
-    
-    if let Some(pool) = pool {
-        match search_postgres_documents(&pool, &query, limit).await {
-            Ok(documents) => Ok(DatabaseResponse::success(documents)),
-            Err(e) => Ok(DatabaseResponse::error(format!("Search failed: {}", e))),
-        }
-    } else {
-        Ok(DatabaseResponse::error("Not connected to PostgreSQL".to_string()))
-    }
-}
 
-#[tauri::command]
-pub async fn list_pg_checkpoints(
-    limit: i64,
-    state: State<'_, DatabaseState>,
-) -> Result<DatabaseResponse<Vec<PgCheckpoint>>, String> {
-    let pool = {
-        let pool_guard = state.postgres_pool.lock().unwrap();
-        pool_guard.as_ref().cloned()
-    };
-    
-    if let Some(pool) = pool {
-        match list_postgres_checkpoints(&pool, limit).await {
-            Ok(checkpoints) => Ok(DatabaseResponse::success(checkpoints)),
-            Err(e) => Ok(DatabaseResponse::error(format!("Query failed: {}", e))),
-        }
-    } else {
-        Ok(DatabaseResponse::error("Not connected to PostgreSQL".to_string()))
-    }
-}
-
-// Session Hierarchy - fetch all related data for a session
-#[derive(Debug, Serialize)]
-pub struct SessionHierarchy {
-    pub session: serde_json::Value,
-    pub checkpoints: Vec<serde_json::Value>,
-    pub events: Vec<serde_json::Value>,
-    pub decisions: Vec<serde_json::Value>,
-    pub insights: Vec<serde_json::Value>,
-    pub patterns: Vec<serde_json::Value>,
-    pub files: Vec<serde_json::Value>,
-    pub memories: Vec<serde_json::Value>,
-}
-
-#[tauri::command]
-pub async fn sqlite_get_session_hierarchy(
-    db_path: String,
-    session_id: String,
-) -> Result<DatabaseResponse<SessionHierarchy>, String> {
-    let path = PathBuf::from(db_path);
-    
-    match connect_sqlite(path) {
-        Ok(conn) => {
-            // Fetch session - try different column combinations
-            let session = {
-                // First try with session_id column
-                let result = conn.query_row(
-                    "SELECT * FROM sessions WHERE session_id = ?1 LIMIT 1",
-                    [&session_id],
-                    |row| {
-                        Ok(serde_json::json!({
-                            "id": row.get::<_, Option<String>>(0).ok().flatten(),
-                            "session_id": row.get::<_, Option<String>>(1).ok().flatten(),
-                            "display_id": row.get::<_, Option<String>>(2).ok().flatten(),
-                            "name": row.get::<_, Option<String>>(3).ok().flatten(),
-                            "session_type": row.get::<_, Option<String>>(4).ok().flatten(),
-                            "tags": row.get::<_, Option<String>>(5).ok().flatten(),
-                            "status": row.get::<_, Option<String>>(6).ok().flatten(),
-                            "created_at": row.get::<_, Option<String>>(7).ok().flatten(),
-                            "updated_at": row.get::<_, Option<String>>(8).ok().flatten(),
-                        }))
-                    }
-                );
-                
-                // If that fails, try with id column
-                match result {
-                    Ok(s) => s,
-                    Err(_) => {
-                        match conn.query_row(
-                            "SELECT * FROM sessions WHERE id = ?1 LIMIT 1",
-                            [&session_id],
-                            |row| {
-                                Ok(serde_json::json!({
-                                    "id": row.get::<_, Option<String>>(0).ok().flatten(),
-                                    "display_id": row.get::<_, Option<String>>(1).ok().flatten(),
-                                    "name": row.get::<_, Option<String>>(2).ok().flatten(),
-                                    "session_type": row.get::<_, Option<String>>(3).ok().flatten(),
-                                    "tags": row.get::<_, Option<String>>(4).ok().flatten(),
-                                    "status": row.get::<_, Option<String>>(5).ok().flatten(),
-                                    "created_at": row.get::<_, Option<String>>(6).ok().flatten(),
-                                    "updated_at": row.get::<_, Option<String>>(7).ok().flatten(),
-                                }))
-                            }
-                        ) {
-                            Ok(s) => s,
-                            Err(_) => serde_json::json!({}),
-                        }
-                    }
-                }
-            };
-
-            // Helper function to fetch related records with ALL columns
-            let fetch_table = |table_name: &str| -> Vec<serde_json::Value> {
-                // First, get column info for this table
-                let pragma_query = format!("PRAGMA table_info({})", table_name);
-                let col_info: Vec<String> = conn.prepare(&pragma_query)
-                    .ok()
-                    .and_then(|mut stmt| {
-                        stmt.query_map([], |row| row.get::<_, String>(1))
-                            .ok()
-                            .map(|rows| rows.collect::<Result<Vec<_>, _>>().unwrap_or_default())
-                    })
-                    .unwrap_or_default();
-
-                // Now query the table
-                let query = format!(
-                    "SELECT * FROM {} WHERE session_id = ?1 ORDER BY created_at DESC LIMIT 100",
-                    table_name
-                );
-                
-                match conn.prepare(&query) {
-                    Ok(mut stmt) => {
-                        match stmt.query_map([&session_id], |row| {
-                            let mut obj = serde_json::Map::new();
-                            
-                            // Extract all available columns
-                            for (idx, col_name) in col_info.iter().enumerate() {
-                                let value = if let Ok(v) = row.get::<_, String>(idx) {
-                                    serde_json::Value::String(v)
-                                } else if let Ok(v) = row.get::<_, i64>(idx) {
-                                    serde_json::Value::Number(v.into())
-                                } else if let Ok(v) = row.get::<_, f64>(idx) {
-                                    serde_json::json!(v)
-                                } else {
-                                    serde_json::Value::Null
-                                };
-                                obj.insert(col_name.clone(), value);
-                            }
-                            
-                            Ok(serde_json::Value::Object(obj))
-                        }) {
-                            Ok(iter) => iter.collect::<Result<Vec<_>, _>>().unwrap_or_default(),
-                            Err(_) => vec![],
-                        }
-                    }
-                    Err(_) => vec![],
-                }
-            };
-
-            Ok(DatabaseResponse::success(SessionHierarchy {
-                session,
-                checkpoints: fetch_table("checkpoints"),
-                events: fetch_table("events"),
-                decisions: fetch_table("decisions"),
-                insights: fetch_table("insights"),
-                patterns: fetch_table("patterns"),
-                files: fetch_table("files"),
-                memories: fetch_table("memories"),
-            }))
-        }
-        Err(e) => Ok(DatabaseResponse::error(format!("Failed to connect: {}", e))),
-    }
-}
 
 // Generic SQLite query commands
 #[tauri::command]
@@ -546,80 +353,249 @@ pub async fn sqlite_execute_query(
     }
 }
 
-// SQLite Commands (legacy TAQWIN-specific)
+// === SeaORM-based Commands ===
+
+fn get_managed_sqlite(state: &SeaOrmState) -> Option<DatabaseConnection> {
+    state.sqlite.lock().ok()?.clone()
+}
+
+async fn connect_sqlite_or_managed(state: &SeaOrmState, db_path: &str) -> Result<DatabaseConnection, String> {
+    if let Some(conn) = get_managed_sqlite(state) {
+        return Ok(conn);
+    }
+    repositories::sqlite::connect(db_path).await.map_err(|e| e.to_string())
+}
+
+async fn connect_postgres_or_managed(
+    state: &SeaOrmState,
+    host: &str, port: u16, database: &str, user: &str, password: &str,
+) -> Result<DatabaseConnection, String> {
+    if let Some(conn) = state.postgres.lock().map_err(|e| e.to_string())?.clone() {
+        return Ok(conn);
+    }
+    let conn_string = format!(
+        "postgresql://{}:{}@{}:{}/{}?sslmode=require",
+        user, password, host, port, database
+    );
+    repositories::postgres::connect(&conn_string).await.map_err(|e| e.to_string())
+}
+
 #[tauri::command]
-pub async fn list_sqlite_sessions(
+pub async fn orm_connect_sqlite(
     db_path: String,
-    limit: i64,
-) -> Result<DatabaseResponse<Vec<TaqwinSession>>, String> {
-    let path = PathBuf::from(db_path);
-    
-    match connect_sqlite(path) {
+    state: State<'_, SeaOrmState>,
+) -> Result<DatabaseResponse<String>, String> {
+    match repositories::sqlite::connect(&db_path).await {
         Ok(conn) => {
-            match list_taqwin_sessions(&conn, limit) {
-                Ok(sessions) => Ok(DatabaseResponse::success(sessions)),
-                Err(e) => Ok(DatabaseResponse::error(format!("Query failed: {}", e))),
-            }
+            let mut guard = state.sqlite.lock().unwrap();
+            *guard = Some(conn);
+            Ok(DatabaseResponse::success("Connected to SQLite via SeaORM".to_string()))
         }
         Err(e) => Ok(DatabaseResponse::error(format!("Failed to connect: {}", e))),
     }
 }
 
 #[tauri::command]
-pub async fn list_sqlite_memories(
+pub async fn orm_list_sessions(
+    state: State<'_, SeaOrmState>,
     db_path: String,
-    limit: i64,
-) -> Result<DatabaseResponse<Vec<TaqwinMemory>>, String> {
-    let path = PathBuf::from(db_path);
-    
-    match connect_sqlite(path) {
-        Ok(conn) => {
-            match list_taqwin_memories(&conn, limit) {
-                Ok(memories) => Ok(DatabaseResponse::success(memories)),
-                Err(e) => Ok(DatabaseResponse::error(format!("Query failed: {}", e))),
-            }
-        }
-        Err(e) => Ok(DatabaseResponse::error(format!("Failed to connect: {}", e))),
+    limit: u64,
+) -> Result<DatabaseResponse<Vec<crate::entities::sqlite::sessions::Model>>, String> {
+    let db = connect_sqlite_or_managed(&state, &db_path).await?;
+    match repositories::session_repo::list_all(&db, limit).await {
+        Ok(sessions) => Ok(DatabaseResponse::success(sessions)),
+        Err(e) => Ok(DatabaseResponse::error(format!("Query failed: {}", e))),
     }
 }
 
 #[tauri::command]
-pub async fn list_sqlite_checkpoints(
+pub async fn orm_find_session(
+    state: State<'_, SeaOrmState>,
     db_path: String,
-    limit: i64,
-) -> Result<DatabaseResponse<Vec<TaqwinCheckpoint>>, String> {
-    let path = PathBuf::from(db_path);
-    
-    match connect_sqlite(path) {
-        Ok(conn) => {
-            match list_taqwin_checkpoints(&conn, limit) {
-                Ok(checkpoints) => Ok(DatabaseResponse::success(checkpoints)),
-                Err(e) => Ok(DatabaseResponse::error(format!("Query failed: {}", e))),
-            }
-        }
-        Err(e) => Ok(DatabaseResponse::error(format!("Failed to connect: {}", e))),
+    session_id: String,
+) -> Result<DatabaseResponse<Option<crate::entities::sqlite::sessions::Model>>, String> {
+    let db = connect_sqlite_or_managed(&state, &db_path).await?;
+    match repositories::session_repo::find_by_session_id(&db, &session_id).await {
+        Ok(session) => Ok(DatabaseResponse::success(session)),
+        Err(e) => Ok(DatabaseResponse::error(format!("Query failed: {}", e))),
     }
 }
 
 #[tauri::command]
-pub async fn sqlite_update_session_status(
+pub async fn orm_list_checkpoints(
+    state: State<'_, SeaOrmState>,
+    db_path: String,
+    limit: u64,
+) -> Result<DatabaseResponse<Vec<crate::entities::sqlite::checkpoints::Model>>, String> {
+    let db = connect_sqlite_or_managed(&state, &db_path).await?;
+    match repositories::checkpoint_repo::sqlite::list_all(&db, limit).await {
+        Ok(checkpoints) => Ok(DatabaseResponse::success(checkpoints)),
+        Err(e) => Ok(DatabaseResponse::error(format!("Query failed: {}", e))),
+    }
+}
+
+#[tauri::command]
+pub async fn orm_list_session_events(
+    state: State<'_, SeaOrmState>,
+    db_path: String,
+    session_id: String,
+    limit: u64,
+) -> Result<DatabaseResponse<Vec<crate::entities::sqlite::events::Model>>, String> {
+    let db = connect_sqlite_or_managed(&state, &db_path).await?;
+    match repositories::event_repo::list_by_session(&db, &session_id, limit).await {
+        Ok(events) => Ok(DatabaseResponse::success(events)),
+        Err(e) => Ok(DatabaseResponse::error(format!("Query failed: {}", e))),
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct SessionHierarchy {
+    pub session: Option<crate::entities::sqlite::sessions::Model>,
+    pub checkpoints: Vec<crate::entities::sqlite::checkpoints::Model>,
+    pub events: Vec<crate::entities::sqlite::events::Model>,
+    pub decisions: Vec<crate::entities::sqlite::decisions::Model>,
+    pub insights: Vec<crate::entities::sqlite::insights::Model>,
+    pub patterns: Vec<crate::entities::sqlite::patterns::Model>,
+    pub files: Vec<crate::entities::sqlite::files::Model>,
+    pub memories: Vec<serde_json::Value>,
+}
+
+#[tauri::command]
+pub async fn orm_get_session_hierarchy(
+    state: State<'_, SeaOrmState>,
+    db_path: String,
+    session_id: String,
+) -> Result<DatabaseResponse<SessionHierarchy>, String> {
+    let db = connect_sqlite_or_managed(&state, &db_path).await?;
+
+    let session = repositories::session_repo::find_by_session_id(&db, &session_id).await
+        .map_err(|e| format!("Session query failed: {}", e))?;
+
+    if session.is_none() {
+        return Ok(DatabaseResponse::error(format!("Session not found: {}", session_id)));
+    }
+
+    use sea_orm::*;
+    use crate::entities::sqlite::*;
+
+    let cp = checkpoints::Entity::find()
+        .filter(checkpoints::Column::SessionId.eq(&session_id))
+        .order_by(checkpoints::Column::CreatedAt, Order::Desc)
+        .all(&db).await
+        .map_err(|e| format!("Checkpoints query failed: {}", e))?;
+
+    let events = repositories::event_repo::list_by_session(&db, &session_id, 100).await
+        .map_err(|e| format!("Events query failed: {}", e))?;
+
+    let dec = decisions::Entity::find()
+        .filter(decisions::Column::SessionId.eq(&session_id))
+        .order_by(decisions::Column::MadeAt, Order::Desc)
+        .all(&db).await
+        .map_err(|e| format!("Decisions query failed: {}", e))?;
+
+    let ins = insights::Entity::find()
+        .filter(insights::Column::SessionId.eq(&session_id))
+        .order_by(insights::Column::GeneratedAt, Order::Desc)
+        .all(&db).await
+        .map_err(|e| format!("Insights query failed: {}", e))?;
+
+    let pat = patterns::Entity::find()
+        .filter(patterns::Column::SessionId.eq(&session_id))
+        .order_by(patterns::Column::LastSeen, Order::Desc)
+        .all(&db).await
+        .map_err(|e| format!("Patterns query failed: {}", e))?;
+
+    let fil = files::Entity::find()
+        .filter(files::Column::SessionId.eq(&session_id))
+        .order_by(files::Column::CreatedAt, Order::Desc)
+        .all(&db).await
+        .map_err(|e| format!("Files query failed: {}", e))?;
+
+    Ok(DatabaseResponse::success(SessionHierarchy {
+        session,
+        checkpoints: cp,
+        events,
+        decisions: dec,
+        insights: ins,
+        patterns: pat,
+        files: fil,
+        memories: vec![],
+    }))
+}
+
+#[tauri::command]
+pub async fn orm_update_session_status(
+    state: State<'_, SeaOrmState>,
     db_path: String,
     session_id: String,
     new_status: String,
 ) -> Result<DatabaseResponse<bool>, String> {
-    let path = PathBuf::from(db_path);
+    let db = connect_sqlite_or_managed(&state, &db_path).await?;
+    match repositories::session_repo::update_status(&db, &session_id, &new_status).await {
+        Ok(updated) => Ok(DatabaseResponse::success(updated)),
+        Err(e) => Ok(DatabaseResponse::error(format!("Update failed: {}", e))),
+    }
+}
 
-    match connect_sqlite(path) {
+// === SeaORM-based PostgreSQL Commands ===
+
+#[tauri::command]
+pub async fn orm_connect_postgres(
+    host: String,
+    port: u16,
+    database: String,
+    user: String,
+    password: String,
+    state: State<'_, SeaOrmState>,
+) -> Result<DatabaseResponse<String>, String> {
+    let conn_string = format!(
+        "postgresql://{}:{}@{}:{}/{}?sslmode=require",
+        user, password, host, port, database
+    );
+    match repositories::postgres::connect(&conn_string).await {
         Ok(conn) => {
-            match update_taqwin_session_status(&conn, &session_id, &new_status) {
-                Ok(updated) => Ok(DatabaseResponse::success(updated)),
-                Err(e) => Ok(DatabaseResponse::error(format!("Update failed: {}", e))),
-            }
+            let mut guard = state.postgres.lock().unwrap();
+            *guard = Some(conn);
+            Ok(DatabaseResponse::success("Connected to PostgreSQL via SeaORM".to_string()))
         }
         Err(e) => Ok(DatabaseResponse::error(format!("Failed to connect: {}", e))),
     }
 }
 
+#[tauri::command]
+pub async fn orm_list_documents(
+    state: State<'_, SeaOrmState>,
+    host: String,
+    port: u16,
+    database: String,
+    user: String,
+    password: String,
+    limit: u64,
+) -> Result<DatabaseResponse<Vec<crate::entities::postgres::documents::Model>>, String> {
+    let db = connect_postgres_or_managed(&state, &host, port, &database, &user, &password).await?;
+    match repositories::document_repo::list_all(&db, limit).await {
+        Ok(docs) => Ok(DatabaseResponse::success(docs)),
+        Err(e) => Ok(DatabaseResponse::error(format!("Query failed: {}", e))),
+    }
+}
+
+#[tauri::command]
+pub async fn orm_search_documents(
+    state: State<'_, SeaOrmState>,
+    host: String,
+    port: u16,
+    database: String,
+    user: String,
+    password: String,
+    query: String,
+    limit: u64,
+) -> Result<DatabaseResponse<Vec<crate::entities::postgres::documents::Model>>, String> {
+    let db = connect_postgres_or_managed(&state, &host, port, &database, &user, &password).await?;
+    match repositories::document_repo::search(&db, &query, limit).await {
+        Ok(docs) => Ok(DatabaseResponse::success(docs)),
+        Err(e) => Ok(DatabaseResponse::error(format!("Search failed: {}", e))),
+    }
+}
 
 // Git Statistics
 #[derive(Debug, Serialize)]

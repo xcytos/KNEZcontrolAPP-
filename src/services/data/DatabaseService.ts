@@ -7,36 +7,79 @@ export interface DatabaseResponse<T> {
   error?: string;
 }
 
-// PostgreSQL Types
-export interface PgDocument {
+// SeaORM PostgreSQL document model (from generated entity)
+export interface OrmDocument {
   document_id: string;
   title: string;
   doc_type: string;
   content?: string;
-  session_id: string; // REQUIRED in PostgreSQL
-  project_name?: string;
-  project_id?: string; // NEW: Added in schema
-  checkpoint_id?: string;
-  tags?: string[];
-  created_at: string;
-  updated_at: string;
-  is_large: boolean;
   file_path?: string;
-  
-  // NEW: Version control fields
+  session_id: string;
+  project_name?: string;
+  checkpoint_id?: string;
+  created_at?: string;
+  updated_at?: string;
+  is_large?: boolean;
+  embedding?: string;
   version_number?: number;
   parent_version_id?: string;
   created_by?: string;
   updated_by?: string;
-  
-  // NEW: Metadata fields
   content_size?: number;
   slug?: string;
+  tags?: string[];
   category?: string;
-  embedding?: string;
-  
-  // DEPRECATED: Not in schema
-  domain?: string; // This field doesn't exist in PostgreSQL schema
+  project_id?: string;
+  purpose?: string;
+  latest_changes?: string;
+  business_id?: number;
+}
+
+// SeaORM SQLite session model (from generated entity)
+export interface OrmSession {
+  session_id: string;
+  display_id: string;
+  name: string;
+  type: string;
+  tags?: string;
+  created_at: string;
+  updated_at: string;
+  status: string;
+  summary?: string;
+  event_count?: number;
+  file_count?: number;
+  embedding_vector?: string;
+  indexed_at?: string;
+  project_id?: string;
+  project_path?: string;
+  last_heartbeat_at?: string;
+  heartbeat_timeout_seconds?: number;
+  client_metadata?: string;
+  session_state?: string;
+}
+
+// SeaORM SQLite checkpoint model
+export interface OrmCheckpoint {
+  checkpoint_id?: string;
+  session_id?: string;
+  title: string;
+  created_at: string;
+  context_data: string;
+  learned_memories?: string;
+  decisions?: string;
+  findings?: string;
+  metadata?: string;
+  type?: string;
+}
+
+// SeaORM SQLite event model
+export interface OrmEvent {
+  event_id?: string;
+  session_id: string;
+  event_type: string;
+  content: string;
+  created_at: string;
+  embedding_vector?: string;
 }
 
 export interface PostgresConnectionConfig {
@@ -47,43 +90,10 @@ export interface PostgresConnectionConfig {
   password: string;
 }
 
-// SQLite Types
-export interface TaqwinSession {
-  id: string;
-  display_id: string;
-  name: string;
-  session_type: string;
-  tags?: string;
-  status: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface TaqwinMemory {
-  id: string;
-  session_id: string;
-  memory_type: string;
-  domain: string;
-  content: string;
-  importance: number;
-  created_at: string;
-}
-
-export interface TaqwinCheckpoint {
-  id: string;
-  session_id: string;
-  title: string;
-  context: string;
-  learned_memories: string;
-  decisions: string;
-  findings: string;
-  created_at: string;
-}
-
 // PostgreSQL Service
 export class PostgresService {
   private static instance: PostgresService;
-  private connected: boolean = false;
+  private config: PostgresConnectionConfig | null = null;
 
   private constructor() {}
 
@@ -95,10 +105,16 @@ export class PostgresService {
   }
 
   async connect(config: PostgresConnectionConfig): Promise<boolean> {
+    this.config = config;
     try {
-      const response = await invoke<DatabaseResponse<string>>('connect_to_postgres', { config });
+      const response = await invoke<DatabaseResponse<string>>('orm_connect_postgres', {
+        host: config.host,
+        port: config.port,
+        database: config.database,
+        user: config.user,
+        password: config.password,
+      });
       if (response.success) {
-        this.connected = true;
         return true;
       } else {
         console.error('[PostgresService] Connection failed:', response.error);
@@ -110,13 +126,21 @@ export class PostgresService {
     }
   }
 
-  async listDocuments(limit: number = 100): Promise<PgDocument[]> {
-    if (!this.connected) {
+  async listDocuments(limit: number = 100): Promise<OrmDocument[]> {
+    if (!this.config) {
       throw new Error('Not connected to PostgreSQL');
     }
+    const cfg = this.config;
 
     try {
-      const response = await invoke<DatabaseResponse<PgDocument[]>>('list_pg_documents', { limit });
+      const response = await invoke<DatabaseResponse<OrmDocument[]>>('orm_list_documents', {
+        host: cfg.host,
+        port: cfg.port,
+        database: cfg.database,
+        user: cfg.user,
+        password: cfg.password,
+        limit,
+      });
       if (response.success && response.data) {
         return response.data;
       } else {
@@ -128,33 +152,19 @@ export class PostgresService {
     }
   }
 
-  async getDocument(documentId: string): Promise<PgDocument | null> {
-    if (!this.connected) {
+  async searchDocuments(query: string, limit: number = 50): Promise<OrmDocument[]> {
+    if (!this.config) {
       throw new Error('Not connected to PostgreSQL');
     }
+    const cfg = this.config;
 
     try {
-      const response = await invoke<DatabaseResponse<PgDocument | null>>('get_pg_document', {
-        documentId,
-      });
-      if (response.success) {
-        return response.data || null;
-      } else {
-        throw new Error(response.error || 'Failed to get document');
-      }
-    } catch (error) {
-      console.error('[PostgresService] Get document error:', error);
-      throw error;
-    }
-  }
-
-  async searchDocuments(query: string, limit: number = 50): Promise<PgDocument[]> {
-    if (!this.connected) {
-      throw new Error('Not connected to PostgreSQL');
-    }
-
-    try {
-      const response = await invoke<DatabaseResponse<PgDocument[]>>('search_pg_documents', {
+      const response = await invoke<DatabaseResponse<OrmDocument[]>>('orm_search_documents', {
+        host: cfg.host,
+        port: cfg.port,
+        database: cfg.database,
+        user: cfg.user,
+        password: cfg.password,
         query,
         limit,
       });
@@ -169,8 +179,12 @@ export class PostgresService {
     }
   }
 
+  async getDocument(_documentId: string): Promise<OrmDocument | null> {
+    throw new Error('Use searchDocuments for now — single document lookup via ORM not yet exposed');
+  }
+
   isConnected(): boolean {
-    return this.connected;
+    return this.config !== null;
   }
 }
 
@@ -196,13 +210,12 @@ export class SqliteService {
     return this.dbPath;
   }
 
-  async listSessions(limit: number = 100): Promise<TaqwinSession[]> {
+  async listSessions(limit: number = 100): Promise<OrmSession[]> {
     if (!this.dbPath) {
       throw new Error('Database path not set');
     }
-
     try {
-      const response = await invoke<DatabaseResponse<TaqwinSession[]>>('list_sqlite_sessions', {
+      const response = await invoke<DatabaseResponse<OrmSession[]>>('orm_list_sessions', {
         dbPath: this.dbPath,
         limit,
       });
@@ -217,34 +230,12 @@ export class SqliteService {
     }
   }
 
-  async listMemories(limit: number = 100): Promise<TaqwinMemory[]> {
+  async listCheckpoints(limit: number = 100): Promise<OrmCheckpoint[]> {
     if (!this.dbPath) {
       throw new Error('Database path not set');
     }
-
     try {
-      const response = await invoke<DatabaseResponse<TaqwinMemory[]>>('list_sqlite_memories', {
-        dbPath: this.dbPath,
-        limit,
-      });
-      if (response.success && response.data) {
-        return response.data;
-      } else {
-        throw new Error(response.error || 'Failed to list memories');
-      }
-    } catch (error) {
-      console.error('[SqliteService] List memories error:', error);
-      throw error;
-    }
-  }
-
-  async listCheckpoints(limit: number = 100): Promise<TaqwinCheckpoint[]> {
-    if (!this.dbPath) {
-      throw new Error('Database path not set');
-    }
-
-    try {
-      const response = await invoke<DatabaseResponse<TaqwinCheckpoint[]>>('list_sqlite_checkpoints', {
+      const response = await invoke<DatabaseResponse<OrmCheckpoint[]>>('orm_list_checkpoints', {
         dbPath: this.dbPath,
         limit,
       });
@@ -259,13 +250,33 @@ export class SqliteService {
     }
   }
 
+  async listSessionEvents(sessionId: string, limit: number = 100): Promise<OrmEvent[]> {
+    if (!this.dbPath) {
+      throw new Error('Database path not set');
+    }
+    try {
+      const response = await invoke<DatabaseResponse<OrmEvent[]>>('orm_list_session_events', {
+        dbPath: this.dbPath,
+        sessionId,
+        limit,
+      });
+      if (response.success && response.data) {
+        return response.data;
+      } else {
+        throw new Error(response.error || 'Failed to list events');
+      }
+    } catch (error) {
+      console.error('[SqliteService] List events error:', error);
+      throw error;
+    }
+  }
+
   async updateSessionStatus(sessionId: string, newStatus: string): Promise<boolean> {
     if (!this.dbPath) {
       throw new Error('Database path not set');
     }
-
     try {
-      const response = await invoke<DatabaseResponse<boolean>>('sqlite_update_session_status', {
+      const response = await invoke<DatabaseResponse<boolean>>('orm_update_session_status', {
         dbPath: this.dbPath,
         sessionId,
         newStatus,

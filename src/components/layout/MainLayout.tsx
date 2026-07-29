@@ -3,6 +3,8 @@ import { ChevronUp, ChevronDown } from 'lucide-react';
 import { Sidebar, View } from './Sidebar';
 import { PresenceIndicator } from '../../features/presence/PresenceIndicator';
 import { PresenceState } from '../../domain/DataContracts';
+import { PlaygroundContainer } from '../../playgrounds/PlaygroundContainer';
+
 
 function isTauriRuntime(): boolean {
   const w = window as any;
@@ -14,7 +16,6 @@ interface MainLayoutProps {
   onViewChange: (view: View) => void;
   presenceState: PresenceState;
   children: React.ReactNode;
-  bottomPanel?: React.ReactNode;
   tabErrors?: Partial<Record<View, boolean>>;
   connectionStatus?: {
     state: "running" | "starting" | "degraded" | "error" | "down";
@@ -37,7 +38,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   onViewChange,
   presenceState,
   children,
-  bottomPanel,
   tabErrors,
   connectionStatus,
   headerActions,
@@ -121,17 +121,17 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             {children}
           </main>
 
-          {bottomPanel && (
+          {isSandbox(activeView) && (
             <div
               className="flex-col"
               style={{
-                display: isSandbox(activeView) ? 'flex' : 'none',
+                display: 'flex',
                 position: 'absolute',
-                inset: isSandbox(activeView) && headerVisible ? '56px 0 0 0' : 0,
+                inset: headerVisible ? '56px 0 0 0' : 0,
                 zIndex: 40,
               }}
             >
-              {bottomPanel}
+              <PlaygroundContainer />
             </div>
           )}
         </div>

@@ -55,6 +55,31 @@ export async function ensurePostgresConnection(
 }
 
 /**
+ * Initialize PostgreSQL connection using SeaORM (typed queries)
+ * @param config Optional custom configuration (defaults to Supabase)
+ * @returns Promise<boolean> - true if connected, false otherwise
+ */
+export async function ensurePostgresConnectionOrm(
+  config: PostgresConfig = DEFAULT_CONFIG
+): Promise<boolean> {
+  try {
+    console.log('[PostgresConnectionManager] Initiating ORM connection...');
+    const connected = await postgresService.connect(config);
+
+    if (connected) {
+      console.log('[PostgresConnectionManager] ORM connection established successfully');
+      return true;
+    } else {
+      console.warn('[PostgresConnectionManager] ORM connection failed');
+      return false;
+    }
+  } catch (error) {
+    console.error('[PostgresConnectionManager] ORM connection error:', error);
+    return false;
+  }
+}
+
+/**
  * Check if PostgreSQL is currently connected
  * @returns boolean - connection status
  */

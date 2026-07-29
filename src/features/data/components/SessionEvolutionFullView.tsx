@@ -44,7 +44,10 @@ export const SessionEvolutionFullView: React.FC<SessionFullViewProps> = ({
       // Use existing TaqwinDataService to get session hierarchy
       const hierarchy = await taqwinDataService.getSessionHierarchy(sessionId);
       
-      // Extract data from hierarchy response
+      // Extract data from hierarchy response - guard against null/undefined hierarchy and session
+      if (!hierarchy || !hierarchy.session) {
+        throw new Error(`Session not found: ${sessionId}`);
+      }
       const session = hierarchy.session as any;
       const checkpoints = hierarchy.checkpoints || [];
       
@@ -160,9 +163,9 @@ export const SessionEvolutionFullView: React.FC<SessionFullViewProps> = ({
           created_at: session.created_at,
           updated_at: session.updated_at,
           project_id: session.project_id,
-          project_name: session.project_name,
+          project_name: session.project_name || undefined,
           project_path: session.project_path,
-          type: session.session_type,
+          type: session.type || session.session_type,
         },
         checkpoints: checkpoints as any[], // Cast to satisfy type - data from TaqwinDataService
         documents,

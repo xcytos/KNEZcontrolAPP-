@@ -35,6 +35,7 @@ portable-pty = "0.8.1"
 # Database dependencies for Data Explorer
 sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "sqlite", "tls-native-tls", "chrono", "uuid"] }
 rusqlite = { version = "0.30", features = ["bundled"] }
+sea-orm = { version = "0.12", features = ["runtime-tokio-rustls", "sqlx-sqlite", "sqlx-postgres", "chrono", "uuid"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = [

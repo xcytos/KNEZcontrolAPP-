@@ -127,6 +127,7 @@ export class TaqwinDataService {
 
   /**
    * Get all sessions with basic metadata
+   * Uses SeaORM for typed queries instead of generic sqlite_query_table
    */
   async listSessions(limit: number = 100): Promise<SessionListItem[]> {
     if (!this.dbPath) {
@@ -134,9 +135,8 @@ export class TaqwinDataService {
     }
 
     try {
-      const response = await invoke<DatabaseResponse<any[]>>('sqlite_query_table', {
+      const response = await invoke<DatabaseResponse<any[]>>('orm_list_sessions', {
         dbPath: this.dbPath,
-        tableName: 'sessions',
         limit,
       });
 
@@ -144,8 +144,23 @@ export class TaqwinDataService {
         // Enrich sessions with computed connection state
         return response.data.map((session: any) => {
           const enriched: SessionListItem = {
-            ...session,
+            id: session.session_id || session.id,
             session_id: session.session_id || session.id,
+            display_id: session.display_id,
+            name: session.name,
+            session_type: session.type || session.session_type,
+            tags: session.tags,
+            status: session.status,
+            created_at: session.created_at,
+            updated_at: session.updated_at,
+            project_id: session.project_id,
+            project_path: session.project_path,
+            summary: session.summary,
+            file_count: session.file_count,
+            event_count: session.event_count,
+            last_heartbeat_at: session.last_heartbeat_at,
+            heartbeat_timeout_seconds: session.heartbeat_timeout_seconds,
+            client_metadata: session.client_metadata,
           };
           
           // Compute connection state from last_heartbeat_at
@@ -159,13 +174,10 @@ export class TaqwinDataService {
             enriched.idle_duration_minutes = idleMinutes;
             
             if (idleMs < 60000) {
-              // Less than 1 minute = active
               enriched.connection_state = 'active';
             } else if (idleMs < timeoutSeconds * 1000) {
-              // Within timeout = idle
               enriched.connection_state = 'idle';
             } else {
-              // Beyond timeout = disconnected
               enriched.connection_state = 'disconnected';
             }
           }
@@ -198,7 +210,7 @@ export class TaqwinDataService {
 
     try {
       const response = await invoke<DatabaseResponse<SessionHierarchy>>(
-        'sqlite_get_session_hierarchy',
+        'orm_get_session_hierarchy',
         {
           dbPath: this.dbPath,
           sessionId,
@@ -627,7 +639,7 @@ export class TaqwinDataService {
   async updateSessionStatus(sessionId: string, newStatus: string): Promise<boolean> {
     if (!this.dbPath) return false;
     try {
-      const response = await invoke<{ success: boolean; data?: boolean; error?: string }>('sqlite_update_session_status', {
+      const response = await invoke<{ success: boolean; data?: boolean; error?: string }>('orm_update_session_status', {
         dbPath: this.dbPath,
         sessionId,
         newStatus,

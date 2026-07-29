@@ -1242,8 +1242,8 @@ export const TaqwinHierarchicalView: React.FC<{
                 {viewMode === 'timeline' ? (
                   <SessionEvolutionChart
                     timeline={timeline}
-                    sessionStart={(hierarchy.session as any).created_at || ''}
-                    sessionEnd={(hierarchy.session as any).updated_at || new Date().toISOString()}
+                    sessionStart={(hierarchy.session as any)?.created_at || ''}
+                    sessionEnd={(hierarchy.session as any)?.updated_at || new Date().toISOString()}
                     sessionId={selectedSessionId || undefined}
                     onOpenFullView={() => setShowSessionFullView(true)}
                   />
